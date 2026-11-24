@@ -1,0 +1,979 @@
+<title>远程桌面界面原型</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: a desktop app window (sidebar + content) centred on the page; tokens follow Tango's antd 6.7 baseline. */
+:root {
+  --bg: #eef1f5;
+  --layout: #f5f5f5;
+  --surface: #ffffff;
+  --surface-2: #fafafa;
+  --border: #d9d9d9;
+  --split: #f0f0f0;
+  --text: rgba(0, 0, 0, 0.88);
+  --text-2: rgba(0, 0, 0, 0.65);
+  --text-3: rgba(0, 0, 0, 0.45);
+  --primary: #1677ff;
+  --primary-hover: #4096ff;
+  --primary-bg: #e6f4ff;
+  --success: #52c41a;
+  --success-bg: #f6ffed;
+  --warning: #faad14;
+  --warning-bg: #fffbe6;
+  --error: #ff4d4f;
+  --error-bg: #fff2f0;
+  --shadow: 0 6px 16px 0 rgba(0, 0, 0, 0.08), 0 3px 6px -4px rgba(0, 0, 0, 0.12), 0 9px 28px 8px rgba(0, 0, 0, 0.05);
+  --window-shadow: 0 24px 60px -12px rgba(15, 30, 60, 0.28);
+  --screen-a: #2b5ea7;
+  --screen-b: #6a3fa0;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  --radius: 6px;
+  --radius-lg: 8px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0b0d10; --layout: #141414; --surface: #1f1f1f; --surface-2: #262626; --border: #424242; --split: #303030;
+  --text: rgba(255,255,255,0.85); --text-2: rgba(255,255,255,0.65); --text-3: rgba(255,255,255,0.45);
+  --primary: #1668dc; --primary-hover: #3c89e8; --primary-bg: #111a2c;
+  --success: #49aa19; --success-bg: #162312; --warning: #d89614; --warning-bg: #2b2111; --error: #dc4446; --error-bg: #2c1618;
+  --shadow: 0 6px 16px 0 rgba(0,0,0,0.32), 0 3px 6px -4px rgba(0,0,0,0.48), 0 9px 28px 8px rgba(0,0,0,0.2);
+  --window-shadow: 0 24px 60px -12px rgba(0,0,0,0.7);
+  color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0b0d10; --layout: #141414; --surface: #1f1f1f; --surface-2: #262626; --border: #424242; --split: #303030;
+  --text: rgba(255,255,255,0.85); --text-2: rgba(255,255,255,0.65); --text-3: rgba(255,255,255,0.45);
+  --primary: #1668dc; --primary-hover: #3c89e8; --primary-bg: #111a2c;
+  --success: #49aa19; --success-bg: #162312; --warning: #d89614; --warning-bg: #2b2111; --error: #dc4446; --error-bg: #2c1618;
+  --shadow: 0 6px 16px 0 rgba(0,0,0,0.32), 0 3px 6px -4px rgba(0,0,0,0.48), 0 9px 28px 8px rgba(0,0,0,0.2);
+  --window-shadow: 0 24px 60px -12px rgba(0,0,0,0.7);
+  color-scheme: dark }
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+[hidden] { display: none !important; }
+body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; line-height: 1.5714; }
+.page { max-width: 1240px; margin: 0 auto; padding-block: 24px 40px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 16px; }
+.intro { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: end; justify-content: space-between; }
+.intro h1 { margin: 0; font-size: 20px; font-weight: 600; text-wrap: balance; }
+.intro p { margin: 4px 0 0; color: var(--text-2); max-width: 64ch; }
+.demo-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* Buttons (antd default / primary / text / danger) */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 15px;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text);
+  font: inherit; cursor: pointer; white-space: nowrap; transition: color .2s, border-color .2s, background .2s; }
+.btn:hover { color: var(--primary-hover); border-color: var(--primary-hover); }
+.btn:focus-visible, .nav-item:focus-visible, .icon-btn:focus-visible, .tool:focus-visible, .seg button:focus-visible, .switch:focus-visible
+  { outline: 3px solid color-mix(in srgb, var(--primary) 35%, transparent); outline-offset: 1px; }
+.btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+.btn.primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); color: #fff; }
+.btn.danger { color: var(--error); border-color: var(--error); }
+.btn.danger:hover { background: var(--error-bg); }
+.btn.lg { height: 40px; padding: 0 20px; font-size: 16px; border-radius: var(--radius-lg); }
+.btn.sm { height: 24px; padding: 0 7px; font-size: 13px; border-radius: 4px; }
+.btn.text { border-color: transparent; background: transparent; }
+.btn.text:hover { background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--text); }
+.icon-btn { display: inline-grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: var(--radius);
+  background: transparent; color: var(--text-2); cursor: pointer; }
+.icon-btn:hover { background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--text); }
+svg.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+
+/* App window */
+.window { display: grid; grid-template-columns: 200px minmax(0, 1fr); min-height: 640px; border: 1px solid var(--border);
+  border-radius: 10px; background: var(--layout); box-shadow: var(--window-shadow); overflow: hidden; position: relative; }
+.sidebar { display: flex; flex-direction: column; gap: 4px; padding: 12px 8px; background: var(--surface); border-right: 1px solid var(--split); }
+.traffic { display: flex; gap: 8px; padding: 2px 8px 14px; }
+.traffic i { width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; }
+.traffic i:nth-child(2) { background: #febc2e; } .traffic i:nth-child(3) { background: #28c840; }
+.brand { display: flex; align-items: center; gap: 8px; padding: 0 8px 12px; font-weight: 600; }
+.brand .logo { width: 24px; height: 24px; border-radius: 6px; background: var(--primary); display: grid; place-items: center; color: #fff; }
+.brand .logo svg { width: 14px; height: 14px; }
+.brand small { color: var(--text-3); font-weight: 400; font-size: 12px; }
+.nav-item { display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 12px; border: 0; border-radius: var(--radius-lg);
+  background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.nav-item:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
+.nav-item[aria-current="page"] { background: var(--primary-bg); color: var(--primary); font-weight: 500; }
+.nav-item .count { margin-left: auto; font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.sidebar-foot { margin-top: auto; display: grid; gap: 8px; padding: 12px 8px 0; border-top: 1px solid var(--split); }
+.account { display: flex; align-items: center; gap: 10px; }
+.avatar { width: 32px; height: 32px; border-radius: 50%; background: color-mix(in srgb, var(--primary) 18%, var(--surface)); color: var(--primary);
+  display: grid; place-items: center; font-weight: 600; font-size: 13px; flex: none; }
+.account b { display: block; font-weight: 500; font-size: 13px; }
+.account small, .server small { color: var(--text-3); font-size: 12px; }
+.server { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); flex: none; }
+.dot.off { background: var(--text-3); } .dot.warn { background: var(--warning); }
+
+.content { min-width: 0; padding: 20px 24px 24px; display: grid; gap: 16px; align-content: start; overflow: auto; }
+.content-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.content-head h2 { margin: 0; font-size: 18px; font-weight: 600; }
+.content-head .spacer { flex: 1; }
+.muted { color: var(--text-3); }
+
+.card { background: var(--surface); border: 1px solid var(--split); border-radius: var(--radius-lg); padding: 20px; min-width: 0; }
+.card h3 { margin: 0 0 4px; font-size: 16px; font-weight: 600; }
+.card .sub { margin: 0 0 16px; color: var(--text-3); font-size: 13px; }
+
+/* Connect page */
+.connect-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.id-row { display: grid; gap: 4px; padding: 12px 0; border-bottom: 1px solid var(--split); }
+.id-row:last-of-type { border-bottom: 0; }
+.id-label { font-size: 12px; color: var(--text-3); }
+.id-value { display: flex; align-items: center; gap: 4px; }
+.id-value strong { font-family: var(--mono); font-size: 28px; font-weight: 600; letter-spacing: 0.04em; font-variant-numeric: tabular-nums; }
+.id-value .pw { font-size: 22px; letter-spacing: 0.12em; }
+.id-value .grow { flex: 1; }
+.allow { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding: 10px 12px; border-radius: var(--radius); background: var(--surface-2); font-size: 13px; color: var(--text-2); }
+.allow .grow { flex: 1; }
+
+.switch { position: relative; width: 44px; height: 22px; border: 0; border-radius: 11px; background: color-mix(in srgb, var(--text) 25%, transparent); cursor: pointer; flex: none; transition: background .2s; }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 2px 4px rgba(0,35,11,.2); transition: left .2s; }
+.switch[aria-checked="true"] { background: var(--primary); }
+.switch[aria-checked="true"]::after { left: 24px; }
+
+.field { display: grid; gap: 8px; }
+.field label { font-size: 13px; color: var(--text-2); }
+.input { width: 100%; height: 40px; padding: 0 11px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); color: var(--text);
+  font: inherit; font-size: 16px; transition: border-color .2s, box-shadow .2s; }
+.input.mono { font-family: var(--mono); letter-spacing: 0.06em; font-variant-numeric: tabular-nums; }
+.input:hover { border-color: var(--primary-hover); }
+.input:focus { outline: 0; border-color: var(--primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 18%, transparent); }
+.input.sm { height: 32px; font-size: 14px; border-radius: var(--radius); }
+.seg { display: inline-flex; padding: 2px; border-radius: var(--radius); background: color-mix(in srgb, var(--text) 6%, transparent); gap: 2px; }
+.seg button { height: 28px; padding: 0 12px; border: 0; border-radius: 4px; background: transparent; color: var(--text-2); font: inherit; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+.connect-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.connect-actions .btn.primary { flex: 1; min-width: 120px; }
+.hint { margin-top: 12px; font-size: 12px; color: var(--text-3); }
+
+.section-head { display: flex; align-items: baseline; gap: 8px; }
+.section-head h3 { margin: 0; font-size: 14px; font-weight: 600; }
+.section-head .spacer { flex: 1; }
+.recent { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(200px, 100%), 1fr)); gap: 12px; }
+.device-card { display: grid; gap: 10px; padding: 10px; border: 1px solid var(--split); border-radius: var(--radius-lg); background: var(--surface);
+  font: inherit; color: inherit; text-align: left; cursor: pointer; transition: border-color .2s, box-shadow .2s; }
+.device-card:hover { border-color: var(--primary-hover); box-shadow: var(--shadow); }
+.thumb { position: relative; aspect-ratio: 16 / 10; max-width: 100%; border-radius: 4px; overflow: hidden;
+  background: linear-gradient(135deg, var(--screen-a), var(--screen-b)); }
+.thumb.win { background: linear-gradient(160deg, #0a5ca8, #2d8ee0 60%, #8fc3f0); }
+.thumb.linux { background: linear-gradient(140deg, #3a2b4f, #7a3e65); }
+.thumb.off { filter: grayscale(1) brightness(.75); }
+.thumb::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 10%; background: rgba(255,255,255,.18); }
+.thumb .win1 { position: absolute; left: 14%; top: 16%; width: 52%; height: 50%; border-radius: 3px; background: rgba(255,255,255,.85); }
+.thumb .win2 { position: absolute; left: 44%; top: 34%; width: 42%; height: 40%; border-radius: 3px; background: rgba(255,255,255,.6); }
+.device-meta { display: grid; gap: 2px; }
+.device-meta b { font-weight: 500; display: flex; align-items: center; gap: 6px; }
+.device-meta small { color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+/* Tags */
+.tag { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 7px; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--surface-2); color: var(--text-2); font-size: 12px; white-space: nowrap; }
+.tag.ok { color: var(--success); background: var(--success-bg); border-color: color-mix(in srgb, var(--success) 40%, transparent); }
+.tag.warn { color: var(--warning); background: var(--warning-bg); border-color: color-mix(in srgb, var(--warning) 40%, transparent); }
+.tag.blue { color: var(--primary); background: var(--primary-bg); border-color: color-mix(in srgb, var(--primary) 40%, transparent); }
+
+/* Devices page */
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.toolbar .input { max-width: 260px; }
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--split); border-radius: var(--radius-lg); }
+table { width: 100%; border-collapse: collapse; min-width: 720px; }
+th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid var(--split); white-space: nowrap; }
+th { background: var(--surface-2); color: var(--text); font-weight: 600; font-size: 13px; }
+tbody tr:hover td { background: var(--surface-2); }
+tbody tr:last-child td { border-bottom: 0; }
+td.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--text-2); }
+.dev-name { display: flex; align-items: center; gap: 10px; }
+.os-icon { width: 28px; height: 28px; border-radius: 6px; display: grid; place-items: center; background: var(--surface-2); color: var(--text-2); flex: none; }
+.dev-name b { font-weight: 500; display: block; }
+.dev-name small { color: var(--text-3); font-size: 12px; }
+.group-row td { background: var(--layout); color: var(--text-3); font-size: 12px; padding: 6px 16px; }
+.row-actions { display: flex; gap: 4px; }
+
+/* Session view */
+.session { position: relative; min-height: 600px; margin: -20px -24px -24px; background: #0f1115; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
+.remote-screen { position: relative; width: min(92%, 960px); aspect-ratio: 16 / 9; max-width: 100%; border-radius: 4px; overflow: hidden;
+  background: linear-gradient(160deg, #0a5ca8, #2d8ee0 60%, #8fc3f0); box-shadow: 0 0 0 1px rgba(255,255,255,.06); }
+.rs-taskbar { position: absolute; left: 0; right: 0; bottom: 0; height: 7%; background: rgba(240,244,250,.82); display: flex; align-items: center; justify-content: center; gap: 1.2%; }
+.rs-taskbar i { width: 2.4%; aspect-ratio: 1; border-radius: 3px; background: rgba(20,60,120,.55); }
+.rs-window { position: absolute; left: 12%; top: 10%; width: 56%; height: 62%; border-radius: 6px; background: #fff; box-shadow: 0 10px 30px rgba(0,0,0,.25); overflow: hidden; }
+.rs-window .bar { height: 9%; background: #f3f3f3; border-bottom: 1px solid #e5e5e5; }
+.rs-window .line { height: 4%; margin: 3.5% 6% 0; border-radius: 2px; background: #e8ecf2; }
+.rs-window .line.s { width: 46%; } .rs-window .line.m { width: 70%; }
+.rs-window2 { position: absolute; left: 50%; top: 30%; width: 38%; height: 46%; border-radius: 6px; background: #1e1e1e; box-shadow: 0 10px 30px rgba(0,0,0,.35); padding: 2.5%; }
+.rs-window2 .code { height: 6%; margin-bottom: 4%; border-radius: 2px; background: #3a6ea5; opacity: .8; }
+.rs-window2 .code:nth-child(2n) { width: 60%; background: #6a9955; } .rs-window2 .code:nth-child(3n) { width: 78%; background: #c586c0; }
+.rs-cursor { position: absolute; left: 63%; top: 48%; width: 14px; height: 20px; }
+.session-bar { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 2px;
+  padding: 4px; border-radius: 10px; background: rgba(32,34,38,.92); color: rgba(255,255,255,.88); box-shadow: 0 8px 24px rgba(0,0,0,.4);
+  max-width: calc(100% - 24px); overflow-x: auto; }
+.session-bar .who { display: flex; align-items: center; gap: 8px; padding: 0 10px 0 8px; font-size: 13px; white-space: nowrap; }
+.session-bar .stat { display: flex; align-items: center; gap: 10px; padding: 0 10px; font-size: 12px; color: rgba(255,255,255,.6);
+  font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; border-left: 1px solid rgba(255,255,255,.12); border-right: 1px solid rgba(255,255,255,.12); }
+.session-bar .stat b { color: #95de64; font-weight: 500; }
+.tool { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 9px; border: 0; border-radius: 6px; background: transparent;
+  color: inherit; font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.tool:hover { background: rgba(255,255,255,.1); }
+.tool.end { color: #ff7875; }
+.tool.end:hover { background: rgba(255,77,79,.18); }
+
+/* Session: tab strip on top (one tab per remote device), toolbar floats over the picture */
+.session-strip { display: flex; align-items: flex-end; gap: 2px; padding: 6px 8px 0; background: #1a1c20; min-width: 0; overflow-x: auto; }
+.stab { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px 0 12px; border: 0; border-radius: 6px 6px 0 0; background: transparent;
+  color: rgba(255,255,255,.6); font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.stab:hover { background: rgba(255,255,255,.06); color: rgba(255,255,255,.85); }
+.stab.on { background: #0f1115; color: #fff; }
+.stab .lat { font-family: var(--mono); font-size: 11px; font-variant-numeric: tabular-nums; }
+.stab .lat.good { color: #95de64; } .stab .lat.mid { color: #ffd666; }
+.stab .x { width: 18px; height: 18px; border-radius: 4px; display: grid; place-items: center; color: rgba(255,255,255,.45); }
+.stab .x:hover { background: rgba(255,255,255,.12); color: #fff; }
+.stab.add { padding: 0 8px; }
+.strip-spacer { flex: 1; }
+.stab-mode { align-self: center; margin: 0 4px 6px; padding: 2px 8px; border-radius: 4px; background: rgba(22,104,220,.3); color: #91caff; font-size: 12px; white-space: nowrap; }
+.session-stage { position: relative; display: grid; place-items: center; padding: 56px 16px 24px; min-height: 0; }
+.session-bar { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 2px;
+  padding: 4px; border-radius: 10px; background: rgba(32,34,38,.94); color: rgba(255,255,255,.88); box-shadow: 0 8px 24px rgba(0,0,0,.4);
+  max-width: calc(100% - 24px); overflow-x: auto; transition: transform .2s, opacity .2s; z-index: 2; }
+.session-bar.folded { transform: translate(-50%, -38px); opacity: .0; }
+.session-stage:hover .session-bar.folded { transform: translateX(-50%); opacity: 1; }
+.session-bar .sep { width: 1px; height: 18px; background: rgba(255,255,255,.14); margin: 0 4px; flex: none; }
+.tool { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 9px; border: 0; border-radius: 6px; background: transparent;
+  color: inherit; font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; flex: none; }
+.tool.icon { padding: 0 8px; }
+.tool:hover, .tool[aria-expanded="true"] { background: rgba(255,255,255,.1); }
+.tool[aria-pressed="true"]:not(#pin-btn) { background: rgba(22,104,220,.45); color: #fff; }
+.tool .caret { width: 12px; height: 12px; opacity: .6; }
+.tool.end { color: #ff7875; }
+.tool.end:hover { background: rgba(255,77,79,.18); }
+.stat-btn { font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; color: rgba(255,255,255,.6); }
+.stat-btn b { color: #95de64; font-weight: 500; }
+.pop { position: absolute; top: 54px; left: 50%; transform: translateX(-50%); z-index: 3; width: 300px; max-width: calc(100% - 24px); padding: 12px;
+  border-radius: var(--radius-lg); background: var(--surface); color: var(--text); box-shadow: var(--shadow); display: grid; gap: 10px; font-size: 13px; }
+.pop .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pop.menu { padding: 4px; gap: 0; width: 240px; }
+.pop.menu button { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border: 0; border-radius: 4px; background: transparent;
+  color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.pop.menu button:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
+.pop.menu .toggle::after { content: ""; margin-left: auto; width: 14px; height: 14px; }
+.pop.menu .toggle.on::after { content: "✓"; color: var(--primary); font-weight: 600; }
+.menu-sep { height: 1px; background: var(--split); margin: 4px 0; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; font-size: 13px; }
+.kv span { color: var(--text-3); } .kv b { font-weight: 500; font-variant-numeric: tabular-nums; }
+.privacy-note { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; padding: 6px 12px;
+  border-radius: 6px; background: rgba(22,104,220,.85); color: #fff; font-size: 12px; white-space: nowrap; }
+
+
+/* Control center: one button at the right of the tab strip, cascading menus (outside the video, which is a native view) */
+.strip-btn { display: inline-flex; align-items: center; gap: 6px; height: 28px; margin: 0 2px 4px; padding: 0 10px; border: 0; border-radius: 6px; flex: none;
+  background: rgba(255,255,255,.06); color: rgba(255,255,255,.85); font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; align-self: center; }
+.strip-btn:hover, .strip-btn[aria-expanded="true"] { background: rgba(255,255,255,.14); }
+.strip-btn.icon { padding: 0 8px; }
+.strip-btn[aria-pressed="true"] { background: rgba(22,104,220,.5); color: #fff; }
+.strip-btn.stat-btn { background: transparent; font-family: var(--mono); font-size: 12px; color: rgba(255,255,255,.55); font-variant-numeric: tabular-nums; }
+.strip-btn.stat-btn b { color: #95de64; font-weight: 500; }
+.session-stage { padding: 16px; }
+#stat-pop { top: 8px; left: auto; right: 150px; transform: none; }
+.cc-menu { position: absolute; top: 4px; right: 8px; z-index: 3; width: 236px; padding: 6px; border-radius: 10px; background: var(--surface); color: var(--text);
+  box-shadow: var(--shadow); display: grid; font-size: 14px; }
+.cc-item { position: relative; display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border: 0; border-radius: 6px;
+  background: transparent; color: var(--text); font: inherit; text-align: left; cursor: default; }
+button.cc-item { cursor: pointer; }
+.cc-item:hover, .cc-item.open { background: var(--primary); color: #fff; }
+.cc-item.end { color: var(--error); }
+.cc-item.end:hover { background: var(--error-bg); color: var(--error); }
+.cc-chev { margin-left: auto; font-size: 16px; line-height: 1; }
+.cc-item kbd { margin-left: auto; font-family: inherit; font-size: 12px; color: var(--text-3); }
+.cc-item:hover kbd { color: rgba(255,255,255,.8); }
+.cc-sep { height: 1px; background: var(--split); margin: 4px 8px; }
+.cc-sub { display: none; position: absolute; top: -6px; right: calc(100% + 4px); width: 230px; padding: 6px; border-radius: 10px; background: var(--surface);
+  box-shadow: var(--shadow); color: var(--text); }
+.cc-sub.wide { width: 270px; }
+.cc-item.open > .cc-sub { display: grid; }
+.cc-opt { position: relative; display: grid; gap: 1px; padding: 7px 10px 7px 30px; border: 0; border-radius: 6px; background: transparent; color: var(--text);
+  font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.cc-opt:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
+.cc-opt small { font-size: 12px; color: var(--text-3); }
+.cc-opt.on::before { content: "✓"; position: absolute; left: 10px; top: 7px; color: var(--primary); font-weight: 600; }
+
+/* Connect page extras */
+.id-label-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.select { height: 24px; padding: 0 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--text-2); font: inherit; font-size: 12px; }
+.history-field { position: relative; }
+.history { position: absolute; top: 100%; left: 0; right: 0; margin-top: 4px; z-index: 3; padding: 4px; border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow); display: grid; }
+.history-head { padding: 4px 8px; font-size: 12px; color: var(--text-3); }
+.history-item { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; height: 34px; padding: 0 8px; border: 0; border-radius: 4px;
+  background: transparent; color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.history-item:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
+.history-item .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.history-item .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.star { color: var(--text-3); } .star.on { color: var(--warning); }
+
+/* Devices drawer */
+.dev-row { cursor: pointer; }
+.dev-row:focus-visible td { background: var(--primary-bg); outline: 0; }
+.dev-row.sel td { background: var(--primary-bg); }
+.drawer { position: absolute; top: 0; right: 0; bottom: 0; width: min(340px, 100%); z-index: 4; padding: 16px; display: flex; flex-direction: column; gap: 16px;
+  background: var(--surface); border-left: 1px solid var(--split); box-shadow: var(--shadow); overflow: auto; }
+.drawer-head { display: flex; align-items: flex-start; gap: 8px; justify-content: space-between; }
+.drawer-head b { display: block; font-size: 16px; font-weight: 600; }
+.drawer-head small { color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+.drawer-actions { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+.drawer-actions .btn { padding: 0 8px; }
+.drawer-group { display: grid; gap: 8px; }
+.drawer-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.drawer-grid button { display: grid; justify-items: center; gap: 6px; padding: 10px 4px; border: 1px solid var(--split); border-radius: var(--radius-lg); background: var(--surface-2);
+  color: var(--text-2); font: inherit; font-size: 12px; cursor: pointer; }
+.drawer-grid button:hover { border-color: var(--primary-hover); color: var(--primary); }
+.drawer-grid svg.i { width: 18px; height: 18px; }
+.drawer-foot { margin-top: auto; display: flex; flex-wrap: wrap; gap: 4px; padding-top: 12px; border-top: 1px solid var(--split); }
+.btn.text.danger-text { color: var(--error); }
+
+/* Controlled panel: bottom-right, like a call widget */
+.controlled { position: absolute; right: 16px; bottom: 16px; z-index: 6; width: 280px; max-width: calc(100% - 32px); padding: 12px; display: grid; gap: 10px;
+  border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow); border: 1px solid color-mix(in srgb, var(--error) 45%, transparent); }
+.controlled-head { display: flex; align-items: center; gap: 8px; }
+.controlled-head b { font-weight: 600; flex: 1; }
+.controlled .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--error); animation: pulse 1.6s infinite; flex: none; }
+.mono-num { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 12px; }
+.controlled-perms { display: flex; flex-wrap: wrap; gap: 6px; }
+.perm-chip { height: 24px; padding: 0 8px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text-3); font: inherit; font-size: 12px; cursor: pointer; text-decoration: line-through; }
+.perm-chip.on { border-color: color-mix(in srgb, var(--primary) 40%, transparent); background: var(--primary-bg); color: var(--primary); text-decoration: none; }
+.controlled-actions { display: flex; align-items: center; gap: 8px; }
+.controlled-actions .spacer { flex: 1; }
+
+/* Transfer page */
+.panes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.pane { background: var(--surface); border: 1px solid var(--split); border-radius: var(--radius-lg); min-width: 0; overflow: hidden; }
+.pane-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--split); }
+.pane-head b { font-weight: 500; }
+.path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12px; color: var(--text-3); }
+.file { display: grid; grid-template-columns: 20px minmax(0, 1fr) 72px; gap: 8px; align-items: center; padding: 7px 12px; font-size: 13px; cursor: default; }
+.file:hover { background: var(--surface-2); }
+.file.sel { background: var(--primary-bg); }
+.file span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file small { text-align: right; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.file svg { color: var(--text-3); } .file.dir svg { color: var(--warning); }
+.queue { display: grid; gap: 0; }
+.job { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 12px 16px; border-bottom: 1px solid var(--split); font-size: 13px; }
+.job:last-child { border-bottom: 0; }
+.job small { color: var(--text-3); font-variant-numeric: tabular-nums; }
+.progress { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--text) 8%, transparent); overflow: hidden; }
+.progress i { display: block; height: 100%; border-radius: 3px; background: var(--primary); }
+.progress.done i { background: var(--success); }
+
+/* Settings page */
+.settings { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 16px; align-items: start; }
+.subnav { display: grid; gap: 2px; }
+.subnav .nav-item { height: 36px; }
+.form-row { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 8px 24px; padding: 16px 0; border-bottom: 1px solid var(--split); align-items: start; }
+.form-row:last-child { border-bottom: 0; }
+.form-row > label, .form-row > .label { font-weight: 500; padding-top: 5px; }
+.form-row .desc { font-size: 12px; color: var(--text-3); margin-top: 4px; }
+.radio-group { display: grid; gap: 8px; }
+.radio { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.radio input { accent-color: var(--primary); width: 16px; height: 16px; margin: 0; }
+.inline { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+/* Incoming request modal + controlled indicator */
+.mask { position: absolute; inset: 0; background: rgba(0,0,0,.45); display: grid; place-items: center; padding: 16px; z-index: 5; }
+.modal { width: min(420px, 100%); background: var(--surface); border-radius: var(--radius-lg); box-shadow: var(--shadow); padding: 20px 24px; display: grid; gap: 14px; }
+.modal-head { display: flex; gap: 12px; align-items: center; }
+.modal-head .avatar { width: 44px; height: 44px; font-size: 16px; }
+.modal-head b { font-size: 16px; font-weight: 600; display: block; }
+.modal-head small { color: var(--text-3); font-family: var(--mono); font-size: 12px; }
+.perm { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.check { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.check input { accent-color: var(--primary); width: 16px; height: 16px; margin: 0; }
+.modal-foot { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.modal-foot .btn.primary { font-variant-numeric: tabular-nums; }
+.alert { display: flex; gap: 8px; padding: 8px 12px; border-radius: var(--radius); font-size: 13px; background: var(--warning-bg);
+  border: 1px solid color-mix(in srgb, var(--warning) 40%, transparent); color: var(--text-2); }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+
+.toast { position: absolute; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 6; padding: 9px 12px; border-radius: var(--radius-lg);
+  background: var(--surface); color: var(--text); box-shadow: var(--shadow); font-size: 13px; display: flex; gap: 8px; align-items: center; }
+.toast svg { color: var(--success); }
+
+.notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: 12px; }
+.note { padding: 14px 16px; border-radius: var(--radius-lg); background: var(--surface); border: 1px solid var(--split); font-size: 13px; color: var(--text-2); }
+.note b { display: block; color: var(--text); margin-bottom: 4px; font-size: 14px; }
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+@media (max-width: 860px) {
+  .window { grid-template-columns: minmax(0, 1fr); }
+  .sidebar { flex-direction: row; flex-wrap: wrap; align-items: center; border-right: 0; border-bottom: 1px solid var(--split); padding: 8px; }
+  .traffic, .sidebar-foot, .nav-item .count { display: none; }
+  .brand { padding: 0 8px; width: 100%; }
+  .nav-item { height: 34px; padding: 0 10px; }
+  .connect-grid, .panes, .settings { grid-template-columns: minmax(0, 1fr); }
+  .form-row { grid-template-columns: minmax(0, 1fr); }
+  .content { padding: 16px; }
+  .session { margin: -16px; min-height: 480px; }
+  .drawer-grid { grid-template-columns: repeat(3, 1fr); }
+  .subnav { grid-auto-flow: column; overflow-x: auto; }
+}
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
+    <symbol id="i-devices" viewBox="0 0 24 24"><rect x="2" y="5" width="14" height="10" rx="1.5"/><path d="M6 19h6"/><rect x="17" y="8" width="5" height="11" rx="1"/></symbol>
+    <symbol id="i-swap" viewBox="0 0 24 24"><path d="M7 4 3 8l4 4M3 8h14M17 20l4-4-4-4M21 16H7"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L3 21l1.9-6.4A8 8 0 1 1 21 12z"/></symbol>
+    <symbol id="i-expand" viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></symbol>
+    <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3v9"/><path d="M6.3 7.3a8 8 0 1 0 11.4 0"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 5 5 9-10"/></symbol>
+    <symbol id="i-apple" viewBox="0 0 24 24"><path d="M16 3c-1.5.1-3 1-3.6 2.4M12 8c-1.5-1-5-1.4-6.5 1.6S5 17 7.5 20c1 1.2 2.2 1.3 3.2.7.8-.4 1.8-.4 2.6 0 1 .6 2.2.5 3.2-.7 1-1.2 1.7-2.6 2-3.6-2.6-1-3-5-.5-6.5C16.6 7.3 13.5 7 12 8z"/></symbol>
+    <symbol id="i-windows" viewBox="0 0 24 24"><path d="M3 5.5 10.5 4.5v7H3zM12 4.3 21 3v8.5h-9zM3 12.5h7.5v7L3 18.5zM12 12.5h9V21l-9-1.3z"/></symbol>
+    <symbol id="i-linux" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="m8 10 2 2-2 2M12 14h4"/></symbol>
+    <symbol id="i-cad" viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="10" rx="2"/><path d="M7 12h10"/></symbol>
+    <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M9 4h6l-1 6 4 4H6l4-4z"/><path d="M12 14v6"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/></symbol>
+    <symbol id="i-volume" viewBox="0 0 24 24"><path d="M4 10v4h4l5 4V6L8 10z"/><path d="M16.5 9a4 4 0 0 1 0 6M19 6.5a8 8 0 0 1 0 11"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+    <symbol id="i-ban" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m5.7 5.7 12.6 12.6"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24"><path d="M3 8a2 2 0 0 1 2-2h2l2-2h6l2 2h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><circle cx="12" cy="12.5" r="3.5"/></symbol>
+  </defs>
+</svg>
+
+<div class="page">
+  <div class="intro">
+    <div>
+      <h1>远程桌面 · 界面原型</h1>
+      <p>Tango 桌面端，按 antd 6.7 基线配色和尺寸。点左侧导航切换页面，「我的设备」里点一行打开设备详情；右边两个按钮模拟被连接和远程会话。示例数据均为虚构。</p>
+    </div>
+    <div class="demo-actions">
+      <button class="btn" type="button" id="demo-incoming"><svg class="i"><use href="#i-link"/></svg>模拟有人请求连接</button>
+      <button class="btn" type="button" id="demo-session"><svg class="i"><use href="#i-monitor"/></svg>打开远程会话</button>
+    </div>
+  </div>
+
+  <div class="window" id="window">
+    <nav class="sidebar" aria-label="主导航">
+      <div class="traffic" aria-hidden="true"><i></i><i></i><i></i></div>
+      <div class="brand"><span class="logo"><svg class="i"><use href="#i-monitor"/></svg></span>远程桌面 <small>暂名</small></div>
+      <button class="nav-item" type="button" data-view="connect" aria-current="page"><svg class="i"><use href="#i-link"/></svg>连接</button>
+      <button class="nav-item" type="button" data-view="devices"><svg class="i"><use href="#i-devices"/></svg>我的设备<span class="count">6</span></button>
+      <button class="nav-item" type="button" data-view="session"><svg class="i"><use href="#i-monitor"/></svg>远程会话<span class="count">1</span></button>
+      <button class="nav-item" type="button" data-view="transfer"><svg class="i"><use href="#i-swap"/></svg>文件传输</button>
+      <button class="nav-item" type="button" data-view="settings"><svg class="i"><use href="#i-gear"/></svg>设置</button>
+      <div class="sidebar-foot">
+        <div class="account"><span class="avatar">林</span><div><b>林舟</b><small>专业版 · 3 台在线</small></div></div>
+        <div class="server"><span class="dot"></span>服务正常 <small>· 中继 上海</small></div>
+      </div>
+    </nav>
+
+    <main class="content" id="content">
+      <!-- 连接 -->
+      <section data-page="connect">
+        <div class="content-head"><h2>连接</h2></div>
+        <div class="connect-grid" style="margin-top:16px">
+          <div class="card">
+            <h3>允许控制本机</h3>
+            <p class="sub">把识别码和临时密码告诉对方，对方就能连接这台电脑。</p>
+            <div class="id-row">
+              <span class="id-label">本机识别码</span>
+              <div class="id-value"><strong>382 615 904</strong><span class="grow"></span>
+                <button class="icon-btn" type="button" title="复制识别码" data-copy="382615904"><svg class="i"><use href="#i-copy"/></svg></button></div>
+            </div>
+            <div class="id-row">
+              <span class="id-label id-label-row">临时密码
+                <select class="select" id="pw-rotate" aria-label="密码更换频率">
+                  <option>每次连接后更换</option><option>每 12 小时更换</option><option>每 24 小时更换</option><option>不自动更换</option>
+                </select></span>
+              <div class="id-value"><strong class="pw" id="pw">••••••</strong><span class="grow"></span>
+                <button class="icon-btn" type="button" title="显示密码" id="pw-toggle"><svg class="i"><use href="#i-eye"/></svg></button>
+                <button class="icon-btn" type="button" title="更换密码" id="pw-refresh"><svg class="i"><use href="#i-refresh"/></svg></button>
+                <button class="icon-btn" type="button" title="复制密码" id="pw-copy"><svg class="i"><use href="#i-copy"/></svg></button></div>
+            </div>
+            <div class="allow"><span class="dot"></span><span class="grow">允许被远程控制</span>
+              <button class="switch" type="button" role="switch" aria-checked="true" aria-label="允许被远程控制" id="allow-switch"></button></div>
+            <div class="connect-actions">
+              <button class="btn" type="button" id="share-btn"><svg class="i"><use href="#i-copy"/></svg>复制并分享</button>
+              <span class="hint" style="margin:0;align-self:center">复制成一段话，直接发到微信</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>控制其他电脑</h3>
+            <p class="sub">输入对方的识别码。自己账号下的设备不用密码，在「我的设备」里直接打开。</p>
+            <div class="field history-field">
+              <label for="peer-id">对方识别码</label>
+              <input class="input mono" id="peer-id" inputmode="numeric" placeholder="例如 528 104 337" value="528 104 337" autocomplete="off">
+              <div class="history" id="history" hidden>
+                <div class="history-head">连接记录</div>
+                <button type="button" class="history-item" data-id="528 104 337"><span class="mono">528 104 337</span><span class="muted">妈妈的电脑</span><span class="star on" title="已收藏">★</span></button>
+                <button type="button" class="history-item" data-id="917 330 452"><span class="mono">917 330 452</span><span class="muted">客户 · 张经理</span><span class="star" title="收藏">☆</span></button>
+                <button type="button" class="history-item" data-id="604 281 775"><span class="mono">604 281 775</span><span class="muted">11月20日</span><span class="star" title="收藏">☆</span></button>
+              </div>
+            </div>
+            <div class="inline" style="margin-top:14px">
+              <span class="muted" style="font-size:13px">连接方式</span>
+              <div class="seg" role="group" aria-label="连接方式">
+                <button type="button" aria-pressed="true">远程控制</button>
+                <button type="button" aria-pressed="false">仅查看</button>
+                <button type="button" aria-pressed="false">传文件</button>
+              </div>
+            </div>
+            <div class="connect-actions">
+              <button class="btn primary lg" type="button" id="connect-btn">连接</button>
+            </div>
+            <p class="hint">优先点对点直连；直连失败时自动走中继，延迟会略高。</p>
+          </div>
+        </div>
+
+        <div class="section-head" style="margin-top:20px"><h3>最近连接</h3><span class="muted" style="font-size:12px">4</span><span class="spacer"></span><button class="btn text sm" type="button">清空记录</button></div>
+        <div class="recent" style="margin-top:10px">
+          <button class="device-card" type="button" data-open-session>
+            <div class="thumb win"><i class="win1"></i><i class="win2"></i></div>
+            <div class="device-meta"><b><span class="dot"></span>办公室台式机</b><small>Windows 11 · 今天 09:12</small></div>
+          </button>
+          <button class="device-card" type="button" data-open-session>
+            <div class="thumb"><i class="win1"></i></div>
+            <div class="device-meta"><b><span class="dot"></span>家里 MacBook Pro</b><small>macOS 15 · 昨天 22:40</small></div>
+          </button>
+          <button class="device-card" type="button">
+            <div class="thumb win off"><i class="win1"></i><i class="win2"></i></div>
+            <div class="device-meta"><b><span class="dot off"></span>妈妈的电脑</b><small>528 104 337 · 3 天前</small></div>
+          </button>
+          <button class="device-card" type="button">
+            <div class="thumb linux off"><i class="win1"></i></div>
+            <div class="device-meta"><b><span class="dot off"></span>渲染服务器</b><small>Ubuntu 24.04 · 11月18日</small></div>
+          </button>
+        </div>
+      </section>
+
+      <!-- 我的设备 -->
+      <section data-page="devices" hidden>
+        <div class="content-head"><h2>我的设备</h2><span class="muted">6 台，3 台在线</span><span class="spacer"></span>
+          <button class="btn primary" type="button"><svg class="i"><use href="#i-plus"/></svg>添加设备</button></div>
+        <div class="toolbar" style="margin-top:16px">
+          <input class="input sm" id="device-search" placeholder="搜索名称或识别码">
+          <div class="seg" role="group" aria-label="筛选"><button type="button" aria-pressed="true">全部</button><button type="button" aria-pressed="false">在线</button><button type="button" aria-pressed="false">离线</button></div>
+        </div>
+        <div class="table-wrap" style="margin-top:12px">
+          <table>
+            <thead><tr><th>设备</th><th>识别码</th><th>状态</th><th>最近连接</th><th>无人值守</th><th></th></tr></thead>
+            <tbody>
+              <tr class="group-row"><td colspan="6">我的电脑 · 3</td></tr>
+              <tr class="dev-row" tabindex="0"><td><div class="dev-name"><span class="os-icon"><svg class="i"><use href="#i-windows"/></svg></span><div><b>办公室台式机</b><small>Windows 11 · RTX 4070</small></div></div></td>
+                <td class="mono">771 204 538</td><td><span class="tag ok"><span class="dot"></span>在线 · 直连</span></td><td>今天 09:12</td><td><span class="tag blue">已开启</span></td>
+                <td><div class="row-actions"><button class="btn primary sm" type="button" data-open-session>连接</button><button class="btn sm" type="button">文件</button></div></td></tr>
+              <tr class="dev-row" tabindex="0"><td><div class="dev-name"><span class="os-icon"><svg class="i"><use href="#i-apple"/></svg></span><div><b>家里 MacBook Pro</b><small>macOS 15 · M3</small></div></div></td>
+                <td class="mono">490 117 862</td><td><span class="tag ok"><span class="dot"></span>在线 · 直连</span></td><td>昨天 22:40</td><td><span class="tag blue">已开启</span></td>
+                <td><div class="row-actions"><button class="btn primary sm" type="button" data-open-session>连接</button><button class="btn sm" type="button">文件</button></div></td></tr>
+              <tr class="dev-row" tabindex="0"><td><div class="dev-name"><span class="os-icon"><svg class="i"><use href="#i-apple"/></svg></span><div><b>本机 · MacBook Air</b><small>macOS 15 · 当前设备</small></div></div></td>
+                <td class="mono">382 615 904</td><td><span class="tag">本机</span></td><td>—</td><td><span class="tag">未开启</span></td><td></td></tr>
+              <tr class="group-row"><td colspan="6">公司机房 · 2</td></tr>
+              <tr class="dev-row" tabindex="0"><td><div class="dev-name"><span class="os-icon"><svg class="i"><use href="#i-linux"/></svg></span><div><b>渲染服务器</b><small>Ubuntu 24.04 · X11</small></div></div></td>
+                <td class="mono">605 338 091</td><td><span class="tag warn"><span class="dot warn"></span>在线 · 中继</span></td><td>11月18日</td><td><span class="tag blue">已开启</span></td>
+                <td><div class="row-actions"><button class="btn primary sm" type="button" data-open-session>连接</button><button class="btn sm" type="button">文件</button></div></td></tr>
+              <tr class="dev-row" tabindex="0"><td><div class="dev-name"><span class="os-icon"><svg class="i"><use href="#i-windows"/></svg></span><div><b>前台收银机</b><small>Windows 10</small></div></div></td>
+                <td class="mono">218 940 773</td><td><span class="tag"><span class="dot off"></span>离线 · 2 小时前</span></td><td>11月12日</td><td><span class="tag blue">已开启</span></td>
+                <td><div class="row-actions"><button class="btn sm" type="button">远程唤醒</button></div></td></tr>
+              <tr class="group-row"><td colspan="6">家人 · 1</td></tr>
+              <tr class="dev-row" tabindex="0"><td><div class="dev-name"><span class="os-icon"><svg class="i"><use href="#i-windows"/></svg></span><div><b>妈妈的电脑</b><small>Windows 11 · 每次需对方确认</small></div></div></td>
+                <td class="mono">528 104 337</td><td><span class="tag"><span class="dot off"></span>离线 · 3 天前</span></td><td>3 天前</td><td><span class="tag">未开启</span></td>
+                <td><div class="row-actions"><button class="btn sm" type="button">发送邀请</button></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- 远程会话 -->
+      <section data-page="session" hidden>
+        <div class="session">
+          <div class="session-strip" role="tablist" aria-label="远程会话">
+            <button class="stab on" type="button" role="tab" aria-selected="true"><svg class="i"><use href="#i-windows"/></svg>办公室台式机<span class="lat good">18 ms</span><span class="x" aria-label="关闭">×</span></button>
+            <button class="stab" type="button" role="tab" aria-selected="false"><svg class="i"><use href="#i-linux"/></svg>渲染服务器<span class="lat mid">46 ms</span><span class="x" aria-label="关闭">×</span></button>
+            <button class="stab add" type="button" aria-label="新建连接" data-goto="connect"><svg class="i"><use href="#i-plus"/></svg></button>
+            <span class="strip-spacer"></span>
+            <button class="strip-btn stat-btn" type="button" id="stat-btn" title="连接详情"><span class="dot"></span><b>18 ms</b><span>60 fps · 直连</span></button>
+            <button class="strip-btn icon" type="button" id="mic-btn" aria-pressed="false" title="语音通话"><svg class="i"><use href="#i-mic"/></svg></button>
+            <button class="strip-btn cc" type="button" id="cc-btn" aria-expanded="false"><svg class="i"><use href="#i-sliders"/></svg>控制中心</button>
+          </div>
+          <div class="session-stage">
+            <div class="remote-screen" aria-label="远程画面示意">
+              <div class="rs-window"><div class="bar"></div><div class="line m"></div><div class="line"></div><div class="line s"></div><div class="line m"></div><div class="line s"></div></div>
+              <div class="rs-window2"><div class="code"></div><div class="code"></div><div class="code"></div><div class="code"></div><div class="code"></div><div class="code"></div></div>
+              <svg class="rs-cursor" viewBox="0 0 14 20"><path d="M1 1v16l4-4 3 6 2-1-3-6h6z" fill="#fff" stroke="#000" stroke-width="1"/></svg>
+              <div class="rs-taskbar"><i></i><i></i><i></i><i></i><i></i></div>
+            </div>
+            <div class="pop" id="stat-pop" hidden>
+              <div class="row"><b>连接详情</b><span class="tag ok">点对点直连</span></div>
+              <div class="kv"><span>延迟</span><b>18 ms</b><span>帧率</span><b>60 fps</b><span>分辨率</span><b>1920×1080</b><span>编码</span><b>H.264 硬件</b><span>码率</span><b>6.2 Mbps</b><span>丢包</span><b>0.1%</b></div>
+            </div>
+            <div class="cc-menu" id="cc-menu" hidden role="menu">
+              <div class="cc-item has-sub"><svg class="i"><use href="#i-monitor"/></svg>屏幕 1<span class="cc-chev">›</span>
+                <div class="cc-sub" role="menu">
+                  <button type="button" class="cc-opt on">屏幕 1 · 主屏 2560×1440</button>
+                  <button type="button" class="cc-opt">屏幕 2 · 1920×1080</button>
+                  <div class="cc-sep"></div>
+                  <button type="button" class="cc-opt">同时显示全部屏幕</button>
+                  <button type="button" class="cc-opt">新建虚拟屏<small>对方没接显示器时使用</small></button>
+                </div></div>
+              <button type="button" class="cc-item"><svg class="i"><use href="#i-swap"/></svg>切换下一个屏幕<kbd>⌥⌘N</kbd></button>
+              <div class="cc-sep"></div>
+              <div class="cc-item has-sub"><svg class="i"><use href="#i-sliders"/></svg>画质<span class="cc-chev">›</span>
+                <div class="cc-sub wide" role="menu">
+                  <button type="button" class="cc-opt on" data-group="q">自动（高清）</button>
+                  <button type="button" class="cc-opt" data-group="q">原画 30 Mbps</button>
+                  <button type="button" class="cc-opt" data-group="q">超清 14 Mbps</button>
+                  <button type="button" class="cc-opt" data-group="q">高清 8 Mbps</button>
+                  <button type="button" class="cc-opt" data-group="q">流畅 3 Mbps</button>
+                  <div class="cc-sep"></div>
+                  <button type="button" class="cc-opt" data-group="f">144 帧</button>
+                  <button type="button" class="cc-opt" data-group="f">90 帧</button>
+                  <button type="button" class="cc-opt on" data-group="f">60 帧</button>
+                  <button type="button" class="cc-opt" data-group="f">30 帧</button>
+                  <div class="cc-sep"></div>
+                  <button type="button" class="cc-opt" data-group="c">真彩（4:4:4）<small>看文字和设计稿更清楚，占用更高</small></button>
+                  <button type="button" class="cc-opt on" data-group="c">常规色彩</button>
+                  <div class="cc-sep"></div>
+                  <button type="button" class="cc-opt" data-toggle>使用中继连接<small>直连卡顿时试试，仅本次生效</small></button>
+                </div></div>
+              <div class="cc-item has-sub"><svg class="i"><use href="#i-expand"/></svg>窗口<span class="cc-chev">›</span>
+                <div class="cc-sub" role="menu">
+                  <button type="button" class="cc-opt" data-group="w">原始比例</button>
+                  <button type="button" class="cc-opt on" data-group="w">适应窗口</button>
+                  <button type="button" class="cc-opt" data-group="w">拉伸填满</button>
+                  <div class="cc-sep"></div>
+                  <button type="button" class="cc-opt">窗口匹配对方分辨率</button>
+                  <button type="button" class="cc-opt" data-toggle>显示对方鼠标</button>
+                </div></div>
+              <div class="cc-item has-sub"><svg class="i"><use href="#i-volume"/></svg>声音<span class="cc-chev">›</span>
+                <div class="cc-sub" role="menu">
+                  <button type="button" class="cc-opt on" data-group="a">在本机播放对方声音</button>
+                  <button type="button" class="cc-opt" data-group="a">在对方电脑播放</button>
+                  <button type="button" class="cc-opt" data-group="a">都不播放</button>
+                </div></div>
+              <div class="cc-item has-sub"><svg class="i"><use href="#i-shield"/></svg>安全<span class="cc-chev">›</span>
+                <div class="cc-sub" role="menu">
+                  <button type="button" class="cc-opt" data-toggle id="cc-privacy">隐私屏<small>对方屏幕黑屏，看不到你的操作</small></button>
+                  <button type="button" class="cc-opt" data-toggle>禁用对方键盘鼠标</button>
+                  <button type="button" class="cc-opt on" data-toggle>结束后锁定对方电脑</button>
+                  <button type="button" class="cc-opt" data-toggle>切换为仅查看</button>
+                </div></div>
+              <div class="cc-item has-sub"><svg class="i"><use href="#i-keyboard"/></svg>键盘鼠标<span class="cc-chev">›</span>
+                <div class="cc-sub" role="menu">
+                  <button type="button" class="cc-opt">发送 Ctrl+Alt+Del</button>
+                  <button type="button" class="cc-opt on" data-toggle>共享剪贴板</button>
+                  <button type="button" class="cc-opt" data-toggle>鼠标锁定在窗口内</button>
+                  <button type="button" class="cc-opt" data-toggle>系统快捷键发给对方<small>Cmd+Tab 等不再切换本机窗口</small></button>
+                </div></div>
+              <div class="cc-item has-sub"><svg class="i"><use href="#i-terminal"/></svg>工具<span class="cc-chev">›</span>
+                <div class="cc-sub" role="menu">
+                  <button type="button" class="cc-opt" data-goto="transfer">文件传输</button>
+                  <button type="button" class="cc-opt">聊天</button>
+                  <button type="button" class="cc-opt">截图</button>
+                  <button type="button" class="cc-opt">录屏</button>
+                  <button type="button" class="cc-opt">终端</button>
+                </div></div>
+              <div class="cc-item has-sub"><svg class="i"><use href="#i-power"/></svg>电源<span class="cc-chev">›</span>
+                <div class="cc-sub" role="menu">
+                  <button type="button" class="cc-opt">锁定对方电脑</button>
+                  <button type="button" class="cc-opt">注销</button>
+                  <button type="button" class="cc-opt">重启</button>
+                </div></div>
+              <div class="cc-sep"></div>
+              <button type="button" class="cc-item"><svg class="i"><use href="#i-expand"/></svg>进入全屏<kbd>⌃⌘F</kbd></button>
+              <div class="cc-sep"></div>
+              <button type="button" class="cc-item end" data-goto="connect"><svg class="i"><use href="#i-power"/></svg>退出远控</button>
+            </div>
+            <div class="privacy-note" id="privacy-note" hidden><svg class="i"><use href="#i-shield"/></svg>隐私屏已开启：对方屏幕显示黑屏，看不到你的操作</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 文件传输 -->
+      <section data-page="transfer" hidden>
+        <div class="content-head"><h2>文件传输</h2><span class="tag ok"><span class="dot"></span>办公室台式机</span><span class="spacer"></span>
+          <button class="btn" type="button">上传 →</button><button class="btn" type="button">← 下载</button></div>
+        <div class="panes" style="margin-top:16px">
+          <div class="pane">
+            <div class="pane-head"><b>本机</b><span class="path">/Users/linzhou/Desktop</span></div>
+            <div class="file dir"><svg class="i"><use href="#i-folder"/></svg><span>项目资料</span><small>—</small></div>
+            <div class="file dir"><svg class="i"><use href="#i-folder"/></svg><span>截图</span><small>—</small></div>
+            <div class="file sel"><svg class="i"><use href="#i-file"/></svg><span>报价单-2026Q4.xlsx</span><small>248 KB</small></div>
+            <div class="file sel"><svg class="i"><use href="#i-file"/></svg><span>演示视频.mp4</span><small>1.2 GB</small></div>
+            <div class="file"><svg class="i"><use href="#i-file"/></svg><span>合同扫描件.pdf</span><small>3.4 MB</small></div>
+          </div>
+          <div class="pane">
+            <div class="pane-head"><b>办公室台式机</b><span class="path">D:\工作\交付</span></div>
+            <div class="file dir"><svg class="i"><use href="#i-folder"/></svg><span>11月</span><small>—</small></div>
+            <div class="file dir"><svg class="i"><use href="#i-folder"/></svg><span>归档</span><small>—</small></div>
+            <div class="file"><svg class="i"><use href="#i-file"/></svg><span>设计稿-v3.fig</span><small>58 MB</small></div>
+            <div class="file"><svg class="i"><use href="#i-file"/></svg><span>部署说明.docx</span><small>112 KB</small></div>
+          </div>
+        </div>
+        <div class="section-head" style="margin-top:16px"><h3>传输队列</h3><span class="muted" style="font-size:12px">2 进行中 · 1 已完成</span></div>
+        <div class="pane queue" style="margin-top:10px">
+          <div class="job"><span>演示视频.mp4 → D:\工作\交付</span><small>612 MB / 1.2 GB · 38 MB/s · 剩余 16 秒</small><div class="progress"><i style="width:51%"></i></div></div>
+          <div class="job"><span>报价单-2026Q4.xlsx → D:\工作\交付</span><small>等待中</small><div class="progress"><i style="width:0%"></i></div></div>
+          <div class="job"><span>部署说明.docx ← 办公室台式机</span><small>已完成 · 112 KB</small><div class="progress done"><i style="width:100%"></i></div></div>
+        </div>
+      </section>
+
+      <!-- 设置 -->
+      <section data-page="settings" hidden>
+        <div class="content-head"><h2>设置</h2></div>
+        <div class="settings" style="margin-top:16px">
+          <div class="subnav">
+            <button class="nav-item" type="button" aria-current="page">安全</button>
+            <button class="nav-item" type="button">画质与性能</button>
+            <button class="nav-item" type="button">网络与中继</button>
+            <button class="nav-item" type="button">账号与设备</button>
+            <button class="nav-item" type="button">通用</button>
+          </div>
+          <div class="card" style="padding:4px 24px">
+            <div class="form-row"><span class="label">密码方式</span>
+              <div class="radio-group">
+                <label class="radio"><input type="radio" name="pw-mode" id="pw-mode-temp" checked>只用临时密码</label>
+                <label class="radio"><input type="radio" name="pw-mode" id="pw-mode-fixed">只用固定密码</label>
+                <label class="radio"><input type="radio" name="pw-mode" id="pw-mode-both">两种都可以</label>
+                <div class="desc">临时密码默认在每次连接结束后更换，适合帮别人远程协助；更换频率可在连接页修改。</div>
+              </div></div>
+            <div class="form-row"><label for="fixed-pw">固定密码</label>
+              <div><input class="input sm" id="fixed-pw" type="password" placeholder="8–16 位字母和数字" value="">
+                <div class="desc">用于无人值守和自己的设备，建议和临时密码一起使用。</div></div></div>
+            <div class="form-row"><span class="label">无人值守</span>
+              <div><div class="inline"><button class="switch" type="button" role="switch" aria-checked="false" aria-label="无人值守"></button><span>开机后无需登录也能连接</span></div>
+                <div class="desc">会安装系统服务，可以控制登录界面和管理员授权弹窗。需要设置固定密码。</div></div></div>
+            <div class="form-row"><span class="label">连接前确认</span>
+              <div><div class="inline"><button class="switch" type="button" role="switch" aria-checked="true" aria-label="连接前确认"></button><span>别人连接时弹窗，由我决定是否接受</span></div>
+                <div class="desc">自己账号下的设备不弹窗。</div></div></div>
+            <div class="form-row"><label for="whitelist">允许的识别码</label>
+              <div><input class="input sm" id="whitelist" placeholder="留空表示不限制，多个用逗号分隔" value="">
+                <div class="desc">只有列表里的识别码可以连接本机。</div></div></div>
+            <div class="form-row"><span class="label">会话结束后</span>
+              <div><div class="inline"><button class="switch" type="button" role="switch" aria-checked="true" aria-label="会话结束后锁屏"></button><span>自动锁定本机屏幕</span></div>
+                <div class="desc">防止对方断开后，屏幕停在已登录状态被旁人看到。</div></div></div>
+            <div class="form-row"><span class="label">软件锁</span>
+              <div><div class="inline"><button class="switch" type="button" role="switch" aria-checked="false" aria-label="软件锁"></button><span>打开本软件或修改安全设置时需要验证</span></div></div></div>
+            <div class="form-row"><span class="label">被控提示</span>
+              <div><div class="inline"><button class="switch" type="button" role="switch" aria-checked="true" aria-label="被控提示"></button><span>被控制时在屏幕右下角显示提示面板</span></div></div></div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <div class="controlled" id="controlled" hidden role="status">
+      <div class="controlled-head"><span class="pulse"></span><b>王磊 正在控制本机</b><span class="muted mono-num" id="elapsed">00:00</span></div>
+      <div class="controlled-perms">
+        <button type="button" class="perm-chip on" aria-pressed="true">键盘鼠标</button>
+        <button type="button" class="perm-chip on" aria-pressed="true">剪贴板</button>
+        <button type="button" class="perm-chip on" aria-pressed="true">文件</button>
+        <button type="button" class="perm-chip" aria-pressed="false">声音</button>
+      </div>
+      <div class="controlled-actions"><button class="btn sm" type="button"><svg class="i"><use href="#i-chat"/></svg>聊天</button><span class="spacer"></span><button class="btn sm danger" type="button" id="end-control">断开</button></div>
+    </div>
+
+    <div class="mask" id="incoming" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="incoming-title">
+        <div class="modal-head"><span class="avatar">王</span><div><b id="incoming-title">王磊 请求控制本机</b><small>识别码 528 104 337 · Windows 11 · 直连</small></div></div>
+        <div class="alert">接受后对方可以看到你的屏幕。不认识的人请拒绝。</div>
+        <div class="perm">
+          <label class="check"><input type="checkbox" id="perm-input" checked>键盘鼠标</label>
+          <label class="check"><input type="checkbox" id="perm-clip" checked>剪贴板</label>
+          <label class="check"><input type="checkbox" id="perm-file" checked>文件传输</label>
+          <label class="check"><input type="checkbox" id="perm-audio">声音</label>
+        </div>
+        <div class="modal-foot">
+          <button class="btn" type="button" id="reject">拒绝</button>
+          <button class="btn primary" type="button" id="accept">接受（<span id="countdown">30</span>）</button>
+        </div>
+      </div>
+    </div>
+
+    <aside class="drawer" id="drawer" hidden aria-label="设备详情">
+      <div class="drawer-head"><div><b id="drawer-name">办公室台式机</b><small id="drawer-sub">Windows 11 · 771 204 538</small></div><button class="icon-btn" type="button" id="drawer-close" aria-label="关闭">×</button></div>
+      <div class="thumb win"><i class="win1"></i><i class="win2"></i></div>
+      <div class="drawer-actions">
+        <button class="btn primary" type="button" data-open-session>远程控制</button>
+        <button class="btn" type="button" data-open-session>仅查看</button>
+        <button class="btn" type="button" data-goto="transfer">传文件</button>
+      </div>
+      <div class="drawer-group"><span class="id-label">更多</span>
+        <div class="drawer-grid">
+          <button type="button"><svg class="i"><use href="#i-terminal"/></svg>终端</button>
+          <button type="button"><svg class="i"><use href="#i-camera"/></svg>摄像头</button>
+          <button type="button"><svg class="i"><use href="#i-monitor"/></svg>当扩展屏</button>
+          <button type="button"><svg class="i"><use href="#i-lock"/></svg>锁屏</button>
+          <button type="button"><svg class="i"><use href="#i-refresh"/></svg>重启</button>
+          <button type="button"><svg class="i"><use href="#i-power"/></svg>关机</button>
+        </div></div>
+      <div class="drawer-group"><span class="id-label">设备信息</span>
+        <div class="kv light"><span>分组</span><b>我的电脑</b><span>网络</span><b>点对点直连 · 18 ms</b><span>无人值守</span><b>已开启</b><span>添加时间</span><b>2026-10-08</b></div></div>
+      <div class="drawer-foot"><button class="btn text sm" type="button">重命名</button><button class="btn text sm" type="button">移动分组</button><button class="btn text sm" type="button">创建桌面快捷方式</button><button class="btn text sm danger-text" type="button">移除</button></div>
+    </aside>
+
+    <div class="toast" id="toast" hidden><svg class="i"><use href="#i-check"/></svg><span id="toast-text">已复制</span></div>
+  </div>
+
+  <div class="notes">
+    <div class="note"><b>连接页</b>左边是给别人连自己用的识别码和临时密码，右边输入对方识别码；下面是最近连接，点缩略图直接打开。</div>
+    <div class="note"><b>我的设备</b>按分组列出，点一行在右侧打开详情：预览、控制/查看/传文件，以及终端、摄像头、扩展屏、锁屏重启等远程指令。</div>
+    <div class="note"><b>远程会话</b>每台设备一个标签，标签上显示延迟；所有会话设置收进右上角「控制中心」的二级菜单，画面上不放任何控件。</div>
+    <div class="note"><b>被控流程</b>有人连入先弹窗确认并选择权限，接受后右下角常驻提示面板，可随时收回某项权限或断开。</div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+  let toastTimer;
+  function toast(text) {
+    $("#toast-text").textContent = text;
+    $("#toast").hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { $("#toast").hidden = true; }, 1600);
+  }
+  function show(view) {
+    $$("[data-page]").forEach((p) => { p.hidden = p.dataset.page !== view; });
+    $$(".sidebar .nav-item").forEach((b) => b.toggleAttribute("aria-current", b.dataset.view === view));
+    $$(".sidebar .nav-item").forEach((b) => { if (b.dataset.view === view) b.setAttribute("aria-current", "page"); });
+    closePops(); $("#drawer").hidden = true;
+  }
+  const pops = ["#stat-pop", "#cc-menu"];
+  function closePops(except) {
+    pops.forEach((id) => { if (id !== except) $(id).hidden = true; });
+    $("#cc-btn").setAttribute("aria-expanded", "false");
+  }
+  function togglePop(id, anchor) {
+    const el = $(id); const open = el.hidden;
+    closePops(id); el.hidden = !open;
+    if (open && anchor) {
+      const stage = $(".session-stage").getBoundingClientRect(), r = anchor.getBoundingClientRect();
+      const left = Math.min(Math.max(r.left - stage.left + r.width / 2, el.offsetWidth / 2 + 8), stage.width - el.offsetWidth / 2 - 8);
+      el.style.left = left + "px";
+    }
+    if (anchor && anchor.dataset.menu) anchor.setAttribute("aria-expanded", String(open));
+  }
+  $$(".sidebar .nav-item").forEach((b) => b.addEventListener("click", () => show(b.dataset.view)));
+  $$("[data-goto]").forEach((b) => b.addEventListener("click", () => show(b.dataset.goto)));
+  $$("[data-open-session]").forEach((b) => b.addEventListener("click", () => show("session")));
+  $("#connect-btn").addEventListener("click", () => show("session"));
+  $("#demo-session").addEventListener("click", () => show("session"));
+  $("#stat-btn").addEventListener("click", () => { $("#stat-pop").hidden = !$("#stat-pop").hidden; $("#cc-menu").hidden = true; $("#cc-btn").setAttribute("aria-expanded", "false"); });
+  $("#mic-btn").addEventListener("click", (e) => {
+    const on = e.currentTarget.getAttribute("aria-pressed") !== "true";
+    e.currentTarget.setAttribute("aria-pressed", String(on)); toast(on ? "已开启语音通话" : "已关闭语音通话");
+  });
+  $("#cc-btn").addEventListener("click", (e) => {
+    const open = $("#cc-menu").hidden; $("#cc-menu").hidden = !open; $("#stat-pop").hidden = true;
+    e.currentTarget.setAttribute("aria-expanded", String(open));
+    $$(".cc-item.open").forEach((x) => x.classList.remove("open"));
+  });
+  $$(".cc-item.has-sub").forEach((it) => {
+    it.addEventListener("mouseenter", () => { $$(".cc-item.open").forEach((x) => x !== it && x.classList.remove("open")); it.classList.add("open"); });
+    it.addEventListener("click", (e) => { if (e.target === it || e.target.closest(".cc-sub") === null) it.classList.add("open"); });
+  });
+  $$("#cc-menu > button.cc-item").forEach((it) => it.addEventListener("mouseenter", () => $$(".cc-item.open").forEach((x) => x.classList.remove("open"))));
+  $$(".cc-opt").forEach((o) => o.addEventListener("click", () => {
+    if (o.dataset.group) $$('.cc-opt[data-group="' + o.dataset.group + '"]', o.parentElement).forEach((x) => x.classList.toggle("on", x === o));
+    else if (o.hasAttribute("data-toggle")) o.classList.toggle("on");
+    if (o.id === "cc-privacy") $("#privacy-note").hidden = !o.classList.contains("on");
+  }));
+  $$(".stab:not(.add)").forEach((t) => t.addEventListener("click", (e) => {
+    if (e.target.classList.contains("x")) { toast("已断开 " + t.textContent.replace(/\d+ ms|×/g, "").trim()); return; }
+    $$(".stab:not(.add)").forEach((x) => { x.classList.toggle("on", x === t); x.setAttribute("aria-selected", String(x === t)); });
+  }));
+
+  // Connect: history and share
+  const peer = $("#peer-id");
+  peer.addEventListener("focus", () => { $("#history").hidden = false; });
+  peer.addEventListener("blur", () => setTimeout(() => { $("#history").hidden = true; }, 150));
+  $$(".history-item").forEach((b) => b.addEventListener("mousedown", (e) => {
+    if (e.target.classList.contains("star")) { e.preventDefault(); e.target.classList.toggle("on"); e.target.textContent = e.target.classList.contains("on") ? "★" : "☆"; return; }
+    peer.value = b.dataset.id;
+  }));
+  $("#share-btn").addEventListener("click", () => copy("请用远程桌面连接我的电脑：\n识别码 382 615 904\n临时密码 " + pw, "已复制识别码和临时密码"));
+
+  // Devices drawer
+  $$(".dev-row").forEach((row) => {
+    const open = () => {
+      $$(".dev-row").forEach((r) => r.classList.toggle("sel", r === row));
+      $("#drawer-name").textContent = $("b", row).textContent;
+      $("#drawer-sub").textContent = $("small", row).textContent + " · " + $("td.mono", row).textContent;
+      $("#drawer").hidden = false;
+    };
+    row.addEventListener("click", (e) => { if (!e.target.closest("button")) open(); });
+    row.addEventListener("keydown", (e) => { if (e.key === "Enter") open(); });
+  });
+  $("#drawer-close").addEventListener("click", () => { $("#drawer").hidden = true; $$(".dev-row").forEach((r) => r.classList.remove("sel")); });
+  $$(".perm-chip").forEach((c) => c.addEventListener("click", () => {
+    const on = !c.classList.contains("on"); c.classList.toggle("on", on); c.setAttribute("aria-pressed", String(on));
+    toast((on ? "已允许对方使用" : "已收回") + c.textContent);
+  }));
+
+  // Segmented controls and switches
+  $$(".seg").forEach((seg) => seg.addEventListener("click", (e) => {
+    const btn = e.target.closest("button"); if (!btn) return;
+    $$("button", seg).forEach((b) => b.setAttribute("aria-pressed", String(b === btn)));
+  }));
+  $$(".switch").forEach((sw) => sw.addEventListener("click", () => sw.setAttribute("aria-checked", String(sw.getAttribute("aria-checked") !== "true"))));
+  $$(".subnav .nav-item").forEach((b) => b.addEventListener("click", () => {
+    $$(".subnav .nav-item").forEach((x) => x.removeAttribute("aria-current")); b.setAttribute("aria-current", "page");
+  }));
+
+  // Password
+  let pw = "k7Rm2x", pwShown = false;
+  const renderPw = () => { $("#pw").textContent = pwShown ? pw : "••••••"; };
+  $("#pw-toggle").addEventListener("click", () => { pwShown = !pwShown; renderPw(); });
+  $("#pw-refresh").addEventListener("click", () => {
+    const chars = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789";
+    pw = Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+    pwShown = true; renderPw(); toast("已更换临时密码");
+  });
+  async function copy(text, label) {
+    try { await navigator.clipboard.writeText(text); toast(label); } catch { toast("请手动选择复制"); }
+  }
+  $("#pw-copy").addEventListener("click", () => copy(pw, "已复制临时密码"));
+  $$("[data-copy]").forEach((b) => b.addEventListener("click", () => copy(b.dataset.copy, "已复制识别码")));
+
+  // Incoming request
+  let countdownTimer, elapsedTimer;
+  function openIncoming() {
+    let n = 30; $("#countdown").textContent = n; $("#incoming").hidden = false;
+    clearInterval(countdownTimer);
+    countdownTimer = setInterval(() => {
+      n -= 1; $("#countdown").textContent = n;
+      if (n <= 0) { closeIncoming(); toast("已自动拒绝连接请求"); }
+    }, 1000);
+    $("#accept").focus();
+  }
+  function closeIncoming() { clearInterval(countdownTimer); $("#incoming").hidden = true; }
+  $("#demo-incoming").addEventListener("click", openIncoming);
+  $("#reject").addEventListener("click", () => { closeIncoming(); toast("已拒绝"); });
+  $("#accept").addEventListener("click", () => {
+    closeIncoming();
+    $("#controlled").hidden = false;
+    let s = 0; $("#elapsed").textContent = "00:00";
+    clearInterval(elapsedTimer);
+    elapsedTimer = setInterval(() => {
+      s += 1; $("#elapsed").textContent = String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+    }, 1000);
+  });
+  $("#end-control").addEventListener("click", () => {
+    clearInterval(elapsedTimer); $("#controlled").hidden = true; toast("已断开，临时密码已更换");
+    pw = "Qp4n8t"; renderPw();
+  });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#incoming").hidden) { closeIncoming(); toast("已拒绝"); } });
+})();
+</script>
