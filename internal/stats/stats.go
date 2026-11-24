@@ -39,6 +39,12 @@ const (
 	SegDecodedEnqueued   = "decoded_enqueued"
 	SegEnqueuedPresented = "enqueued_presented"
 	SegCaptureReceived   = "capture_received"
+	// Host-side extra samples (Recorder.Sample), not pipeline segments:
+	// SegCaptureDisplay is SCK display time − CaptureAt (how long after the
+	// capture callback the frame is shown locally) and SegDisplayEncoded is
+	// encoder output − display time.
+	SegCaptureDisplay = "capture_display"
+	SegDisplayEncoded = "display_encoded"
 )
 
 var stageNames = [...]string{"capture", "encoded", "sent", "received", "decoded", "enqueued", "presented"}
@@ -193,6 +199,17 @@ func (r *Recorder) Frame(f FrameTimes) {
 			}
 		}
 		prev = i
+	}
+}
+
+// Sample records one extra named duration, aggregated like a segment
+// (per-second and overall median) but outside the frame pipeline.
+func (r *Recorder) Sample(name string, d time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.seg[name] = append(r.seg[name], d)
+	if len(r.allSeg[name]) < r.maxSamples {
+		r.allSeg[name] = append(r.allSeg[name], d)
 	}
 }
 

@@ -160,6 +160,40 @@ func ExcludeAppName() string {
 	return "mmdesk"
 }
 
+// excludeSelfWindows reports whether capture should hide mmdesk's own
+// windows. A ScreenCaptureKit filter that excludes applications makes
+// WindowServer composite a second, filtered image of the display every
+// frame: measured on a 4K/60 Hz M4 it dropped the whole screen (source app
+// and capture) from 60 to ~50 fps and delayed encoder output by ~9 ms. So
+// it is only used where it is needed: when the controller runs on this
+// machine (the viewer window would otherwise mirror itself). env
+// (MMDESK_EXCLUDE_SELF) "0" or "1" forces it off or on.
+func excludeSelfWindows(remote string, local []string, env string) bool {
+	switch env {
+	case "0":
+		return false
+	case "1":
+		return true
+	}
+	host, _, err := net.SplitHostPort(remote)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	if ip.IsLoopback() {
+		return true
+	}
+	for _, l := range local {
+		if ip.Equal(net.ParseIP(l)) {
+			return true
+		}
+	}
+	return false
+}
+
 // State returns a snapshot.
 func (h *Host) State() HostState {
 	h.mu.Lock()
@@ -397,7 +431,12 @@ func (h *Host) stream(p *session.Peer) error {
 
 	h.wireInput(p)
 
-	capt, err := capture.Start(capture.Options{FPS: h.cfg.FPS, MaxWidth: h.cfg.MaxWidth, ExcludeApp: ExcludeAppName()}, vs.frame)
+	opts := capture.Options{FPS: h.cfg.FPS, MaxWidth: h.cfg.MaxWidth}
+	if excludeSelfWindows(p.RemoteAddr(), LocalIPv4(), os.Getenv("MMDESK_EXCLUDE_SELF")) {
+		opts.ExcludeApp = ExcludeAppName()
+	}
+	log.Printf("mmdesk host: capture %d fps, max width %d, exclude %q", opts.FPS, opts.MaxWidth, opts.ExcludeApp)
+	capt, err := capture.Start(opts, vs.frame)
 	if err != nil {
 		return fmt.Errorf("启动屏幕采集失败：%w", err)
 	}
@@ -406,7 +445,10 @@ func (h *Host) stream(p *session.Peer) error {
 	vs.mu.Unlock()
 	p.OnQuality(vs.setQuality)
 	<-p.Done()
+	st := capt.Stats()
 	capt.Close() // no frame callbacks after this
+	log.Printf("mmdesk host: capture frames complete=%d idle=%d other=%d display-after-callback=%d",
+		st.Complete, st.Idle, st.Other, st.Late)
 	vs.mu.Lock()
 	if vs.enc != nil {
 		vs.enc.Close()
@@ -460,6 +502,11 @@ type videoSender struct {
 	encH     int
 	fps, bps int
 	failed   bool
+
+	// display maps CaptureAt (UnixNano) → SCK display time of frames in
+	// the encoder, for the capture_display / display_encoded samples.
+	dispMu  sync.Mutex
+	display map[int64]time.Time
 }
 
 // frame runs on the capture queue.
@@ -483,6 +530,15 @@ func (v *videoSender) frame(f capture.Frame) {
 		v.enc, v.encW, v.encH = enc, f.Width, f.Height
 		v.forceKey.Store(true)
 	}
+	if !f.DisplayAt.IsZero() {
+		v.rec.Sample(stats.SegCaptureDisplay, f.DisplayAt.Sub(f.CaptureAt))
+		v.dispMu.Lock()
+		if v.display == nil || len(v.display) > 64 { // drop entries of dropped frames
+			v.display = map[int64]time.Time{}
+		}
+		v.display[f.CaptureAt.UnixNano()] = f.DisplayAt
+		v.dispMu.Unlock()
+	}
 	if err := v.enc.Encode(codec.Frame{Pixels: f.Pixels, CaptureAt: f.CaptureAt}, v.forceKey.Swap(false)); err != nil {
 		log.Printf("mmdesk host: encode: %v", err)
 	}
@@ -491,6 +547,13 @@ func (v *videoSender) frame(f capture.Frame) {
 // encoded runs on an encoder thread.
 func (v *videoSender) encoded(nal []byte, captureAt time.Time, keyframe bool) {
 	encodedAt := time.Now()
+	v.dispMu.Lock()
+	disp, ok := v.display[captureAt.UnixNano()]
+	delete(v.display, captureAt.UnixNano())
+	v.dispMu.Unlock()
+	if ok {
+		v.rec.Sample(stats.SegDisplayEncoded, encodedAt.Sub(disp))
+	}
 	if err := v.peer.WriteVideo(nal, captureAt, keyframe); err != nil {
 		return
 	}

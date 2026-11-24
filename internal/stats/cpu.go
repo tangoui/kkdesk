@@ -37,16 +37,21 @@ func (t *selfTracker) sample(now time.Time) (float64, bool) {
 	return float64(d) / float64(wall) * 100, true
 }
 
-// proc is one line of `ps -A -o pid=,comm=,time=`.
+// psArgs lists every process with pid, cumulative CPU time and executable
+// path. comm must be the last column: macOS ps truncates non-final comm to
+// 16 bytes ("/System/Library/"), which made every named lookup miss.
+var psArgs = []string{"-A", "-o", "pid=,time=,comm="}
+
+// proc is one line of `ps` run with psArgs.
 type proc struct {
 	pid  int
 	name string  // basename of comm
 	cpu  float64 // cumulative CPU seconds
 }
 
-// parsePS parses `ps -A -o pid=,comm=,time=` output. comm may contain
-// spaces, so it is everything between the first and the last field.
-// Unparseable lines are skipped.
+// parsePS parses `ps -A -o pid=,time=,comm=` output. comm may contain
+// spaces, so it is everything after the second field. Unparseable lines
+// are skipped.
 func parsePS(out string) []proc {
 	var ps []proc
 	for _, ln := range strings.Split(out, "\n") {
@@ -58,11 +63,12 @@ func parsePS(out string) []proc {
 		if err != nil {
 			continue
 		}
-		cpu, err := parseCPUTime(f[len(f)-1])
+		cpu, err := parseCPUTime(f[1])
 		if err != nil {
 			continue
 		}
-		comm := strings.Join(f[1:len(f)-1], " ")
+		// Rejoin with single spaces; ps pads columns, never comm itself.
+		comm := strings.Join(f[2:], " ")
 		if i := strings.LastIndexByte(comm, '/'); i >= 0 && i < len(comm)-1 {
 			comm = comm[i+1:]
 		}

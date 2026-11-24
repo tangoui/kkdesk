@@ -37,8 +37,13 @@ func main() {
 			procs = append(procs, k)
 		}
 		slices.Sort(procs)
+		total := 0.0
 		for _, k := range procs {
 			fmt.Printf("  cpu %-22s %.1f%%\n", k, r.CPU[k])
+			total += r.CPU[k]
+		}
+		if len(procs) > 0 {
+			fmt.Printf("  cpu %-22s %.1f%%\n", "total (self+system)", total)
 		}
 	}
 }

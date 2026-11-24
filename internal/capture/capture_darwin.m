@@ -47,20 +47,27 @@ API_AVAILABLE(macos(12.3))
 	uint64_t entry = mach_absolute_time();
 	CFArrayRef atts = CMSampleBufferGetSampleAttachmentsArray(sb, false);
 	if (atts == NULL || CFArrayGetCount(atts) == 0) {
+		mmcapGoStatus(self.handle, -1);
 		return;
 	}
 	NSDictionary *info = (__bridge NSDictionary *)CFArrayGetValueAtIndex(atts, 0);
 	NSNumber *status = info[SCStreamFrameInfoStatus];
 	if (status == nil || status.integerValue != SCFrameStatusComplete) {
-		return; // Idle / Blank / Suspended / Started / Stopped: no new image
+		// Idle / Blank / Suspended / Started / Stopped: no new image
+		mmcapGoStatus(self.handle, status != nil ? (int)status.integerValue : -1);
+		return;
 	}
 	CVPixelBufferRef pb = CMSampleBufferGetImageBuffer(sb);
 	if (pb == NULL) {
+		mmcapGoStatus(self.handle, -1);
 		return;
 	}
+	// SCStreamFrameInfoDisplayTime is mach absolute time (ticks), usually a
+	// few ms after entry (the vsync the frame is shown at). Go picks
+	// CaptureAt from both (see contentTime).
 	NSNumber *disp = info[SCStreamFrameInfoDisplayTime];
-	uint64_t t = disp != nil ? disp.unsignedLongLongValue : entry;
-	mmcapGoFrame(self.handle, (uintptr_t)pb, machToNs(t),
+	uint64_t dispNs = disp != nil ? machToNs(disp.unsignedLongLongValue) : 0;
+	mmcapGoFrame(self.handle, (uintptr_t)pb, dispNs, machToNs(entry),
 	             (int)CVPixelBufferGetWidth(pb), (int)CVPixelBufferGetHeight(pb));
 }
 
@@ -82,7 +89,7 @@ static BOOL appMatches(SCRunningApplication *app, NSString *want) API_AVAILABLE(
 	return NO;
 }
 
-void *mmcap_start(int fps, int maxWidth, const char *excludeApp,
+void *mmcap_start(int64_t intervalNs, int maxWidth, const char *excludeApp,
                   uintptr_t handle, int *outW, int *outH, char **err) {
 	@autoreleasepool {
 		if (@available(macOS 12.3, *)) {
@@ -161,7 +168,7 @@ void *mmcap_start(int fps, int maxWidth, const char *excludeApp,
 		cfg.width = (size_t)w;
 		cfg.height = (size_t)h;
 		cfg.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
-		cfg.minimumFrameInterval = CMTimeMake(1, fps);
+		cfg.minimumFrameInterval = CMTimeMake(intervalNs, 1000000000);
 		cfg.queueDepth = 3;
 		cfg.showsCursor = YES;
 		cfg.scalesToFit = YES;
@@ -205,14 +212,14 @@ void *mmcap_start(int fps, int maxWidth, const char *excludeApp,
 	}
 }
 
-void mmcap_set_fps(void *s, int fps) {
+void mmcap_set_fps(void *s, int64_t intervalNs) {
 	if (@available(macOS 12.3, *)) {
 		@autoreleasepool {
 			MMCapture *cap = (__bridge MMCapture *)s;
 			if (cap.stopped) {
 				return;
 			}
-			cap.config.minimumFrameInterval = CMTimeMake(1, fps);
+			cap.config.minimumFrameInterval = CMTimeMake(intervalNs, 1000000000);
 			dispatch_semaphore_t sem = dispatch_semaphore_create(0);
 			[cap.stream updateConfiguration:cap.config completionHandler:^(NSError *e) {
 				if (e != nil) {

@@ -2,6 +2,8 @@
 # Loopback measurement on one Mac: the animation window keeps the screen
 # changing, mmdesk -host shares the screen, mmdesk -connect 127.0.0.1 views it
 # (view-only). Usage: scripts/loopback.sh <outdir> [seconds] [extra host flags...]
+# MMDESK_EXCLUDE_SELF=0 keeps mmdesk windows in the capture (no SCK
+# exclusion filter, as in a session from another machine; see host.go).
 set -euo pipefail
 out=${1:?outdir}; secs=${2:-60}; shift 2 || true
 root=$(cd "$(dirname "$0")/.." && pwd)

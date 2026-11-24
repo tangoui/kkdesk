@@ -22,7 +22,7 @@ func ProcessCPU(names ...string) func() map[string]float64 {
 		defer mu.Unlock()
 		var ps []proc
 		if len(tr.names) > 0 {
-			if out, err := exec.Command("ps", "-A", "-o", "pid=,comm=,time=").Output(); err == nil {
+			if out, err := exec.Command("ps", psArgs...).Output(); err == nil {
 				ps = parsePS(string(out))
 			}
 		}

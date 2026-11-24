@@ -3,12 +3,13 @@
 
 #include <stdint.h>
 
-// mmcap_start starts a ScreenCaptureKit stream of the main display. On
+// mmcap_start starts a ScreenCaptureKit stream of the main display with
+// minimumFrameInterval = intervalNs. On
 // success it returns an opaque session and stores the output size; on
 // failure it returns NULL and stores a malloc'ed message in *err.
-void *mmcap_start(int fps, int maxWidth, const char *excludeApp,
+void *mmcap_start(int64_t intervalNs, int maxWidth, const char *excludeApp,
                   uintptr_t handle, int *outW, int *outH, char **err);
-void mmcap_set_fps(void *s, int fps);
+void mmcap_set_fps(void *s, int64_t intervalNs);
 // mmcap_stop stops the stream, waits until no frame callback is running
 // and releases the session.
 void mmcap_stop(void *s);

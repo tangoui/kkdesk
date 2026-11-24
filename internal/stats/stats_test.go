@@ -3,6 +3,7 @@ package stats
 import (
 	"bytes"
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -162,6 +163,23 @@ func TestFlushHostSecond(t *testing.T) {
 	}
 }
 
+func TestRecorderSample(t *testing.T) {
+	r := newRecorderAt(&bytes.Buffer{}, "host", nil, t0)
+	for i := 1; i <= 5; i++ {
+		r.Sample(SegCaptureDisplay, ms(i))
+	}
+	sec, err := r.Flush(t0.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sec.Frames != 0 || sec.Segments[SegCaptureDisplay] != ms(3) {
+		t.Errorf("frames %d, segments %v", sec.Frames, sec.Segments)
+	}
+	if rep := r.Report(); rep.Segments[SegCaptureDisplay] != ms(3) {
+		t.Errorf("report segments %v", rep.Segments)
+	}
+}
+
 func TestRecorderReportAndCap(t *testing.T) {
 	r := newRecorderAt(&bytes.Buffer{}, "viewer", nil, t0)
 	r.maxSamples = 50
@@ -305,22 +323,40 @@ func TestParseCPUTime(t *testing.T) {
 }
 
 func TestParsePS(t *testing.T) {
-	out := `  1 /sbin/launchd       1:02.34
-  357 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer 10:00.00
- 900 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome 0:01.00
- 901 /System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService 0:00.50
- 902 VTDecoderXPCService 0:01.50
+	// Real `ps -A -o pid=,time=,comm=` lines from macOS 26 (comm last so it
+	// is never truncated; earlier "pid=,comm=,time=" cut comm to 16 bytes,
+	// e.g. "/System/Library/", so no named process ever matched).
+	out := `    1  19:51.93 /sbin/launchd
+  401 599:04.29 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer
+ 1910   0:54.11 /Applications/企业微信.app/Contents/Frameworks/企业微信 Helper.app/Contents/MacOS/企业微信 Helper
+ 901   0:00.50 /System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService
+ 902 1-02:00:01 VTEncoderXPCService
 garbage
+ 903 notatime x
 `
 	procs := parsePS(out)
 	if len(procs) != 5 {
 		t.Fatalf("procs = %+v", procs)
 	}
-	if p := procs[1]; p.pid != 357 || p.name != "WindowServer" || p.cpu != 600 {
-		t.Errorf("WindowServer = %+v", p)
+	want := []proc{
+		{1, "launchd", 19*60 + 51.93},
+		{401, "WindowServer", 599*60 + 4.29},
+		{1910, "企业微信 Helper", 54.11},
+		{901, "VTDecoderXPCService", 0.5},
+		{902, "VTEncoderXPCService", 86400 + 2*3600 + 1},
 	}
-	if p := procs[2]; p.name != "Google Chrome" || p.cpu != 1 {
-		t.Errorf("chrome = %+v", p)
+	for i, w := range want {
+		p := procs[i]
+		if p.pid != w.pid || p.name != w.name || math.Abs(p.cpu-w.cpu) > 1e-6 {
+			t.Errorf("procs[%d] = %+v, want %+v", i, p, w)
+		}
+	}
+}
+
+func TestPSArgsPutCommLast(t *testing.T) {
+	f := strings.Split(psArgs[len(psArgs)-1], ",")
+	if f[len(f)-1] != "comm=" {
+		t.Fatalf("ps format %q must end with comm= (otherwise macOS truncates it)", psArgs)
 	}
 }
 

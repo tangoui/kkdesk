@@ -49,6 +49,8 @@ type darwinSession struct {
 	mu     sync.Mutex
 	ptr    unsafe.Pointer
 	closed atomic.Bool
+
+	complete, idle, other, late atomic.Uint64
 }
 
 // Start begins capturing the main display. out is called on a dedicated
@@ -71,7 +73,7 @@ func Start(opts Options, out func(Frame)) (Session, error) {
 	defer C.free(unsafe.Pointer(cExclude))
 	var cw, ch C.int
 	var cerr *C.char
-	ptr := C.mmcap_start(C.int(fps), C.int(opts.MaxWidth), cExclude,
+	ptr := C.mmcap_start(C.int64_t(minFrameInterval(fps)), C.int(opts.MaxWidth), cExclude,
 		C.uintptr_t(s.handle), &cw, &ch, &cerr)
 	if ptr == nil {
 		s.closed.Store(true)
@@ -97,7 +99,7 @@ func (s *darwinSession) SetFPS(fps int) {
 	if s.ptr == nil {
 		return
 	}
-	C.mmcap_set_fps(s.ptr, C.int(fps))
+	C.mmcap_set_fps(s.ptr, C.int64_t(minFrameInterval(fps)))
 }
 
 func (s *darwinSession) Size() (int, int) { return s.w, s.h }
@@ -116,13 +118,42 @@ func (s *darwinSession) Close() {
 }
 
 //export mmcapGoFrame
-func mmcapGoFrame(handle C.uintptr_t, pixels C.uintptr_t, displayNs C.uint64_t, w, h C.int) {
+func mmcapGoFrame(handle C.uintptr_t, pixels C.uintptr_t, displayNs, arrivalNs C.uint64_t, w, h C.int) {
 	s, ok := cgo.Handle(handle).Value().(*darwinSession)
 	if !ok || s.closed.Load() {
 		return
 	}
-	at := s.wall.Add(time.Duration(int64(uint64(displayNs) - s.machNs)))
-	s.out(Frame{Pixels: uintptr(pixels), CaptureAt: at, Width: int(w), Height: int(h)})
+	wall := func(ns uint64) time.Time {
+		if ns == 0 {
+			return time.Time{}
+		}
+		return s.wall.Add(time.Duration(int64(ns - s.machNs)))
+	}
+	capNs, late := contentTime(uint64(displayNs), uint64(arrivalNs))
+	if late {
+		s.late.Add(1)
+	}
+	s.complete.Add(1)
+	s.out(Frame{Pixels: uintptr(pixels), Width: int(w), Height: int(h),
+		CaptureAt: wall(capNs), ArrivedAt: wall(uint64(arrivalNs)), DisplayAt: wall(uint64(displayNs))})
+}
+
+//export mmcapGoStatus
+func mmcapGoStatus(handle C.uintptr_t, status C.int) {
+	s, ok := cgo.Handle(handle).Value().(*darwinSession)
+	if !ok || s.closed.Load() {
+		return
+	}
+	switch status {
+	case 1: // SCFrameStatusIdle
+		s.idle.Add(1)
+	default:
+		s.other.Add(1)
+	}
+}
+
+func (s *darwinSession) Stats() Stats {
+	return Stats{Complete: s.complete.Load(), Idle: s.idle.Load(), Other: s.other.Load(), Late: s.late.Load()}
 }
 
 //export mmcapScaledSize

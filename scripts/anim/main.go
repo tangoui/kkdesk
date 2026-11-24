@@ -21,8 +21,14 @@ func main() {
 	quit := true
 	app := tango.New(tango.Options{Name: "anim", ID: "com.mmdesk.anim", QuitOnLastClose: &quit})
 	start := time.Now()
+	// Report the real render rate once per second on stdout, so the
+	// loopback summary can compare it with what capture delivers.
+	frames, sec := 0, time.Now()
 	app.OnReady(func() {
-		_, _, err := uihost.Open(app, uihost.Options{Surface: tango.SurfaceOptions{Title: "mmdesk anim", Width: 1600, Height: 900, Centered: true}}, func(c *ui.Context) {
+		_, _, err := uihost.Open(app, uihost.Options{Surface: tango.SurfaceOptions{Title: "mmdesk anim", Width: 1600, Height: 900, Centered: true,
+			// Floating level without activating the app (no focus steal):
+			// a window opened behind others may be occluded and throttled.
+			Appearance: tango.Appearance{AlwaysOnTop: true}}}, func(c *ui.Context) {
 			t := c.Now().Sub(start).Seconds()
 			w, h := float32(1600), float32(900)
 			for i := 0; i < 12; i++ {
@@ -33,7 +39,15 @@ func main() {
 			ui.Column(c, func() {
 				ui.Title(c, fmt.Sprintf("%.3f s", time.Since(start).Seconds()), 1)
 			}, layout.Abs(40, 40, layout.Unset, layout.Unset))
-			c.Invalidate() // next frame
+			frames++
+			if now := time.Now(); now.Sub(sec) >= time.Second {
+				fmt.Printf("anim fps %.1f\n", float64(frames)/now.Sub(sec).Seconds())
+				frames, sec = 0, now
+			}
+			// c.Invalidate only re-runs the build pass of the current frame;
+			// the Invalidator asks the window for the next (vsync) frame.
+			// The old c.Invalidate() call left anim at ~0.4 fps.
+			c.Invalidator()()
 		}, ui.RunnerOptions{})
 		if err != nil {
 			log.Fatal(err)
