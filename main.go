@@ -1,51 +1,67 @@
-// Command mmdesk is a remote-desktop spike: one binary that runs either as the
-// host (screen is shared) or as the viewer (connects and controls).
+// mmdesk is a remote desktop built with Tango. Its window is drawn by
+// package ui (no WebView); the remote screen is a native video view hosted
+// with uihost.NativeHost.
+//
+// One binary, two roles: without flags it opens the main window (what
+// "tan dev" runs); -host shares this screen, -connect controls another
+// machine (see flags.go).
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
+	"log"
 	"os"
+
+	"github.com/tangoui/tango"
+	"github.com/tangoui/tango/ui"
+	"github.com/tangoui/tango/ui/layout"
+	"github.com/tangoui/tango/ui/theme"
+	"github.com/tangoui/tango/uihost"
 )
 
-type options struct {
-	host       bool
-	connect    string
-	password   string
-	fps        int
-	bitrate    int
-	logPath    string
-	autoAccept bool
-	viewOnly   bool
+// State is what survives a hot reload under tan dev: exported,
+// gob-encodable fields.
+type State struct {
+	PeerAddr string
+	Password string
 }
 
-func parseFlags(args []string) (options, *flag.FlagSet, error) {
-	var o options
-	fs := flag.NewFlagSet("mmdesk", flag.ContinueOnError)
-	fs.BoolVar(&o.host, "host", false, "run as host: share this screen and accept connections")
-	fs.StringVar(&o.connect, "connect", "", "run as viewer: connect to the host at `addr`")
-	fs.StringVar(&o.password, "password", "", "temporary password of the host (viewer)")
-	fs.IntVar(&o.fps, "fps", 60, "frame rate: 30, 60, 90 or 144")
-	fs.IntVar(&o.bitrate, "bitrate", 0, "bitrate in Mbps (0 = auto)")
-	fs.StringVar(&o.logPath, "log", "", "write JSON Lines stats to `file`")
-	fs.BoolVar(&o.autoAccept, "autoaccept", false, "host: accept incoming connections without asking (measurement)")
-	fs.BoolVar(&o.viewOnly, "view-only", false, "viewer: do not send input")
-	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Usage:\n  mmdesk -host [-autoaccept] [-fps N] [-bitrate Mbps] [-log file]\n  mmdesk -connect addr -password pw [-view-only] [-log file]\n\nFlags:\n")
-		fs.PrintDefaults()
-	}
-	if err := fs.Parse(args); err != nil {
-		return o, fs, err
-	}
-	if o.host && o.connect != "" {
-		return o, fs, fmt.Errorf("-host and -connect are mutually exclusive")
-	}
-	return o, fs, nil
+var (
+	app    *tango.App
+	runner *ui.Runner
+	st     State
+)
+
+// page is the main window: this machine's address and temporary password
+// on the left, the form to control another machine on the right
+// (outputs/remote-desktop-ui/index.html). The actions are wired in
+// internal/app.
+func page(c *ui.Context) {
+	ui.Scroll(c, func() {
+		ui.Column(c, func() {
+			ui.Title(c, "连接", 3)
+			ui.Row(c, func() {
+				ui.Card(c, "允许控制本机").Layout(layout.Grow(1)).Body(func() {
+					ui.Paragraph(c, "把本机地址和临时密码告诉对方，对方就能连接这台电脑。")
+				})
+				ui.Card(c, "控制其他电脑").Layout(layout.Grow(1)).Body(func() {
+					f := ui.Form(c).Vertical()
+					f.Body(func() {
+						f.Item("对方地址").Body(func() { ui.Input(c, &st.PeerAddr).Placeholder("192.168.1.20") })
+						f.Item("临时密码").Body(func() { ui.Input(c, &st.Password).Placeholder("6 位数字") })
+						f.Item("").NoLabel().Body(func() { ui.Button(c, "连接").Primary() })
+					})
+				})
+			}, layout.Gap(16), layout.WrapItems())
+		}, layout.Gap(16), layout.Pad(24))
+	})
 }
 
 func main() {
 	o, fs, err := parseFlags(os.Args[1:])
-	if err == flag.ErrHelp {
+	if errors.Is(err, flag.ErrHelp) {
 		return
 	}
 	if err != nil {
@@ -53,12 +69,28 @@ func main() {
 		fs.Usage()
 		os.Exit(2)
 	}
-	switch {
-	case o.host:
-		fmt.Printf("mode: host (fps=%d bitrate=%d autoaccept=%v log=%q)\n", o.fps, o.bitrate, o.autoAccept, o.logPath)
-	case o.connect != "":
-		fmt.Printf("mode: viewer -> %s (fps=%d bitrate=%d view-only=%v log=%q)\n", o.connect, o.fps, o.bitrate, o.viewOnly, o.logPath)
-	default:
-		fs.Usage()
+	_ = o // -host / -connect are wired in internal/app
+
+	uihost.Persist(&st) // before the first frame
+
+	quit := true // closing the window quits, on macOS too
+	app = tango.New(tango.Options{Name: "mmdesk", ID: "com.mmdesk.desktop", QuitOnLastClose: &quit})
+	app.OnReady(func() {
+		r, _, err := uihost.Open(app, uihost.Options{Surface: tango.SurfaceOptions{
+			Title:     "mmdesk",
+			Width:     960,
+			Height:    640,
+			MinWidth:  640,
+			MinHeight: 480,
+			Resizable: true,
+			Centered:  true,
+		}}, page, ui.RunnerOptions{Theme: theme.AntDesign()})
+		if err != nil {
+			log.Fatal(err)
+		}
+		runner = r
+	})
+	if err := app.Run(); err != nil {
+		log.Fatal(err)
 	}
 }
