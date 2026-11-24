@@ -1,0 +1,254 @@
+package appui
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/tangoui/tango/ui"
+	"github.com/tangoui/tango/ui/icon"
+	"github.com/tangoui/tango/ui/icon/antd"
+	"github.com/tangoui/tango/ui/layout"
+	"github.com/tangoui/tango/ui/text"
+
+	"mmdesk/internal/app"
+)
+
+var (
+	rotateOpts = ui.Opts("每次连接后更换", "每 12 小时更换", "每 24 小时更换", "不自动更换")
+	modeOpts   = []ui.Option{
+		{Label: "远程控制", Value: modeControl},
+		{Label: "仅查看", Value: modeView},
+		{Label: "传文件", Value: modeTransfer, Disabled: true},
+	}
+)
+
+// connectPage is the 连接 page: the two cards and 最近连接.
+func (m *Main) connectPage(c *ui.Context, hs app.HostState) {
+	ui.Title(c, "连接", 4)
+	ui.Row(c, func() {
+		m.hostCard(c, hs)
+		m.connectCard(c)
+	}, layout.Gap(16), layout.WrapItems(), layout.AlignItems(layout.AlignStretch))
+	m.recent(c)
+}
+
+// cardHead is the title and description of a connect card.
+func cardHead(c *ui.Context, title, sub string) {
+	ui.Column(c, func() {
+		ui.Text(c, title).Size(16).Strong()
+		ui.Text(c, sub).Size(13).Tertiary()
+	}, layout.Gap(4), layout.Padding(insets(0, 0, 8, 0)))
+}
+
+// copyText writes s to the clipboard and confirms with a toast.
+func copyText(c *ui.Context, s, msg string) {
+	if w := c.Window(); w != nil {
+		w.WriteClipboard(s)
+	}
+	ui.Message(c, "success", msg)
+}
+
+func (m *Main) hostCard(c *ui.Context, hs app.HostState) {
+	th := c.Theme
+	panel(c, func() {
+		cardHead(c, "允许控制本机", "把本机地址和临时密码告诉对方，对方就能连接这台电脑。")
+		// 本机地址
+		ui.Column(c, func() {
+			ui.Text(c, "本机地址").Size(12).Tertiary()
+			if len(hs.Addrs) == 0 {
+				ui.Text(c, "没有可用的网络地址").Secondary()
+			}
+			for i, a := range hs.Addrs {
+				addr := fmt.Sprintf("%s:%d", a, hs.Port)
+				size := float32(26)
+				if i > 0 {
+					size = 18
+				}
+				ui.Row(c, func() {
+					mono(c, addr, size, text.Semibold, th.Text)
+					ui.Spacer(c)
+					if ui.IconButton(c, icon.Copy, "复制地址 "+addr).Size(28, 16).Clicked() {
+						copyText(c, addr, "已复制地址")
+					}
+				}, layout.Gap(4), layout.Middle())
+			}
+		}, layout.Gap(4), layout.PadVH(12, 0))
+		hline(c)
+		// 临时密码
+		ui.Column(c, func() {
+			ui.Row(c, func() {
+				ui.Text(c, "临时密码").Size(12).Tertiary()
+				ui.Spacer(c)
+				ui.Select(c, &m.rotate, rotateOpts).Size(ui.Small).Width(140).A11yLabel("密码更换频率")
+			}, layout.Middle())
+			ui.Row(c, func() {
+				pw := strings.Repeat("•", len(hs.Password))
+				if m.showPW {
+					pw = hs.Password
+				}
+				mono(c, pw, 22, text.Semibold, th.Text)
+				ui.Spacer(c)
+				eye, tip := icon.Eye, "显示密码"
+				if m.showPW {
+					eye, tip = icon.EyeInvisible, "隐藏密码"
+				}
+				if ui.IconButton(c, eye, tip).Size(28, 16).Clicked() {
+					m.showPW = !m.showPW
+					c.Invalidate()
+				}
+				if ui.IconButton(c, icon.Reload, "更换密码").Size(28, 16).Clicked() {
+					go m.o.Host.RefreshPassword()
+				}
+				if ui.IconButton(c, icon.Copy, "复制密码").Size(28, 16).Clicked() {
+					copyText(c, hs.Password, "已复制密码")
+				}
+			}, layout.Gap(4), layout.Middle())
+		}, layout.Gap(4), layout.PadVH(12, 0))
+		// 允许被远程控制
+		ui.Row(c, func() {
+			col := th.Success.Base
+			if !m.allow {
+				col = th.TextQuaternary
+			}
+			dot(c, col, 6)
+			ui.Text(c, "允许被远程控制").Size(13).Secondary().Layout(layout.Grow(1))
+			if ui.Switch(c, &m.allow).A11yLabel("允许被远程控制").Changed() {
+				on := m.allow
+				go m.o.Host.SetEnabled(on)
+			}
+		}, layout.Gap(10), layout.Middle(), layout.PadVH(10, 12)).Bg(th.FillQuaternary).Radius(th.Radius)
+		if st := hostStatus(hs); st != "" {
+			ui.Text(c, st).Size(12).Tertiary()
+		}
+		if hs.Err != "" {
+			ui.Alert(c, "warning", hs.Err).ShowIcon(true).Show()
+		}
+		ui.Row(c, func() {
+			if ui.Button(c, "复制并分享").Icon(icon.Copy).Disabled(len(hs.Addrs) == 0).Clicked() {
+				copyText(c, shareText(hs), "已复制，可以直接发给对方")
+			}
+			ui.Text(c, "复制成一段话，直接发到微信").Size(12).Tertiary()
+		}, layout.Gap(8), layout.Middle(), layout.WrapItems(), layout.Padding(insets(4, 0, 0, 0)))
+	}, layout.Grow(1), layout.Basis(340), layout.Pad(20), layout.Gap(8))
+}
+
+// hostStatus is the one-line state of the controlled side.
+func hostStatus(hs app.HostState) string {
+	switch hs.Phase {
+	case app.HostListening:
+		if hs.Notice != "" {
+			return hs.Notice
+		}
+		return "等待连接…"
+	case app.HostPending:
+		return hs.Peer + " 请求控制本机"
+	case app.HostActive:
+		return "正在被 " + hs.Peer + " 控制"
+	}
+	return hs.Notice
+}
+
+// shareText is what 复制并分享 puts on the clipboard.
+func shareText(hs app.HostState) string {
+	var b strings.Builder
+	b.WriteString("用 mmdesk 远程协助我：\n")
+	for _, a := range hs.Addrs {
+		fmt.Fprintf(&b, "地址 %s:%d\n", a, hs.Port)
+	}
+	fmt.Fprintf(&b, "临时密码 %s", hs.Password)
+	return b.String()
+}
+
+func (m *Main) connectCard(c *ui.Context) {
+	m.mu.Lock()
+	connecting, errMsg := m.connecting, m.connErr
+	m.mu.Unlock()
+	st := m.o.Form
+	panel(c, func() {
+		cardHead(c, "控制其他电脑", "输入对方的地址和临时密码。仅支持局域网内直连。")
+		ui.Column(c, func() {
+			ui.Text(c, "对方地址").Size(13).Secondary()
+			ui.Input(c, &st.PeerAddr).Size(ui.Large).Placeholder("例如 192.168.1.20").A11yLabel("对方地址")
+		}, layout.Gap(8))
+		var submit bool
+		ui.Column(c, func() {
+			ui.Text(c, "临时密码").Size(13).Secondary()
+			submit = ui.Input(c, &st.Password).Size(ui.Large).Password().Placeholder("6 位数字").A11yLabel("临时密码").Submitted()
+		}, layout.Gap(8), layout.Padding(insets(6, 0, 0, 0)))
+		ui.Row(c, func() {
+			ui.Text(c, "连接方式").Size(13).Tertiary()
+			ui.Segmented(c, &st.Mode, modeOpts).A11yLabel("连接方式")
+		}, layout.Gap(12), layout.Middle(), layout.WrapItems(), layout.Padding(insets(8, 0, 0, 0)))
+		addr := strings.TrimSpace(st.PeerAddr)
+		b := ui.Button(c, "连接").AutoInsertSpace(false).Primary().Large().Block().Loading(connecting).Disabled(addr == "")
+		b.Layout(layout.Margin(insets(8, 0, 0, 0)))
+		if (b.Clicked() || submit) && !connecting && addr != "" {
+			m.connect(addr, strings.TrimSpace(st.Password), st.Mode == modeView)
+		}
+		if errMsg != "" {
+			ui.Alert(c, "error", errMsg).ShowIcon(true).Show()
+		}
+		ui.Text(c, "点对点直连，画面和操作不经过任何服务器；跨网络的中继连接后续提供。").Size(12).Tertiary()
+	}, layout.Grow(1), layout.Basis(340), layout.Pad(20), layout.Gap(8))
+}
+
+// recent is the 最近连接 section: real connections of this run only.
+func (m *Main) recent(c *ui.Context) {
+	th := c.Theme
+	f := m.o.Form
+	ui.Row(c, func() {
+		ui.Text(c, "最近连接").Strong()
+		if len(f.Recent) > 0 {
+			ui.Text(c, itoa(len(f.Recent))).Size(12).Tertiary()
+		}
+		ui.Spacer(c)
+		if len(f.Recent) > 0 && ui.Button(c, "清空记录").Text().Small().Clicked() {
+			f.Recent = nil
+			c.Invalidate()
+		}
+	}, layout.Gap(8), layout.Middle(), layout.Padding(insets(4, 0, 0, 0)))
+	if len(f.Recent) == 0 {
+		panel(c, func() {
+			ui.Empty(c).Simple().Description("还没有连接记录")
+		}, layout.Pad(24))
+		return
+	}
+	ui.Row(c, func() {
+		for _, r := range f.Recent {
+			card := panel(c, func() {
+				ui.Row(c, func() {
+					ui.Icon(c, antd.DesktopOutlined).Size(28).Color(th.Primary.Base)
+				}, layout.H(88), layout.Center()).Bg(th.Primary.Bg).Radius(th.RadiusSM)
+				ui.Column(c, func() {
+					mono(c, r.Addr, 14, text.Medium, th.Text)
+					mode := "远程控制"
+					if r.ViewOnly {
+						mode = "仅查看"
+					}
+					ui.Text(c, whenText(r.At)+" · "+mode).Size(12).Tertiary().NoWrap()
+				}, layout.Gap(2))
+			}, layout.W(200), layout.Pad(10), layout.Gap(10)).Label(r.Addr)
+			if card.Clicked() {
+				f.PeerAddr = r.Addr
+				f.Mode = modeControl
+				if r.ViewOnly {
+					f.Mode = modeView
+				}
+				c.Invalidate()
+			}
+			if card.Hovered() {
+				card.Border(1, th.Primary.Hover)
+			}
+		}
+	}, layout.Gap(12), layout.WrapItems())
+}
+
+// whenText formats a recent connection time.
+func whenText(t time.Time) string {
+	now := time.Now()
+	if y, m, d := t.Date(); y == now.Year() && m == now.Month() && d == now.Day() {
+		return "今天 " + t.Format("15:04")
+	}
+	return t.Format("1月2日 15:04")
+}

@@ -10,6 +10,9 @@ import (
 	"github.com/tangoui/tango"
 	"github.com/tangoui/tango/sys/menu"
 	"github.com/tangoui/tango/ui"
+	"github.com/tangoui/tango/ui/geom"
+	"github.com/tangoui/tango/ui/icon"
+	"github.com/tangoui/tango/ui/icon/antd"
 	tin "github.com/tangoui/tango/ui/input"
 	"github.com/tangoui/tango/ui/layout"
 	"github.com/tangoui/tango/ui/theme"
@@ -59,7 +62,7 @@ func OpenSession(a *tango.App, v *app.Viewer, onEnd func(msg string)) error {
 		MinHeight: 320,
 		Resizable: true,
 		Centered:  true,
-	}}, w.page, ui.RunnerOptions{Theme: theme.AntDesign()})
+	}}, w.page, ui.RunnerOptions{Theme: theme.AntDesign(theme.Dark())})
 	if err != nil {
 		return err
 	}
@@ -96,40 +99,79 @@ func (w *sessionWin) page(c *ui.Context) {
 	ui.Column(c, func() {
 		w.strip(c, st)
 		w.screen(c, st)
-	}, layout.Grow(1))
+	}, layout.Grow(1)).Bg(theme.Hex("#000000"))
 }
 
-// strip is the tab bar: the peer's tab on the left, stats and 控制中心 on
-// the right.
+// strip is the tab bar (always dark, the window uses the dark theme): the
+// peer's tab on the left, stats and 控制中心 on the right.
 func (w *sessionWin) strip(c *ui.Context, st app.ViewerState) {
+	th := c.Theme
 	ui.Row(c, func() {
-		ui.Text(c, st.Addr).Strong().NoWrap()
-		switch st.Phase {
-		case app.ViewerWaiting:
-			ui.Tag(c, "等待对方确认…")
-		case app.ViewerClosed:
-			msg := st.Err
-			if msg == "" {
-				msg = "连接已断开"
-			}
-			ui.Tag(c, msg).Color("red")
-		}
-		if st.ViewOnly {
-			ui.Tag(c, "仅查看")
-		}
+		w.tab(c, st)
+		ui.Row(c, func() { w.phaseTags(c, st) }, layout.Gap(6), layout.Middle(), layout.Self(layout.AlignCenter), layout.Padding(insets(0, 0, 4, 0)))
 		ui.Spacer(c)
-		if st.Phase == app.ViewerStreaming {
-			s := st.Stats
-			ui.Text(c, fmt.Sprintf("延迟 %d ms · %.0f fps · %.1f Mbps", s.LatencyP50.Milliseconds(), s.FPS, s.BitrateBps/1e6)).Secondary().NoWrap()
-			c.WakeAt(time.Now().Add(500 * time.Millisecond))
-		}
-		b := ui.Button(c, "控制中心").Disabled(st.Phase == app.ViewerClosed)
-		if b.Clicked() {
-			if r, ok := c.RectOf(b.ID()); ok {
-				w.popupMenu(int(r.X), int(r.Y+r.H+4), st)
+		ui.Row(c, func() {
+			if st.Phase == app.ViewerStreaming {
+				s := st.Stats
+				ms := int(s.LatencyP50.Milliseconds())
+				dot(c, th.Success.Base, 6)
+				mono(c, fmt.Sprintf("%d ms", ms), 12, 500, latencyColor(th, ms))
+				mono(c, fmt.Sprintf("%.0f fps · %.1f Mbps · 直连", s.FPS, s.BitrateBps/1e6), 12, 400, th.TextTertiary)
+				c.WakeAt(time.Now().Add(500 * time.Millisecond))
 			}
+			b := ui.Button(c, "控制中心").Icon(icon.Sliders).Small().Disabled(st.Phase == app.ViewerClosed)
+			if b.Clicked() {
+				if r, ok := c.RectOf(b.ID()); ok {
+					w.popupMenu(int(r.X), int(r.Y+r.H+4), st)
+				}
+			}
+		}, layout.Gap(8), layout.Middle(), layout.Self(layout.AlignCenter), layout.Padding(insets(0, 0, 4, 0)))
+	}, layout.Gap(8), layout.Padding(insets(6, 8, 0, 8)), layout.H(38), layout.AlignItems(layout.AlignEnd)).Bg(th.BgElevated)
+}
+
+// phaseTags shows the session state next to the tab.
+func (w *sessionWin) phaseTags(c *ui.Context, st app.ViewerState) {
+	switch st.Phase {
+	case app.ViewerConnecting, app.ViewerWaiting:
+		ui.Tag(c, "等待对方确认…").Color("processing")
+	case app.ViewerClosed:
+		msg := st.Err
+		if msg == "" {
+			msg = "连接已断开"
 		}
-	}, layout.Gap(10), layout.Middle(), layout.PadVH(6, 12))
+		ui.Tag(c, msg).Color("error")
+	}
+	if st.ViewOnly {
+		ui.Tag(c, "仅查看").Color("blue")
+	}
+}
+
+// tab is the active session tab: device icon, address, latency and ×.
+func (w *sessionWin) tab(c *ui.Context, st app.ViewerState) {
+	th := c.Theme
+	ui.Row(c, func() {
+		ui.Icon(c, antd.DesktopOutlined).Size(14).Color(th.TextSecondary)
+		ui.Text(c, st.Addr).Size(13).Color(th.Text).NoWrap()
+		if st.Phase == app.ViewerStreaming {
+			ms := int(st.Stats.LatencyP50.Milliseconds())
+			mono(c, fmt.Sprintf("%d ms", ms), 11, 400, latencyColor(th, ms))
+		}
+		if ui.IconButton(c, icon.Close, "关闭会话").Size(18, 12).Clicked() {
+			w.v.Close()
+		}
+	}, layout.Gap(8), layout.Middle(), layout.H(32), layout.PadSE(0, 12, 8)).
+		Bg(theme.Hex("#000000")).Radii(geom.Radii{TL: 6, TR: 6})
+}
+
+// latencyColor colors a latency: green below 30 ms, gold below 80, red.
+func latencyColor(th *theme.Theme, ms int) theme.Color {
+	switch {
+	case ms < 30:
+		return th.Success.Base
+	case ms < 80:
+		return th.Warning.Base
+	}
+	return th.Error.Base
 }
 
 // popupMenu shows the 控制中心 native menu below the button.

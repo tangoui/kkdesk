@@ -1,35 +1,57 @@
 // Package appui is mmdesk's interface (directory internal/ui): the main
-// window (this machine's address and password, the form to control another
-// machine, the incoming-connection confirmation and the controlled-side
-// panel) and the session window (tab strip with stats and 控制中心, the
-// remote screen as a native video view). Layout and wording follow the
-// prototype outputs/remote-desktop-ui/index.html.
+// window (sidebar navigation; the 连接 page with this machine's address
+// and password, the form to control another machine and the recent
+// connections; the incoming-connection confirmation and the
+// controlled-side panel) and the session window (tab strip with stats and
+// 控制中心, the remote screen as a native video view). Layout and wording
+// follow the prototype outputs/remote-desktop-ui/index.html.
 package appui
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log"
-	"strings"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/tangoui/tango"
 	"github.com/tangoui/tango/ui"
+	"github.com/tangoui/tango/ui/icon"
+	"github.com/tangoui/tango/ui/icon/antd"
 	"github.com/tangoui/tango/ui/layout"
+	"github.com/tangoui/tango/ui/text"
 	"github.com/tangoui/tango/ui/theme"
 	"github.com/tangoui/tango/uihost"
 
 	"mmdesk/internal/app"
 )
 
+// Connection modes of the 控制其他电脑 form.
+const (
+	modeControl  = "control"
+	modeView     = "view"
+	modeTransfer = "transfer" // not implemented yet (disabled)
+)
+
 // Form is the persisted content of the 控制其他电脑 form.
 type Form struct {
 	PeerAddr string
 	Password string
+	Mode     string   // modeControl (default) or modeView
+	Recent   []Recent // successful connections, newest first
 }
+
+// Recent is one entry of 最近连接.
+type Recent struct {
+	Addr     string
+	At       time.Time
+	ViewOnly bool
+}
+
+// maxRecent bounds the 最近连接 list.
+const maxRecent = 8
 
 // MainOptions configures the main window.
 type MainOptions struct {
@@ -47,22 +69,42 @@ type Main struct {
 	o       MainOptions
 	runner  atomic.Pointer[ui.Runner]
 	surface atomic.Pointer[tango.Surface]
-	allow   bool // UI thread
+
+	// UI thread
+	allow    bool
+	nav      string // selected sidebar item
+	showPW   bool
+	rotate   string // 临时密码 rotation (display only for now)
+	hostname string
 
 	mu         sync.Mutex
 	connecting bool
 	connErr    string
 }
 
+// Sidebar items.
+var navItems = []ui.MenuItem{
+	{Key: "connect", Label: "连接", Icon: icon.Link},
+	{Key: "devices", Label: "我的设备", Icon: antd.LaptopOutlined},
+	{Key: "sessions", Label: "远程会话", Icon: icon.Monitor},
+	{Key: "transfer", Label: "文件传输", Icon: icon.Swap},
+	{Key: "settings", Label: "设置", Icon: icon.Setting},
+}
+
 // OpenMain opens the main window. Call on the main thread.
 func OpenMain(o MainOptions) (*Main, error) {
-	m := &Main{o: o, allow: o.Host.State().Phase != app.HostOff, connErr: o.Error}
+	host, _ := os.Hostname()
+	m := &Main{o: o, allow: o.Host.State().Phase != app.HostOff, connErr: o.Error,
+		nav: "connect", rotate: "每次连接后更换", hostname: host}
+	if o.Form.Mode == "" {
+		o.Form.Mode = modeControl
+	}
 	r, s, err := uihost.Open(o.App, uihost.Options{Surface: tango.SurfaceOptions{
 		Title:     "mmdesk",
-		Width:     960,
-		Height:    640,
-		MinWidth:  640,
-		MinHeight: 480,
+		Width:     1080,
+		Height:    720,
+		MinWidth:  720,
+		MinHeight: 520,
 		Resizable: true,
 		Centered:  true,
 		Hidden:    o.Hidden,
@@ -94,95 +136,100 @@ func (m *Main) ShowError(msg string) {
 }
 
 func (m *Main) page(c *ui.Context) {
+	th := c.Theme
 	hs := m.o.Host.State()
-	ui.Column(c, func() {
-		ui.Scroll(c, func() {
-			ui.Column(c, func() {
-				ui.Title(c, "连接", 3)
-				ui.Row(c, func() {
-					m.hostCard(c, hs)
-					m.connectCard(c)
-				}, layout.Gap(16), layout.WrapItems())
-			}, layout.Gap(16), layout.Pad(24))
-		}, layout.Grow(1))
-		if hs.Phase == app.HostActive {
-			m.controlledPanel(c, hs)
-		}
+	ui.Row(c, func() {
+		m.sidebar(c, hs)
+		ui.Column(c, func() {
+			ui.Scroll(c, func() {
+				ui.Column(c, func() {
+					switch m.nav {
+					case "connect":
+						m.connectPage(c, hs)
+					default:
+						m.comingSoon(c)
+					}
+				}, layout.Gap(16), layout.Padding(insets(20, 24, 24, 24)))
+			}, layout.Grow(1))
+			if hs.Phase == app.HostActive {
+				m.controlledPanel(c, hs)
+			}
+		}, layout.Grow(1)).Bg(th.BgLayout)
 	}, layout.Grow(1))
 	m.confirm(c, hs)
 }
 
-func (m *Main) hostCard(c *ui.Context, hs app.HostState) {
-	ui.Card(c, "允许控制本机").Layout(layout.Grow(1), layout.Basis(320)).Body(func() {
+// sidebar is the left column: brand, navigation and status footer.
+func (m *Main) sidebar(c *ui.Context, hs app.HostState) {
+	th := c.Theme
+	ui.Column(c, func() {
+		ui.Row(c, func() {
+			ui.Row(c, func() {
+				ui.Icon(c, icon.Monitor).Size(14).Color(th.TextOnPrimary)
+			}, layout.Size(24, 24), layout.Center()).Bg(th.Primary.Base).Radius(6)
+			ui.Text(c, "mmdesk").Strong().NoWrap()
+		}, layout.Gap(8), layout.Middle(), layout.PadVH(4, 16))
+		ui.Menu(c, navItems, &m.nav).Show()
+		ui.Spacer(c)
 		ui.Column(c, func() {
-			ui.Paragraph(c, "把本机地址和临时密码告诉对方，对方就能连接这台电脑。").Secondary()
-			ui.Text(c, "本机地址").Secondary()
-			if len(hs.Addrs) == 0 {
-				ui.Text(c, "没有可用的网络地址")
-			}
-			for _, a := range hs.Addrs {
-				ui.Text(c, fmt.Sprintf("%s:%d", a, hs.Port)).Code().Copyable()
-			}
-			ui.Text(c, "临时密码").Secondary()
 			ui.Row(c, func() {
-				ui.Text(c, hs.Password).Code().Size(32).Strong()
-				if ui.Button(c, "刷新").Clicked() {
-					go m.o.Host.RefreshPassword()
+				name := m.hostname
+				if name == "" {
+					name = "本机"
 				}
-			}, layout.Gap(12), layout.Middle())
+				ui.Avatar(c, string([]rune(name)[:1])).Size(32)
+				ui.Column(c, func() {
+					ui.Text(c, name).Size(13).Weight(text.Weight(500)).Ellipsis()
+					ui.Text(c, "本机 · 局域网直连").Size(12).Tertiary().NoWrap()
+				}, layout.Grow(1), layout.MinW(0))
+			}, layout.Gap(10), layout.Middle())
 			ui.Row(c, func() {
-				if ui.Switch(c, &m.allow).Changed() {
-					on := m.allow
-					go m.o.Host.SetEnabled(on)
+				col, msg, sub := th.Success.Base, "服务正常", "端口 "+itoa(hs.Port)
+				switch {
+				case hs.Phase == app.HostOff:
+					col, msg, sub = th.TextQuaternary, "未开启被控", ""
+				case hs.Err != "":
+					col, msg, sub = th.Warning.Base, "需要处理", ""
+				case hs.Phase == app.HostActive:
+					col, msg, sub = th.Error.Base, "正在被控制", ""
 				}
-				ui.Text(c, "允许被远程控制")
-			}, layout.Gap(8), layout.Middle())
-			switch hs.Phase {
-			case app.HostListening:
-				ui.Text(c, "等待连接…").Secondary()
-			case app.HostPending:
-				ui.Text(c, hs.Peer+" 请求控制本机").Secondary()
-			case app.HostActive:
-				ui.Text(c, "正在被 "+hs.Peer+" 控制").Secondary()
-			}
-			if hs.Err != "" {
-				ui.Alert(c, "warning", hs.Err).ShowIcon(true)
-			} else if hs.Notice != "" {
-				ui.Text(c, hs.Notice).Tertiary()
-			}
-		}, layout.Gap(10))
-	})
+				dot(c, col, 6)
+				ui.Text(c, msg).Size(12).Secondary().NoWrap()
+				if sub != "" {
+					ui.Text(c, "· "+sub).Size(12).Tertiary().NoWrap()
+				}
+			}, layout.Gap(6), layout.Middle())
+		}, layout.Gap(10), layout.Padding(insets(12, 16, 16, 16))).Paint(topLine(th.Split))
+	}, layout.W(200), layout.PadVH(12, 0)).Bg(th.BgContainer).Paint(endLine(th.Split))
 }
 
-func (m *Main) connectCard(c *ui.Context) {
-	m.mu.Lock()
-	connecting, errMsg := m.connecting, m.connErr
-	m.mu.Unlock()
-	st := m.o.Form
-	ui.Card(c, "控制其他电脑").Layout(layout.Grow(1), layout.Basis(320)).Body(func() {
-		f := ui.Form(c).Vertical()
-		f.Body(func() {
-			f.Item("对方地址").Body(func() { ui.Input(c, &st.PeerAddr).Placeholder("192.168.1.20") })
-			f.Item("临时密码").Body(func() { ui.Input(c, &st.Password).Placeholder("6 位数字") })
-			f.Item("").NoLabel().Body(func() {
-				b := ui.Button(c, "连接").Primary().Loading(connecting).Disabled(strings.TrimSpace(st.PeerAddr) == "")
-				if b.Clicked() && !connecting {
-					m.connect(strings.TrimSpace(st.PeerAddr), strings.TrimSpace(st.Password))
-				}
-			})
-			if errMsg != "" {
-				f.Item("").NoLabel().Body(func() { ui.Alert(c, "error", errMsg).ShowIcon(true) })
+// comingSoon is the placeholder of pages that are not built yet.
+func (m *Main) comingSoon(c *ui.Context) {
+	title := ""
+	for _, it := range navItems {
+		if it.Key == m.nav {
+			title = it.Label
+		}
+	}
+	ui.Title(c, title, 4)
+	panel(c, func() {
+		ui.Empty(c).Title("即将推出").Description("这个功能还在开发中，当前版本先使用「连接」。")
+		ui.Row(c, func() {
+			if ui.Button(c, "返回连接").Primary().Clicked() {
+				m.nav = "connect"
+				c.Invalidate()
 			}
-		})
-	})
+		}, layout.JustifyContent(layout.JustifyCenter))
+	}, layout.Pad(48), layout.Gap(16))
 }
 
 // connect dials in the background and opens the session window.
-func (m *Main) connect(addr, pw string) {
+func (m *Main) connect(addr, pw string, viewOnly bool) {
 	m.mu.Lock()
 	m.connecting, m.connErr = true, ""
 	m.mu.Unlock()
-	v := app.NewViewer(app.ViewerConfig{Addr: addr, Password: pw, ViewOnly: m.o.ViewOnly, Log: m.o.ViewerLog}, nil)
+	viewOnly = viewOnly || m.o.ViewOnly
+	v := app.NewViewer(app.ViewerConfig{Addr: addr, Password: pw, ViewOnly: viewOnly, Log: m.o.ViewerLog}, nil)
 	go func() {
 		err := v.Connect(context.Background())
 		m.mu.Lock()
@@ -196,6 +243,7 @@ func (m *Main) connect(addr, pw string) {
 			return
 		}
 		m.o.App.Post(func() {
+			m.addRecent(Recent{Addr: addr, At: time.Now(), ViewOnly: viewOnly})
 			if err := OpenSession(m.o.App, v, func(msg string) {
 				if msg != "" {
 					m.ShowError(msg)
@@ -204,51 +252,19 @@ func (m *Main) connect(addr, pw string) {
 				log.Printf("mmdesk: session window: %v", err)
 				v.Close()
 			}
+			m.Invalidate()
 		})
 	}()
 }
 
-// confirm is the incoming-connection dialog.
-func (m *Main) confirm(c *ui.Context, hs app.HostState) {
-	open := hs.Phase == app.HostPending
-	if !open {
-		return
+// addRecent records a successful connection. Main thread.
+func (m *Main) addRecent(r Recent) {
+	f := m.o.Form
+	out := []Recent{r}
+	for _, e := range f.Recent {
+		if e.Addr != r.Addr && len(out) < maxRecent {
+			out = append(out, e)
+		}
 	}
-	left := max(0, int(time.Until(hs.Deadline).Round(time.Second)/time.Second))
-	c.WakeAt(time.Now().Add(time.Second))
-	md := ui.Modal(c, &open, "连接请求").OkText("接受").CancelText("拒绝").Width(min(420, c.Size().W-32)).Body(func() {
-		ui.Paragraph(c, fmt.Sprintf("%s 请求控制本机。", hs.Peer))
-		ui.Text(c, fmt.Sprintf("%d 秒后自动拒绝", left)).Secondary()
-	})
-	switch {
-	case md.Ok():
-		go m.o.Host.Accept()
-	case md.Cancelled() || !open:
-		go m.o.Host.Reject()
-	}
-}
-
-// controlledPanel is the bottom-right card shown while being controlled.
-func (m *Main) controlledPanel(c *ui.Context, hs app.HostState) {
-	el := time.Since(hs.Since).Truncate(time.Second)
-	c.WakeAt(time.Now().Add(time.Second))
-	ui.Row(c, func() {
-		ui.Card(c, "正在被远程控制").Small().Layout(layout.W(300)).Body(func() {
-			ui.Column(c, func() {
-				ui.Text(c, "对方："+hs.Peer)
-				ui.Text(c, "已连接 "+formatElapsed(el)).Secondary()
-				if ui.Button(c, "断开").Danger().Clicked() {
-					go m.o.Host.Disconnect()
-				}
-			}, layout.Gap(8))
-		})
-	}, layout.JustifyContent(layout.JustifyEnd), layout.Pad(16))
-}
-
-func formatElapsed(d time.Duration) string {
-	s := int(d / time.Second)
-	if s >= 3600 {
-		return fmt.Sprintf("%d:%02d:%02d", s/3600, s/60%60, s%60)
-	}
-	return fmt.Sprintf("%02d:%02d", s/60, s%60)
+	f.Recent = out
 }
