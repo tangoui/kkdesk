@@ -400,3 +400,20 @@ func (b *syncBuffer) String() string {
 	defer b.mu.Unlock()
 	return b.buf.String()
 }
+
+func TestLast(t *testing.T) {
+	t0 := time.Unix(1000, 0)
+	r := newRecorderAt(&bytes.Buffer{}, "viewer", nil, t0)
+	if got := r.Last(); got.Frames != 0 || !got.Time.IsZero() {
+		t.Fatalf("Last before Flush = %+v, want zero", got)
+	}
+	r.Frame(FrameTimes{Seq: 1})
+	r.Frame(FrameTimes{Seq: 2})
+	s, err := r.Flush(t0.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Last(); got.Frames != 2 || got.FPS != s.FPS || !got.Time.Equal(s.Time) {
+		t.Fatalf("Last = %+v, want %+v", got, s)
+	}
+}

@@ -287,3 +287,35 @@ func TestCloseNotifiesPeer(t *testing.T) {
 		})
 	}
 }
+
+func TestQualityAndCloseReason(t *testing.T) {
+	host, ctl := connect(t)
+	got := make(chan Quality, 1)
+	host.OnQuality(func(q Quality) { got <- q })
+	want := Quality{BitrateBps: 14_000_000, FPS: 90}
+	if err := ctl.SendQuality(want); err != nil {
+		t.Fatalf("SendQuality: %v", err)
+	}
+	select {
+	case q := <-got:
+		if q != want {
+			t.Fatalf("OnQuality got %+v, want %+v", q, want)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("OnQuality not called within 5s")
+	}
+	if host.RemoteAddr() == "" || ctl.RemoteAddr() == "" {
+		t.Fatalf("RemoteAddr empty: host %q ctl %q", host.RemoteAddr(), ctl.RemoteAddr())
+	}
+	if err := host.CloseWithReason("rejected"); err != nil {
+		t.Fatalf("CloseWithReason: %v", err)
+	}
+	select {
+	case <-ctl.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("ctl Done not closed within 5s")
+	}
+	if r := ctl.Reason(); r != "rejected" {
+		t.Fatalf("Reason = %q, want %q", r, "rejected")
+	}
+}

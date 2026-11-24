@@ -144,6 +144,7 @@ func (h *Host) Accept(ctx context.Context) (*Peer, error) {
 	if err != nil {
 		return nil, err
 	}
+	p.remote = c.RemoteAddr().String()
 	answer, err := p.answer(*m.SDP)
 	if err != nil {
 		p.Close()
@@ -200,6 +201,7 @@ func Dial(ctx context.Context, addr, password string) (*Peer, error) {
 	if err != nil {
 		return nil, err
 	}
+	p.remote = c.RemoteAddr().String()
 	offer, err := p.offer()
 	if err != nil {
 		p.Close()

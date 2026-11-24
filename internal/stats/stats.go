@@ -137,6 +137,7 @@ type Recorder struct {
 	done    chan struct{}
 	started bool
 	closed  bool
+	lastSec Second // latest Flush result, for live display
 }
 
 type totals struct {
@@ -275,6 +276,10 @@ func (r *Recorder) Flush(now time.Time) (Second, error) {
 		l.SegmentsMs[k] = toMs(s.Segments[k])
 	}
 
+	r.mu.Lock()
+	r.lastSec = s
+	r.mu.Unlock()
+
 	b, err := json.Marshal(l)
 	if err != nil {
 		return s, err
@@ -313,6 +318,14 @@ func (r *Recorder) Report() Report {
 		rep.CPU[k] = sum / float64(t.cpuN[k])
 	}
 	return rep
+}
+
+// Last returns the aggregate of the most recent Flush (zero before the
+// first), for live display such as a session window's fps and latency.
+func (r *Recorder) Last() Second {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.lastSec
 }
 
 // Start flushes once per second in a goroutine until Close.

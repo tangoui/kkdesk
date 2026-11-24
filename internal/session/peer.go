@@ -31,13 +31,15 @@ const (
 	gatherWait  = 10 * time.Second
 	metaMaxWait = 300 * time.Millisecond // deliver a frame without captureAt after this
 	autoPLIGap  = 500 * time.Millisecond
+	reasonWait  = 150 * time.Millisecond
 
 	labelMove  = "input-move"
 	labelInput = "input"
 	labelMeta  = "meta"
 
 	metaCapture byte = 'c' // 'c' u32 rtpTimestamp, i64 captureUnixNano (big endian)
-	metaBye     byte = 'b'
+	metaBye     byte = 'b' // 'b' [reason UTF-8]
+	metaQuality byte = 'q' // 'q' u32 bitrateBps, u16 fps (big endian)
 )
 
 // ErrNotHost is returned by WriteVideo on a controller-side peer.
@@ -74,6 +76,9 @@ type Peer struct {
 	onVideo    func([]byte, time.Time)
 	onInput    func(input.Event)
 	onKeyframe func()
+	onQuality  func(Quality)
+	reason     string // close reason sent by the other side
+	remote     string // remote signaling address
 	dcMove     *webrtc.DataChannel
 	dcInput    *webrtc.DataChannel
 	dcMeta     *webrtc.DataChannel
@@ -203,7 +208,12 @@ func (p *Peer) handleMeta(msg webrtc.DataChannelMessage) {
 	}
 	switch b[0] {
 	case metaBye:
+		p.mu.Lock()
+		p.reason = string(b[1:])
+		p.mu.Unlock()
 		p.shutdown()
+	case metaQuality:
+		p.handleQuality(b)
 	case metaCapture:
 		if len(b) != 13 || p.isHost {
 			return
@@ -567,7 +577,11 @@ func (p *Peer) shutdown() {
 
 // Close tells the other side goodbye and tears down the connection. It is
 // idempotent.
-func (p *Peer) Close() error {
+func (p *Peer) Close() error { return p.CloseWithReason("") }
+
+// CloseWithReason is Close with a human-readable reason that the other side
+// reads with Reason (for example a host rejecting the connection).
+func (p *Peer) CloseWithReason(reason string) error {
 	p.closeOnce.Do(func() {
 		select {
 		case <-p.done:
@@ -576,7 +590,11 @@ func (p *Peer) Close() error {
 			meta := p.dcMeta
 			p.mu.Unlock()
 			if meta != nil && meta.ReadyState() == webrtc.DataChannelStateOpen {
-				_ = meta.Send([]byte{metaBye})
+				if meta.Send(append([]byte{metaBye}, reason...)) == nil && reason != "" {
+					// The other side may notice the closed connection before
+					// the bye message; give the reason a moment to arrive.
+					time.Sleep(reasonWait)
+				}
 			}
 		}
 		p.doneOnce.Do(func() { close(p.done) })
