@@ -1,6 +1,6 @@
 // Package inject posts remote input events (mouse, keyboard, wheel) to the
 // local session. On macOS it uses CGEventPost and needs the Accessibility
-// permission.
+// permission; on Windows it uses SendInput (inject_windows.go).
 package inject
 
 import (
