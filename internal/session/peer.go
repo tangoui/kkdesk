@@ -36,6 +36,8 @@ const (
 	labelMove  = "input-move"
 	labelInput = "input"
 	labelMeta  = "meta"
+	labelFiles = "files"
+	numLabels  = 4 // data channels that must open before a session is ready
 
 	metaCapture byte = 'c' // 'c' u32 rtpTimestamp, i64 captureUnixNano (big endian)
 	metaBye     byte = 'b' // 'b' [reason UTF-8]
@@ -45,6 +47,9 @@ const (
 
 // ErrNotHost is returned by WriteVideo on a controller-side peer.
 var ErrNotHost = errors.New("session: video can only be sent by the host")
+
+// ErrNoVideo is returned by WriteVideo on a files-only (ModeFiles) session.
+var ErrNoVideo = errors.New("session: files-only session has no video")
 
 // Stats is a snapshot of transport counters. Bytes count H.264 payload bytes
 // (Annex-B access units) handed to or delivered by the peer.
@@ -62,6 +67,7 @@ type Stats struct {
 type Peer struct {
 	pc     *webrtc.PeerConnection
 	isHost bool
+	mode   Mode
 
 	// host video sending
 	writeMu   sync.Mutex
@@ -83,6 +89,7 @@ type Peer struct {
 	dcMove     *webrtc.DataChannel
 	dcInput    *webrtc.DataChannel
 	dcMeta     *webrtc.DataChannel
+	files      *fileChannel
 	lastPLI    time.Time
 
 	opened    atomic.Int32
@@ -109,7 +116,7 @@ type videoEvent struct {
 	nano   int64
 }
 
-func newPeer(isHost, loopback bool) (*Peer, error) {
+func newPeer(isHost, loopback bool, mode Mode) (*Peer, error) {
 	m := &webrtc.MediaEngine{}
 	fb := []webrtc.RTCPFeedback{{Type: "goog-remb"}, {Type: "ccm", Parameter: "fir"}, {Type: "nack"}, {Type: "nack", Parameter: "pli"}}
 	if err := m.RegisterCodec(webrtc.RTPCodecParameters{
@@ -142,6 +149,7 @@ func newPeer(isHost, loopback bool) (*Peer, error) {
 	p := &Peer{
 		pc:      pc,
 		isHost:  isHost,
+		mode:    normMode(mode),
 		ready:   make(chan struct{}),
 		done:    make(chan struct{}),
 		videoEv: make(chan videoEvent, 64),
@@ -174,22 +182,21 @@ func (p *Peer) attach(dc *webrtc.DataChannel) {
 		p.dcInput = dc
 	case labelMeta:
 		p.dcMeta = dc
+	case labelFiles:
+		fc := newFileChannel(dc)
+		p.files = fc
+		p.mu.Unlock()
+		dc.OnOpen(p.channelOpened)
+		dc.OnClose(func() { fc.markClosed(); p.shutdown() })
+		go func() { <-p.done; fc.markClosed() }()
+		return
 	default:
 		p.mu.Unlock()
 		return
 	}
 	p.mu.Unlock()
 
-	dc.OnOpen(func() {
-		if p.opened.Add(1) == 3 {
-			p.readyOnce.Do(func() {
-				close(p.ready)
-				if !p.isHost {
-					go p.clockLoop()
-				}
-			})
-		}
-	})
+	dc.OnOpen(p.channelOpened)
 	dc.OnClose(p.shutdown)
 	if dc.Label() == labelMeta {
 		dc.OnMessage(p.handleMeta)
@@ -207,6 +214,18 @@ func (p *Peer) attach(dc *webrtc.DataChannel) {
 			f(e)
 		}
 	})
+}
+
+// channelOpened marks the session ready once every data channel is open.
+func (p *Peer) channelOpened() {
+	if p.opened.Add(1) == numLabels {
+		p.readyOnce.Do(func() {
+			close(p.ready)
+			if !p.isHost {
+				go p.clockLoop()
+			}
+		})
+	}
 }
 
 func (p *Peer) handleMeta(msg webrtc.DataChannelMessage) {
@@ -247,6 +266,7 @@ func (p *Peer) offer() (*webrtc.SessionDescription, error) {
 		{labelMove, &webrtc.DataChannelInit{Ordered: &unordered, MaxRetransmits: &zero}},
 		{labelInput, nil},
 		{labelMeta, nil},
+		{labelFiles, nil}, // ordered and reliable
 	} {
 		dc, err := p.pc.CreateDataChannel(c.label, c.init)
 		if err != nil {
@@ -254,9 +274,11 @@ func (p *Peer) offer() (*webrtc.SessionDescription, error) {
 		}
 		p.attach(dc)
 	}
-	if _, err := p.pc.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo,
-		webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly}); err != nil {
-		return nil, err
+	if p.mode != ModeFiles {
+		if _, err := p.pc.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo,
+			webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly}); err != nil {
+			return nil, err
+		}
 	}
 	o, err := p.pc.CreateOffer(nil)
 	if err != nil {
@@ -270,6 +292,13 @@ func (p *Peer) offer() (*webrtc.SessionDescription, error) {
 func (p *Peer) answer(offer webrtc.SessionDescription) (*webrtc.SessionDescription, error) {
 	if err := p.pc.SetRemoteDescription(offer); err != nil {
 		return nil, err
+	}
+	if p.mode == ModeFiles {
+		a, err := p.pc.CreateAnswer(nil)
+		if err != nil {
+			return nil, err
+		}
+		return p.setLocalAndGather(a)
 	}
 	track, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{
 		MimeType: webrtc.MimeTypeH264, ClockRate: videoClock, SDPFmtpLine: h264Fmtp,
@@ -346,6 +375,9 @@ func (p *Peer) readRTCP(sender *webrtc.RTPSender) {
 func (p *Peer) WriteVideo(nal []byte, captureAt time.Time, keyframe bool) error {
 	_ = keyframe
 	if p.track == nil {
+		if p.isHost {
+			return ErrNoVideo
+		}
 		return ErrNotHost
 	}
 	select {

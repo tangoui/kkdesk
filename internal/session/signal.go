@@ -29,7 +29,7 @@ const signalTimeout = 30 * time.Second
 //	host → client  {"nonce": base64}
 //	client → host  {"mac": base64(HMAC-SHA256(password, nonce))}
 //	host → client  {"ok": true} | {"ok": false, "error": "bad password"}
-//	client → host  {"sdp": offer}
+//	client → host  {"sdp": offer, "mode": "desktop"|"files"}
 //	host → client  {"sdp": answer}
 type sigMsg struct {
 	Nonce string                     `json:"nonce,omitempty"`
@@ -37,6 +37,7 @@ type sigMsg struct {
 	OK    *bool                      `json:"ok,omitempty"`
 	Error string                     `json:"error,omitempty"`
 	SDP   *webrtc.SessionDescription `json:"sdp,omitempty"`
+	Mode  Mode                       `json:"mode,omitempty"` // with the offer; "" = desktop
 }
 
 type sigConn struct {
@@ -140,7 +141,7 @@ func (h *Host) Accept(ctx context.Context) (*Peer, error) {
 	if m.SDP == nil || m.SDP.Type != webrtc.SDPTypeOffer {
 		return nil, errors.New("session: expected SDP offer")
 	}
-	p, err := newPeer(true, isLoopback(c.RemoteAddr()))
+	p, err := newPeer(true, isLoopback(c.RemoteAddr()), m.Mode)
 	if err != nil {
 		return nil, err
 	}
@@ -166,6 +167,12 @@ func (h *Host) Accept(ctx context.Context) (*Peer, error) {
 // WebRTC session as the controller. It returns once the data channels are
 // open. A rejected password yields ErrBadPassword.
 func Dial(ctx context.Context, addr, password string) (*Peer, error) {
+	return DialWithOptions(ctx, addr, password, DialOptions{})
+}
+
+// DialWithOptions is Dial with a connection mode. In ModeFiles no video is
+// negotiated and the host reads Peer.Mode to skip capture.
+func DialWithOptions(ctx context.Context, addr, password string, opts DialOptions) (*Peer, error) {
 	var d net.Dialer
 	c, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
@@ -197,7 +204,7 @@ func Dial(ctx context.Context, addr, password string) (*Peer, error) {
 		return nil, fmt.Errorf("session: rejected: %s", m.Error)
 	}
 
-	p, err := newPeer(false, isLoopback(c.RemoteAddr()))
+	p, err := newPeer(false, isLoopback(c.RemoteAddr()), opts.Mode)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +214,7 @@ func Dial(ctx context.Context, addr, password string) (*Peer, error) {
 		p.Close()
 		return nil, err
 	}
-	if err := sc.send(sigMsg{SDP: offer}); err != nil {
+	if err := sc.send(sigMsg{SDP: offer, Mode: p.mode}); err != nil {
 		p.Close()
 		return nil, err
 	}
