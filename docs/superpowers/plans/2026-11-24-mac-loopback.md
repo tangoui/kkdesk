@@ -39,7 +39,7 @@
 ### Task 1: 仓库骨架、输入协议与键码映射（纯 Go）
 
 **Files:**
-- Create: `go.mod`、`go.work`（如需要）、`.gitignore`、`cmd/mmdesk/main.go`（暂时只解析参数、打印用法）
+- Create: `go.mod`、`go.work`（如需要）、`.gitignore`、`main.go（项目根目录：tan dev / tan package 编译根目录的 main 包）`（暂时只解析参数、打印用法）
 - Create: `internal/input/proto.go`、`internal/input/proto_test.go`
 - Create: `internal/input/keymap_darwin_table.go`（无构建标签，纯表）、`internal/input/keymap_test.go`
 
@@ -114,9 +114,9 @@
 - Create: `internal/app/host.go`（采集→编码→Peer；PLI→强制关键帧；输入→注入；连接确认与右下角面板）
 - Create: `internal/app/viewer.go`（Peer→解码→显示；指针/按键→输入事件；控制中心菜单）
 - Create: `internal/ui/main_window.go`、`internal/ui/session_window.go`
-- Modify: `cmd/mmdesk/main.go`（`-host`、`-connect addr`、`-password`、`-fps`、`-bitrate`、`-log`、`-autoaccept`（测量用）、`-view-only`）
+- Modify: `main.go（项目根目录：tan dev / tan package 编译根目录的 main 包）`（`-host`、`-connect addr`、`-password`、`-fps`、`-bitrate`、`-log`、`-autoaccept`（测量用）、`-view-only`）
 
-- [ ] 实现；`CGO_ENABLED=1 go build ./cmd/mmdesk`。
+- [ ] 实现；`CGO_ENABLED=1 go build .`。
 - [ ] 后台实机：`mmdesk -host -autoaccept -log host.jsonl` 与 `mmdesk -connect 127.0.0.1 -password … -log view.jsonl`，确认会话窗口出现画面（cua-driver 后台截图）、帧率与延迟在标签栏显示；打开控制后后台发一次点击，被控端日志记录注入。
 - [ ] 提交 `feat: mmdesk app wiring host and viewer`。
 

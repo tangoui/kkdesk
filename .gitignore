@@ -1,3 +1,6 @@
 /mmdesk
 *.jsonl
 /dist/
+/build/
+zz_tan_*.syso
+.DS_Store
