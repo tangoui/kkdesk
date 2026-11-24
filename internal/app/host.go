@@ -49,6 +49,7 @@ type HostConfig struct {
 	Addr        string // listen address; default ":21118"
 	Password    string // fixed password; empty generates a 6-digit one
 	FPS         int    // capture frame rate
+	MaxWidth    int    // capture width limit; 0 = native
 	BitrateMbps int    // 0 = auto
 	Log         io.Writer
 	AutoAccept  bool
@@ -396,7 +397,7 @@ func (h *Host) stream(p *session.Peer) error {
 
 	h.wireInput(p)
 
-	capt, err := capture.Start(capture.Options{FPS: h.cfg.FPS, MaxWidth: 1920, ExcludeApp: ExcludeAppName()}, vs.frame)
+	capt, err := capture.Start(capture.Options{FPS: h.cfg.FPS, MaxWidth: h.cfg.MaxWidth, ExcludeApp: ExcludeAppName()}, vs.frame)
 	if err != nil {
 		return fmt.Errorf("启动屏幕采集失败：%w", err)
 	}

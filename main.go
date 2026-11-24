@@ -84,6 +84,7 @@ func run(o options) error {
 	host := app.NewHost(app.HostConfig{
 		Password:    hostPW,
 		FPS:         o.fps,
+		MaxWidth:    o.maxWidth,
 		BitrateMbps: o.bitrate,
 		Log:         logw,
 		AutoAccept:  o.autoAccept,

@@ -12,6 +12,7 @@ type options struct {
 	connect    string
 	password   string
 	fps        int
+	maxWidth   int
 	bitrate    int
 	logPath    string
 	autoAccept bool
@@ -25,6 +26,7 @@ func parseFlags(args []string) (options, *flag.FlagSet, error) {
 	fs.StringVar(&o.connect, "connect", "", "run as viewer: connect to the host at `addr`")
 	fs.StringVar(&o.password, "password", "", "temporary password of the host (viewer)")
 	fs.IntVar(&o.fps, "fps", 60, "frame rate: 30, 60, 90 or 144")
+	fs.IntVar(&o.maxWidth, "maxwidth", 1920, "host: scale the captured screen down to at most this width (0 = native)")
 	fs.IntVar(&o.bitrate, "bitrate", 0, "bitrate in Mbps (0 = auto)")
 	fs.StringVar(&o.logPath, "log", "", "write JSON Lines stats to `file`")
 	fs.BoolVar(&o.autoAccept, "autoaccept", false, "host: accept incoming connections without asking (measurement)")
