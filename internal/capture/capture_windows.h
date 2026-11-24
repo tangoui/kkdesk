@@ -1,7 +1,7 @@
 // Desktop Duplication (DXGI 1.2) capture of the primary display. Plain C
 // declarations shared by capture_windows.go (cgo) and capture_windows.cpp.
-#ifndef MMDESK_CAPTURE_WINDOWS_H
-#define MMDESK_CAPTURE_WINDOWS_H
+#ifndef KKDESK_CAPTURE_WINDOWS_H
+#define KKDESK_CAPTURE_WINDOWS_H
 
 #include <stdint.h>
 

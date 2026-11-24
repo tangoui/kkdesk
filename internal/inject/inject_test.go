@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"mmdesk/internal/input"
+	"github.com/tangoui/kkdesk/internal/input"
 )
 
 func TestToGlobal(t *testing.T) {

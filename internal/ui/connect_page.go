@@ -11,7 +11,7 @@ import (
 	"github.com/tangoui/tango/ui/layout"
 	"github.com/tangoui/tango/ui/text"
 
-	"mmdesk/internal/app"
+	"github.com/tangoui/kkdesk/internal/app"
 )
 
 var (
@@ -152,7 +152,7 @@ func hostStatus(hs app.HostState) string {
 // shareText is what 复制并分享 puts on the clipboard.
 func shareText(hs app.HostState) string {
 	var b strings.Builder
-	b.WriteString("用 mmdesk 远程协助我：\n")
+	b.WriteString("用 kkdesk 远程协助我：\n")
 	for _, a := range hs.Addrs {
 		fmt.Fprintf(&b, "地址 %s:%d\n", a, hs.Port)
 	}

@@ -18,9 +18,9 @@ import (
 	"github.com/tangoui/tango/ui/theme"
 	"github.com/tangoui/tango/uihost"
 
-	"mmdesk/internal/app"
-	"mmdesk/internal/display"
-	"mmdesk/internal/input"
+	"github.com/tangoui/kkdesk/internal/app"
+	"github.com/tangoui/kkdesk/internal/display"
+	"github.com/tangoui/kkdesk/internal/input"
 )
 
 // closeDelay keeps the session window up briefly after the session ends so
@@ -55,7 +55,7 @@ type sessionWin struct {
 func OpenSession(a *tango.App, v *app.Viewer, onEnd func(msg string)) error {
 	w := &sessionWin{app: a, v: v}
 	r, s, err := uihost.Open(a, uihost.Options{Surface: tango.SurfaceOptions{
-		Title:     "mmdesk - " + v.Addr(),
+		Title:     "kkdesk - " + v.Addr(),
 		Width:     1280,
 		Height:    800,
 		MinWidth:  480,
@@ -203,7 +203,7 @@ func (w *sessionWin) popupMenu(x, y int, st app.ViewerState) {
 	go func() {
 		defer w.menuOpen.Store(false)
 		if err := menu.Popup(s, x, y, m); err != nil {
-			log.Printf("mmdesk viewer: menu: %v", err)
+			log.Printf("kkdesk viewer: menu: %v", err)
 		}
 		w.invalidate()
 	}()

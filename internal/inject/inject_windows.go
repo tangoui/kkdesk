@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"unsafe"
 
-	"mmdesk/internal/input"
+	"github.com/tangoui/kkdesk/internal/input"
 )
 
 // The Windows backend calls user32 directly (no cgo).

@@ -1,4 +1,4 @@
-// Command summary prints the stats.Summary of mmdesk JSON Lines logs.
+// Command summary prints the stats.Summary of kkdesk JSON Lines logs.
 //
 //	go run ./scripts/summary host.jsonl view.jsonl
 package main
@@ -9,7 +9,7 @@ import (
 	"slices"
 	"time"
 
-	"mmdesk/internal/stats"
+	"github.com/tangoui/kkdesk/internal/stats"
 )
 
 func ms(d time.Duration) string { return fmt.Sprintf("%.1f ms", float64(d)/float64(time.Millisecond)) }

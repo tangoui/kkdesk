@@ -1,5 +1,5 @@
-#ifndef MMDESK_CAPTURE_DARWIN_H
-#define MMDESK_CAPTURE_DARWIN_H
+#ifndef KKDESK_CAPTURE_DARWIN_H
+#define KKDESK_CAPTURE_DARWIN_H
 
 #include <stdint.h>
 

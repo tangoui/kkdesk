@@ -23,7 +23,7 @@ func TestCaptureMainDisplay(t *testing.T) {
 		mu     sync.Mutex
 		frames []rec
 	)
-	s, err := Start(Options{FPS: 30, MaxWidth: 1920, ExcludeApp: "mmdesk"}, func(f Frame) {
+	s, err := Start(Options{FPS: 30, MaxWidth: 1920, ExcludeApp: "kkdesk"}, func(f Frame) {
 		r := rec{w: f.Width, h: f.Height, format: pixelFormat(f.Pixels), at: f.CaptureAt}
 		mu.Lock()
 		frames = append(frames, r)

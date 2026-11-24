@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"mmdesk/internal/files"
+	"github.com/tangoui/kkdesk/internal/files"
 )
 
 // connectMode is connect with dial options.

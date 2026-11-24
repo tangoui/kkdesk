@@ -15,7 +15,7 @@ import (
 var logger atomic.Pointer[func(string)]
 
 // SetLogger directs the backend diagnostics (device, capture, encoder) to
-// f. nil restores the default (log.Printf with a "mmdesk win:" prefix).
+// f. nil restores the default (log.Printf with a "kkdesk win:" prefix).
 func SetLogger(f func(string)) {
 	if f == nil {
 		logger.Store(nil)
@@ -31,7 +31,7 @@ func Logf(format string, args ...any) {
 		(*f)(msg)
 		return
 	}
-	log.Printf("mmdesk win: %s", msg)
+	log.Printf("kkdesk win: %s", msg)
 }
 
 // HRESULTs the backends branch on or that are common in their logs.

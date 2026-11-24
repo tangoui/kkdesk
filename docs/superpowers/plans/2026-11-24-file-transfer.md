@@ -1,4 +1,4 @@
-# mmdesk 文件传输 Implementation Plan
+# kkdesk 文件传输 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go、pion WebRTC 数据通道、Tango ui。
 
-**Spec / 设计来源:** 界面原型 `docs/design/prototype.html` 的「文件传输」页（左本机、右对方、下方队列）；设计规格 `docs/superpowers/specs/2026-11-24-mmdesk-spike-design.md` 的产品形态。用户 2026-11-24 要求「文件传输功能做好」，下列决定由实现方确定并已告知用户。
+**Spec / 设计来源:** 界面原型 `docs/design/prototype.html` 的「文件传输」页（左本机、右对方、下方队列）；设计规格 `docs/superpowers/specs/2026-11-24-kkdesk-spike-design.md` 的产品形态。用户 2026-11-24 要求「文件传输功能做好」，下列决定由实现方确定并已告知用户。
 
 ## Global Constraints
 
@@ -17,7 +17,7 @@
   - 请求（控制端→被控端，JSON 文本消息）：`{"id":n,"op":"list","path":p}`、`stat`、`home`（返回被控端用户主目录和盘符/卷列表）、`mkdir`、`download`（`path`：文件或文件夹；被控端随后推送内容）、`upload_begin`（`dir`、相对路径、`size`、`mode`、`mtime`）、`cancel`（`transfer`）。
   - 响应：`{"id":n,"ok":true,...}` 或 `{"id":n,"ok":false,"error":"..."}`；错误码 `denied`（权限关闭）、`not_found`、`exists`、`io`。
   - 数据：二进制消息 `[1 字节类型][8 字节传输 id][8 字节偏移][数据]`，块大小 64 KiB；结束消息 JSON `{"op":"end","transfer":t,"sha256":hex}`，接收方校验大小和 SHA-256，不一致则报错并删除临时文件。
-- 写文件：先写到同目录 `.<名字>.mmdesk-part`，完成并校验后原子重命名；重名时改为 `名字 (1).扩展名`、`(2)`……；取消或出错时删除临时文件。保留修改时间（尽力而为）。
+- 写文件：先写到同目录 `.<名字>.kkdesk-part`，完成并校验后原子重命名；重名时改为 `名字 (1).扩展名`、`(2)`……；取消或出错时删除临时文件。保留修改时间（尽力而为）。
 - 文件夹：递归；先建目录结构，再逐个文件传；符号链接不跟随（作为链接本身跳过并记录）；单个文件失败不影响其他文件，最后汇总。
 - 流量控制：发送方在 `BufferedAmount > 4 MiB` 时暂停，`OnBufferedAmountLow`（阈值 1 MiB）后继续；同一时间只发一个文件（队列串行），列目录请求可以穿插。
 - 权限：被控端 `FileServer.SetAllowed(bool)`；关闭时所有请求返回 `denied`，进行中的传输中止。默认允许（与连接确认弹窗里「文件传输」勾选一致）。

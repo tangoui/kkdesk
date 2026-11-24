@@ -1,4 +1,4 @@
-// Package app wires the mmdesk pipelines: the host shares this screen
+// Package app wires the kkdesk pipelines: the host shares this screen
 // (capture → encode → session, session input → inject) and the viewer shows
 // a remote one (session → decode → display, UI input → session). It holds no
 // UI; package ui renders the state these types expose.
@@ -19,12 +19,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"mmdesk/internal/capture"
-	"mmdesk/internal/codec"
-	"mmdesk/internal/inject"
-	"mmdesk/internal/input"
-	"mmdesk/internal/session"
-	"mmdesk/internal/stats"
+	"github.com/tangoui/kkdesk/internal/capture"
+	"github.com/tangoui/kkdesk/internal/codec"
+	"github.com/tangoui/kkdesk/internal/inject"
+	"github.com/tangoui/kkdesk/internal/input"
+	"github.com/tangoui/kkdesk/internal/session"
+	"github.com/tangoui/kkdesk/internal/stats"
 )
 
 // Port is the default signaling port.
@@ -151,17 +151,17 @@ func ExcludeAppName() string {
 	if exe, err := os.Executable(); err == nil {
 		return filepath.Base(exe)
 	}
-	return "mmdesk"
+	return "kkdesk"
 }
 
-// excludeSelfWindows reports whether capture should hide mmdesk's own
+// excludeSelfWindows reports whether capture should hide kkdesk's own
 // windows. A ScreenCaptureKit filter that excludes applications makes
 // WindowServer composite a second, filtered image of the display every
 // frame: measured on a 4K/60 Hz M4 it dropped the whole screen (source app
 // and capture) from 60 to ~50 fps and delayed encoder output by ~9 ms. So
 // it is only used where it is needed: when the controller runs on this
 // machine (the viewer window would otherwise mirror itself). env
-// (MMDESK_EXCLUDE_SELF) "0" or "1" forces it off or on.
+// (KKDESK_EXCLUDE_SELF) "0" or "1" forces it off or on.
 func excludeSelfWindows(remote string, local []string, env string) bool {
 	switch env {
 	case "0":
@@ -321,7 +321,7 @@ func (h *Host) acceptLoop(ctx context.Context, ln *session.Host) {
 				return
 			}
 			if !errors.Is(err, session.ErrBadPassword) {
-				log.Printf("mmdesk host: accept: %v", err)
+				log.Printf("kkdesk host: accept: %v", err)
 			}
 			continue
 		}
@@ -383,7 +383,7 @@ func (h *Host) handle(p *session.Peer) {
 	}
 	if help := CaptureHelp(); help != "" {
 		h.setErr(help)
-		log.Printf("mmdesk host: %s", help)
+		log.Printf("kkdesk host: %s", help)
 		p.CloseWithReason("被控端没有屏幕录制权限")
 		return
 	}
@@ -393,7 +393,7 @@ func (h *Host) handle(p *session.Peer) {
 	h.notify()
 	if err := h.stream(p); err != nil {
 		h.setErr(err.Error())
-		log.Printf("mmdesk host: %v", err)
+		log.Printf("kkdesk host: %v", err)
 		p.CloseWithReason("被控端出错：" + err.Error())
 		return
 	}
@@ -426,7 +426,7 @@ func (h *Host) stream(p *session.Peer) error {
 	h.wireInput(p)
 
 	opts := capture.Options{FPS: h.cfg.FPS, MaxWidth: h.cfg.MaxWidth, ExcludeApp: captureExcludeApp(p.RemoteAddr())}
-	log.Printf("mmdesk host: capture %d fps, max width %d, exclude %q", opts.FPS, opts.MaxWidth, opts.ExcludeApp)
+	log.Printf("kkdesk host: capture %d fps, max width %d, exclude %q", opts.FPS, opts.MaxWidth, opts.ExcludeApp)
 	capt, err := capture.Start(opts, vs.frame)
 	if err != nil {
 		return fmt.Errorf("启动屏幕采集失败：%w", err)
@@ -442,13 +442,13 @@ loop:
 		case <-p.Done():
 			break loop
 		case <-tk.C:
-			log.Printf("mmdesk host: %s", statsSummary(rec.Last(), capt.Stats()))
+			log.Printf("kkdesk host: %s", statsSummary(rec.Last(), capt.Stats()))
 		}
 	}
 	tk.Stop()
 	st := capt.Stats()
 	capt.Close() // no frame callbacks after this
-	log.Printf("mmdesk host: capture frames complete=%d idle=%d other=%d display-after-callback=%d resent=%d reopened=%d",
+	log.Printf("kkdesk host: capture frames complete=%d idle=%d other=%d display-after-callback=%d resent=%d reopened=%d",
 		st.Complete, st.Idle, st.Other, st.Late, st.Resent, st.Reopened)
 	vs.mu.Lock()
 	if vs.enc != nil {
@@ -470,15 +470,15 @@ func (h *Host) wireInput(p *session.Peer) {
 		if in, err := inject.New(); err == nil {
 			inj = in
 			b := in.Bounds()
-			log.Printf("mmdesk host: inject: primary display %.0fx%.0f at (%.0f,%.0f)", b.W, b.H, b.X, b.Y)
+			log.Printf("kkdesk host: inject: primary display %.0fx%.0f at (%.0f,%.0f)", b.W, b.H, b.X, b.Y)
 		} else {
-			log.Printf("mmdesk host: inject: %v", err)
+			log.Printf("kkdesk host: inject: %v", err)
 		}
 		if lim := InjectLimits(); lim != "" {
-			injectLimitsOnce.Do(func() { log.Printf("mmdesk host: %s", lim) })
+			injectLimitsOnce.Do(func() { log.Printf("kkdesk host: %s", lim) })
 		}
 	} else {
-		log.Printf("mmdesk host: %s 远程输入将被忽略。", help)
+		log.Printf("kkdesk host: %s 远程输入将被忽略。", help)
 	}
 	var n atomic.Int64
 	var errLogged atomic.Bool
@@ -488,12 +488,12 @@ func (h *Host) wireInput(p *session.Peer) {
 		}
 		if err := inj.Apply(e); err != nil {
 			if !errLogged.Swap(true) {
-				log.Printf("mmdesk host: inject: %v", err)
+				log.Printf("kkdesk host: inject: %v", err)
 			}
 			return
 		}
 		if n.Add(1) == 1 {
-			log.Printf("mmdesk host: injected first remote input event (kind %d)", e.Kind)
+			log.Printf("kkdesk host: injected first remote input event (kind %d)", e.Kind)
 		}
 	})
 }
@@ -532,13 +532,13 @@ func (v *videoSender) frame(f capture.Frame) {
 		}
 		enc, err := codec.NewEncoder(f.Width, f.Height, v.fps, v.bps, v.encoded)
 		if err != nil {
-			log.Printf("mmdesk host: encoder: %v", err)
+			log.Printf("kkdesk host: encoder: %v", err)
 			v.failed = true
 			v.peer.CloseWithReason("被控端无法创建编码器")
 			return
 		}
 		v.enc, v.encW, v.encH = enc, f.Width, f.Height
-		log.Printf("mmdesk host: encoder %dx%d %d fps %d bps: %s", f.Width, f.Height, v.fps, v.bps, EncoderInfo(enc))
+		log.Printf("kkdesk host: encoder %dx%d %d fps %d bps: %s", f.Width, f.Height, v.fps, v.bps, EncoderInfo(enc))
 		v.forceKey.Store(true)
 	}
 	if !f.DisplayAt.IsZero() {
@@ -551,7 +551,7 @@ func (v *videoSender) frame(f capture.Frame) {
 		v.dispMu.Unlock()
 	}
 	if err := v.enc.Encode(codec.Frame{Pixels: f.Pixels, CaptureAt: f.CaptureAt}, v.forceKey.Swap(false)); err != nil {
-		log.Printf("mmdesk host: encode: %v", err)
+		log.Printf("kkdesk host: encode: %v", err)
 	}
 }
 
@@ -597,5 +597,5 @@ func (v *videoSender) setQuality(q session.Quality) {
 	if capt != nil {
 		capt.SetFPS(fps) // outside mu: it waits for ScreenCaptureKit
 	}
-	log.Printf("mmdesk host: quality %d bps, %d fps", bps, fps)
+	log.Printf("kkdesk host: quality %d bps, %d fps", bps, fps)
 }

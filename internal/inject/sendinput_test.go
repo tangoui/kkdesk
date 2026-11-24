@@ -4,7 +4,7 @@ import (
 	"testing"
 	"unsafe"
 
-	"mmdesk/internal/input"
+	"github.com/tangoui/kkdesk/internal/input"
 )
 
 // The Win32 INPUT layout on 64-bit Windows: DWORD type, 4 bytes padding, then

@@ -5,7 +5,7 @@ import (
 	"math"
 	"unsafe"
 
-	"mmdesk/internal/input"
+	"github.com/tangoui/kkdesk/internal/input"
 )
 
 // This file holds the platform-independent half of the Windows backend: the

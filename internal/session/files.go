@@ -5,7 +5,7 @@ import (
 
 	"github.com/pion/webrtc/v4"
 
-	"mmdesk/internal/files"
+	"github.com/tangoui/kkdesk/internal/files"
 )
 
 // Mode is what a connection is for, chosen by the controller.

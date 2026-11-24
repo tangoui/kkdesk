@@ -8,7 +8,7 @@ import (
 	"github.com/tangoui/tango/ui/icon/antd"
 	"github.com/tangoui/tango/ui/layout"
 
-	"mmdesk/internal/app"
+	"github.com/tangoui/kkdesk/internal/app"
 )
 
 // Permissions shown on the confirmation and the controlled panel. Only

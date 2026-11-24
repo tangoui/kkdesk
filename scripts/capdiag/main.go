@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"mmdesk/internal/capture"
-	"mmdesk/internal/codec"
+	"github.com/tangoui/kkdesk/internal/capture"
+	"github.com/tangoui/kkdesk/internal/codec"
 )
 
 func med(d []time.Duration) time.Duration {
@@ -32,7 +32,7 @@ func main() {
 	secs := flag.Int("secs", 5, "seconds")
 	fps := flag.Int("fps", 60, "fps")
 	maxw := flag.Int("maxwidth", 1920, "max width")
-	excl := flag.String("exclude", "mmdesk", "app whose windows are excluded")
+	excl := flag.String("exclude", "kkdesk", "app whose windows are excluded")
 	flag.Parse()
 	var mu sync.Mutex
 	var dispMinusArr, encLat, capEnc []time.Duration

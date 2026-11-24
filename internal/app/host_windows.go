@@ -5,7 +5,7 @@ package app
 import (
 	"syscall"
 
-	"mmdesk/internal/stats"
+	"github.com/tangoui/kkdesk/internal/stats"
 )
 
 var (
@@ -39,7 +39,7 @@ func InjectHelp() string { return "" }
 // InjectLimits describes what SendInput cannot reach from a normal-rights
 // process (UIPI); Windows drops such input silently.
 func InjectLimits() string {
-	return "远程输入限制（UIPI）：mmdesk 以普通权限运行，无法操作以管理员身份运行的窗口，也无法操作 UAC 提示、锁屏和 Ctrl+Alt+Del 界面（安全桌面），这些输入会被 Windows 静默丢弃。"
+	return "远程输入限制（UIPI）：kkdesk 以普通权限运行，无法操作以管理员身份运行的窗口，也无法操作 UAC 提示、锁屏和 Ctrl+Alt+Del 界面（安全桌面），这些输入会被 Windows 静默丢弃。"
 }
 
 // captureExcludeApp returns "": hiding windows from Desktop Duplication is

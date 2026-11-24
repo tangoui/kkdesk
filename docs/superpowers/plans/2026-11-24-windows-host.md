@@ -1,14 +1,14 @@
-# mmdesk 第 3 步：Windows 被控（Mac 控 Windows）Implementation Plan
+# kkdesk 第 3 步：Windows 被控（Mac 控 Windows）Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** `mmdesk.exe -host` 在用户的 Windows 电脑上共享屏幕，Mac 上 `mmdesk -connect <Windows IP>` 看到并控制它；记录跨机器的分段延迟、帧率、CPU。
+**Goal:** `kkdesk.exe -host` 在用户的 Windows 电脑上共享屏幕，Mac 上 `kkdesk -connect <Windows IP>` 看到并控制它；记录跨机器的分段延迟、帧率、CPU。
 
-**Architecture:** 沿用第 2 步的平台无关接口（`internal/capture`、`internal/codec`、`internal/inject` 的 `Start`/`NewEncoder`/`New`），新增 `_windows` 实现，用 cgo + mingw-w64 调 DXGI / D3D11 / Media Foundation / SendInput。Windows 上的帧在 GPU 里流转：Desktop Duplication 得到 BGRA 纹理 → D3D11 视频处理器转 NV12 → MF 硬件 H.264 编码器（通过 `IMFDXGIDeviceManager` 共享同一 D3D11 设备）。跨机器延迟靠数据通道上的时钟同步。Windows 不能在本机运行，所以每个组件都要有自检命令 `mmdesk.exe -selftest`，用户运行一次就能把诊断日志带回来。
+**Architecture:** 沿用第 2 步的平台无关接口（`internal/capture`、`internal/codec`、`internal/inject` 的 `Start`/`NewEncoder`/`New`），新增 `_windows` 实现，用 cgo + mingw-w64 调 DXGI / D3D11 / Media Foundation / SendInput。Windows 上的帧在 GPU 里流转：Desktop Duplication 得到 BGRA 纹理 → D3D11 视频处理器转 NV12 → MF 硬件 H.264 编码器（通过 `IMFDXGIDeviceManager` 共享同一 D3D11 设备）。跨机器延迟靠数据通道上的时钟同步。Windows 不能在本机运行，所以每个组件都要有自检命令 `kkdesk.exe -selftest`，用户运行一次就能把诊断日志带回来。
 
 **Tech Stack:** Go 1.27、cgo（C/C++，`x86_64-w64-mingw32-gcc` 16，mingw-w64 14 头文件）、DXGI 1.2 Desktop Duplication、D3D11 Video Processor、Media Foundation（H.264 MFT，硬件优先，软件兜底）、`SendInput`；pion WebRTC（已有）。
 
-**Spec:** `docs/superpowers/specs/2026-11-24-mmdesk-spike-design.md`（第 5、8、12 节，推进顺序第 3 项）；第 2 步计划 `docs/superpowers/plans/2026-11-24-mac-loopback.md` 的 Global Constraints 继续适用。
+**Spec:** `docs/superpowers/specs/2026-11-24-kkdesk-spike-design.md`（第 5、8、12 节，推进顺序第 3 项）；第 2 步计划 `docs/superpowers/plans/2026-11-24-mac-loopback.md` 的 Global Constraints 继续适用。
 
 ## Global Constraints
 
@@ -18,8 +18,8 @@
 - 编码：H.264，MF 硬件编码器优先（`MFTEnumEx` + `MFT_ENUM_FLAG_HARDWARE|MFT_ENUM_FLAG_SORTANDFILTER`，异步 MFT 用事件模型），失败回退软件 `CLSID_CMSH264EncoderMFT`（需要时从 GPU 拷回 CPU 的 NV12）。属性：`CODECAPI_AVLowLatencyMode=TRUE`、`CODECAPI_AVEncCommonRateControlMode=CBR`、`CODECAPI_AVEncCommonMeanBitRate`、`CODECAPI_AVEncMPVGOPSize=fps*2`、`CODECAPI_AVEncMPVDefaultBPictureCount=0`、Baseline/ConstrainedBaseline 或 Main，强制关键帧 `CODECAPI_AVEncVideoForceKeyFrame`。输出转成 Annex-B，关键帧前带 SPS/PPS（从 `MF_MT_MPEG_SEQUENCE_HEADER` 或码流中取）。颜色 BT.709 limited。
 - 注入：`SendInput`；鼠标 `MOUSEEVENTF_ABSOLUTE|MOUSEEVENTF_VIRTUALDESK` 映射到主显示器；键盘用 HID → Set 1 扫描码（`KEYEVENTF_SCANCODE`，扩展键加 `KEYEVENTF_EXTENDEDKEY`），表取 Tango `internal/platform/windows/canvas_keys.go` 中 `winScanHID`/`winExtScanHID` 的反向；滚轮 `MOUSEEVENTF_WHEEL/HWHEEL`（逻辑像素转 WHEEL_DELTA 比例，可调）。以普通权限运行，无法控制管理员窗口和 UAC 安全桌面（日志说明）。
 - 时钟同步：控制端每秒通过可靠数据通道发 `ping{t0}`，被控端回 `pong{t0, t1}`（t1 为被控端收到时的本地时间），控制端在 t2 收到后估计 `offset = t1 - (t0 + t2)/2`、`rtt = t2 - t0`，取最近 10 次中 rtt 最小的样本的 offset；延迟计算把被控端的 CaptureAt 换算到控制端时钟。日志记录 offset、rtt。
-- 诊断：`mmdesk.exe -selftest`：打印系统版本、每块显卡名称与驱动版本、主显示器分辨率和刷新率、采集 3 秒（帧数、尺寸、AcquireNextFrame 耗时）、编码器选择（硬件/软件，MFT 名称）、编码 60 帧（每帧耗时、关键帧、码率）、写出 `selftest.h264`；全部输出同时写到 `mmdesk-selftest.log`。主机模式启动时也把这些系统信息写进日志。
-- 交付：`scripts/build-windows.sh` 产出 `/Users/admin/min/outputs/mmdesk-spike/win/<YYYYMMDD-序号>/mmdesk.exe` 和同目录 `README.txt`（中文：运行步骤、防火墙提示、要发回的文件）。另在 mmdesk 仓库 `dist/` 不提交二进制。
+- 诊断：`kkdesk.exe -selftest`：打印系统版本、每块显卡名称与驱动版本、主显示器分辨率和刷新率、采集 3 秒（帧数、尺寸、AcquireNextFrame 耗时）、编码器选择（硬件/软件，MFT 名称）、编码 60 帧（每帧耗时、关键帧、码率）、写出 `selftest.h264`；全部输出同时写到 `kkdesk-selftest.log`。主机模式启动时也把这些系统信息写进日志。
+- 交付：`scripts/build-windows.sh` 产出 `/Users/admin/min/outputs/kkdesk-spike/win/<YYYYMMDD-序号>/kkdesk.exe` 和同目录 `README.txt`（中文：运行步骤、防火墙提示、要发回的文件）。另在 kkdesk 仓库 `dist/` 不提交二进制。
 - 不复制第三方远程桌面软件代码；只用系统 API。提交、GUI 核对等其他规则同第 2 步。
 
 ## Review Focus
@@ -61,12 +61,12 @@
 
 **Files:** `internal/app/host.go` 的平台相关部分拆到 `host_darwin.go`/`host_windows.go`（权限检查、排除自身窗口仅 darwin）；`internal/app/sysinfo_windows.go`（系统、显卡、显示器信息）；`selftest.go`（`-selftest` 标志）；`scripts/build-windows.sh`；README 模板。
 
-- [ ] Windows 上 `-host` 显示主窗口（Tango 自绘在 Windows 可用），打印 `mmdesk host listening on … password …`；控制端仍是 Mac。
-- [ ] `scripts/build-windows.sh` 产出 exe + README.txt 到 outputs/mmdesk-spike/win/<日期-序号>/；用 `x86_64-w64-mingw32-objdump -p mmdesk.exe | grep 'DLL Name'` 确认只依赖系统 DLL。
+- [ ] Windows 上 `-host` 显示主窗口（Tango 自绘在 Windows 可用），打印 `kkdesk host listening on … password …`；控制端仍是 Mac。
+- [ ] `scripts/build-windows.sh` 产出 exe + README.txt 到 outputs/kkdesk-spike/win/<日期-序号>/；用 `x86_64-w64-mingw32-objdump -p kkdesk.exe | grep 'DLL Name'` 确认只依赖系统 DLL。
 - [ ] 提交。
 
 ### Task W5: 用户实机测试与报告
 
-- [ ] 用户在 Windows 上先跑 `mmdesk.exe -selftest`，发回 `mmdesk-selftest.log`；根据日志修问题、重新打包（序号递增）。
-- [ ] 用户在 Windows 上跑 `mmdesk.exe -host -log host.jsonl`，在 Mac 上跑 `mmdesk -connect <IP>:21118 -password <密码> -log view.jsonl` 60 秒（播放视频或拖动窗口），然后试控制（打开控制模式，点击、打字、滚轮）；发回 `host.jsonl`、主机日志。
+- [ ] 用户在 Windows 上先跑 `kkdesk.exe -selftest`，发回 `kkdesk-selftest.log`；根据日志修问题、重新打包（序号递增）。
+- [ ] 用户在 Windows 上跑 `kkdesk.exe -host -log host.jsonl`，在 Mac 上跑 `kkdesk -connect <IP>:21118 -password <密码> -log view.jsonl` 60 秒（播放视频或拖动窗口），然后试控制（打开控制模式，点击、打字、滚轮）；发回 `host.jsonl`、主机日志。
 - [ ] 汇总写入 `docs/spike-report.md` 第二节。

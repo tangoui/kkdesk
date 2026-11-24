@@ -7,7 +7,7 @@ import (
 	"syscall"
 	"testing"
 
-	"mmdesk/internal/session"
+	"github.com/tangoui/kkdesk/internal/session"
 )
 
 func TestNewPassword(t *testing.T) {

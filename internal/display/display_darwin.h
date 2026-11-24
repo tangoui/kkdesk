@@ -1,5 +1,5 @@
-#ifndef MMDESK_DISPLAY_DARWIN_H
-#define MMDESK_DISPLAY_DARWIN_H
+#ifndef KKDESK_DISPLAY_DARWIN_H
+#define KKDESK_DISPLAY_DARWIN_H
 
 #include <stdint.h>
 

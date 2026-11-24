@@ -12,11 +12,11 @@ import (
 	"syscall"
 	"time"
 
-	"mmdesk/internal/codec"
-	"mmdesk/internal/display"
-	"mmdesk/internal/input"
-	"mmdesk/internal/session"
-	"mmdesk/internal/stats"
+	"github.com/tangoui/kkdesk/internal/codec"
+	"github.com/tangoui/kkdesk/internal/display"
+	"github.com/tangoui/kkdesk/internal/input"
+	"github.com/tangoui/kkdesk/internal/session"
+	"github.com/tangoui/kkdesk/internal/stats"
 )
 
 // DialTimeout bounds connecting, authenticating and negotiating.
@@ -293,7 +293,7 @@ func (v *Viewer) SetQuality(bitrateBps, fps int) {
 	v.mu.Unlock()
 	if p != nil {
 		if err := p.SendQuality(session.Quality{BitrateBps: bitrateBps, FPS: fps}); err != nil {
-			log.Printf("mmdesk viewer: quality: %v", err)
+			log.Printf("kkdesk viewer: quality: %v", err)
 		}
 	}
 	v.notify()
@@ -333,7 +333,7 @@ func (v *Viewer) video(frame []byte, captureAt time.Time) {
 	if v.dec == nil {
 		d, err := codec.NewDecoder(v.decoded)
 		if err != nil {
-			log.Printf("mmdesk viewer: decoder: %v", err)
+			log.Printf("kkdesk viewer: decoder: %v", err)
 			v.Close()
 			return
 		}

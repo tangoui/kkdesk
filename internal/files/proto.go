@@ -15,7 +15,7 @@
 //     piece as a text message.
 //   - Each file ends with {"op":"end","transfer":t,"sha256":hex}; the
 //     receiver checks the size and SHA-256, then renames its temporary file
-//     (.<name>.mmdesk-part) into place.
+//     (.<name>.kkdesk-part) into place.
 package files
 
 import (
@@ -53,7 +53,7 @@ const (
 	kindData byte = 1
 	kindJSON byte = 2
 
-	partSuffix = ".mmdesk-part"
+	partSuffix = ".kkdesk-part"
 )
 
 // Error codes on the wire.

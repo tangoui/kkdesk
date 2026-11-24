@@ -5,15 +5,15 @@ package app
 import (
 	"os"
 
-	"mmdesk/internal/capture"
-	"mmdesk/internal/inject"
-	"mmdesk/internal/stats"
+	"github.com/tangoui/kkdesk/internal/capture"
+	"github.com/tangoui/kkdesk/internal/inject"
+	"github.com/tangoui/kkdesk/internal/stats"
 )
 
 // Guidance texts for missing macOS permissions.
 const (
-	ScreenRecordingHelp = "需要屏幕录制权限：请在 系统设置 › 隐私与安全性 › 屏幕录制 中允许 mmdesk（或运行它的终端），然后重新启动 mmdesk。"
-	AccessibilityHelp   = "需要辅助功能权限才能被远程操作：请在 系统设置 › 隐私与安全性 › 辅助功能 中允许 mmdesk（或运行它的终端）。"
+	ScreenRecordingHelp = "需要屏幕录制权限：请在 系统设置 › 隐私与安全性 › 屏幕录制 中允许 kkdesk（或运行它的终端），然后重新启动 kkdesk。"
+	AccessibilityHelp   = "需要辅助功能权限才能被远程操作：请在 系统设置 › 隐私与安全性 › 辅助功能 中允许 kkdesk（或运行它的终端）。"
 )
 
 // PrepareProcess sets process-wide state before anything else runs. Nothing
@@ -42,10 +42,10 @@ func InjectHelp() string {
 func InjectLimits() string { return "" }
 
 // captureExcludeApp returns the application whose windows capture hides
-// for a controller at remote: mmdesk itself when the controller runs on
+// for a controller at remote: kkdesk itself when the controller runs on
 // this machine (see excludeSelfWindows).
 func captureExcludeApp(remote string) string {
-	if excludeSelfWindows(remote, LocalIPv4(), os.Getenv("MMDESK_EXCLUDE_SELF")) {
+	if excludeSelfWindows(remote, LocalIPv4(), os.Getenv("KKDESK_EXCLUDE_SELF")) {
 		return ExcludeAppName()
 	}
 	return ""

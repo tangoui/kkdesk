@@ -20,7 +20,7 @@ import (
 	"time"
 	"unsafe"
 
-	"mmdesk/internal/winmedia"
+	"github.com/tangoui/kkdesk/internal/winmedia"
 )
 
 // Result codes from encode_windows.h.
@@ -68,7 +68,7 @@ type mfEncoder struct {
 	mu         sync.Mutex
 	inst       *mfInst
 	info       string
-	allowHW    bool   // false after a fallback or with MMDESK_ENCODER=software
+	allowHW    bool   // false after a fallback or with KKDESK_ENCODER=software
 	swReason   string // why the software encoder is used
 	fps, bps   int
 	pendingKey bool
@@ -92,7 +92,7 @@ type mfEncoder struct {
 
 // NewEncoder creates a Media Foundation H.264 encoder for w×h NV12
 // textures: the first usable hardware MFT on the capture adapter, else the
-// software CMSH264EncoderMFT (also when MMDESK_ENCODER=software). Output is
+// software CMSH264EncoderMFT (also when KKDESK_ENCODER=software). Output is
 // delivered to out on the encoder's event goroutine (hardware) or inside
 // Encode (software). The returned value also implements Info() string.
 func NewEncoder(w, h, fps, bps int, out EncodeOutput) (Encoder, error) {
@@ -101,8 +101,8 @@ func NewEncoder(w, h, fps, bps int, out EncodeOutput) (Encoder, error) {
 	}
 	e := &mfEncoder{out: out, w: w, h: h, fps: fps, bps: bps}
 	e.allowHW = true
-	if v := os.Getenv("MMDESK_ENCODER"); v == "software" {
-		e.allowHW, e.swReason = false, "MMDESK_ENCODER=software"
+	if v := os.Getenv("KKDESK_ENCODER"); v == "software" {
+		e.allowHW, e.swReason = false, "KKDESK_ENCODER=software"
 	}
 	if err := e.open(); err != nil {
 		return nil, err

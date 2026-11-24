@@ -1,8 +1,8 @@
 // Shared Direct3D 11 / Media Foundation helpers for the Windows capture and
 // encoder backends. Plain C declarations: included from cgo preambles (C)
 // and from winmedia_windows.cpp (C++).
-#ifndef MMDESK_WINMEDIA_WINDOWS_H
-#define MMDESK_WINMEDIA_WINDOWS_H
+#ifndef KKDESK_WINMEDIA_WINDOWS_H
+#define KKDESK_WINMEDIA_WINDOWS_H
 
 #include <stdint.h>
 

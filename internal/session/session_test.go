@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"mmdesk/internal/input"
+	"github.com/tangoui/kkdesk/internal/input"
 )
 
 const testPassword = "123456"

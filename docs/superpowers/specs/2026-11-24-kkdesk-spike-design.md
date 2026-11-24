@@ -1,11 +1,11 @@
-# mmdesk 第一步：验证原型设计
+# kkdesk 第一步：验证原型设计
 
 日期：2026-11-24
 状态：已确认（2026-11-24：画面用原生视频视图；Mac 与 Windows 相互控制；Windows 由用户手动运行；先扩展 Tango 输入接口）
 
 ## 1. 目的
 
-mmdesk 是一个用 Tango 开发的远程桌面客户端（参考 RustDesk、ToDesk、UU 远程的产品形态，只借思路，不使用其代码；RustDesk 为 AGPL-3.0）。界面原型见 `/Users/admin/min/outputs/remote-desktop-ui/index.html`。
+kkdesk 是一个用 Tango 开发的远程桌面客户端（参考 RustDesk、ToDesk、UU 远程的产品形态，只借思路，不使用其代码；RustDesk 为 AGPL-3.0）。界面原型见 `/Users/admin/min/outputs/remote-desktop-ui/index.html`。
 
 第一步只回答一个问题：**用 Tango + Go 能不能做出延迟和占用都达标的远程桌面核心链路**。做法是在局域网内让 Mac 和 Windows 互相控制，实测延迟、帧率和 CPU，并跑通 Tango 原生视频视图这条显示路线。
 
@@ -26,7 +26,7 @@ mmdesk 是一个用 Tango 开发的远程桌面客户端（参考 RustDesk、ToD
 
 - 〔自定〕**延迟口径**：程序测量从被控端采集回调交出帧开始，到控制端显示层呈现为止，作为主指标。人眼拍照测的是屏幕到屏幕，比程序口径多一到两个刷新周期（约 15–30 ms），单独列出作参考，不用它判定达标。
 - 〔自定〕**分辨率**：高分辨率屏（如 Mac 的 Retina）采集时由系统缩放到宽不超过 1920 再编码，指标按缩放后的 1080p 级别判定；另外跑一组原生分辨率作参考。
-- 〔自定〕**CPU 口径**：同时报告两个数字：只算 mmdesk 进程；以及加上系统代做的部分（macOS 的 VTDecoderXPCService、WindowServer 增量，Windows 的 dwm 增量）。达标按后者判定。
+- 〔自定〕**CPU 口径**：同时报告两个数字：只算 kkdesk 进程；以及加上系统代做的部分（macOS 的 VTDecoderXPCService、WindowServer 增量，Windows 的 dwm 增量）。达标按后者判定。
 
 四个方向组合都要跑：Mac 控 Mac（本机或两台）、Mac 控 Windows、Windows 控 Mac、Windows 控 Windows（如有第二台 Windows，否则跳过）。
 
@@ -79,8 +79,8 @@ mmdesk 是一个用 Tango 开发的远程桌面客户端（参考 RustDesk、ToD
 ### 5.1 目录结构
 
 ```
-mmdesk/
-  cmd/mmdesk/            程序入口（Tango 应用）
+kkdesk/
+  cmd/kkdesk/            程序入口（Tango 应用）
   internal/capture/      屏幕采集：capture_darwin.go(ScreenCaptureKit) / capture_windows.go(DXGI Desktop Duplication)
   internal/encode/       编码：encode_darwin.go(VideoToolbox) / encode_windows.go(Media Foundation)
   internal/display/      解码与上屏：display_darwin.go(AVSampleBufferDisplayLayer) / display_windows.go(MF 解码 + DirectComposition)
@@ -152,7 +152,7 @@ uihost 每帧按 `NativeRegion` 设置子视图的位置、大小和可见裁剪
 - **人眼校验**：被控端运行一个显示毫秒计时器的测试页，两台屏幕同框拍照，抽样核对端到端延迟，防止测量代码本身有偏差。
 - **帧率、码率**：pion 统计接口加自己的帧计数。
 - **CPU**：两端进程每秒采样，取画面持续变化（播放视频或滚动长页面）期间 60 秒的平均值。
-- 结果写进 `docs/spike-report.md`，原始数据归档到 `/Users/admin/min/outputs/mmdesk-spike/`。
+- 结果写进 `docs/spike-report.md`，原始数据归档到 `/Users/admin/min/outputs/kkdesk-spike/`。
 
 ## 9. 推进顺序
 
@@ -172,9 +172,9 @@ uihost 每帧按 `NativeRegion` 设置子视图的位置、大小和可见裁剪
 
 ## 11. 实现方的其他决定
 
-- 〔自定〕Tango 接口推送前，mmdesk 用 `go.work` 指向本地 Tango worktree 开发，两边并行推进；Tango 改动是否合入和推送由用户决定。
+- 〔自定〕Tango 接口推送前，kkdesk 用 `go.work` 指向本地 Tango worktree 开发，两边并行推进；Tango 改动是否合入和推送由用户决定。
 - 〔自定〕控制端会话窗口获得焦点时，键盘一律按物理键位发送，中文由被控端的输入法合成；控制端本机输入法在会话中不参与。
 
 ## 12. Windows 测试方式（用户已定）
 
-由用户手动运行。每轮我交叉编译出 `mmdesk.exe` 放到 `/Users/admin/min/outputs/mmdesk-spike/win/<日期-序号>/`，附操作步骤和要回传的内容（程序自动写的测量日志文件、现象描述或截图）。程序启动时把显卡型号、驱动、系统版本和所选编码器写进日志，用户不必另外提供。Windows 编码器按「硬件 Media Foundation H.264 → 软件 Media Foundation H.264」顺序选择，并在日志里记录。
+由用户手动运行。每轮我交叉编译出 `kkdesk.exe` 放到 `/Users/admin/min/outputs/kkdesk-spike/win/<日期-序号>/`，附操作步骤和要回传的内容（程序自动写的测量日志文件、现象描述或截图）。程序启动时把显卡型号、驱动、系统版本和所选编码器写进日志，用户不必另外提供。Windows 编码器按「硬件 Media Foundation H.264 → 软件 Media Foundation H.264」顺序选择，并在日志里记录。

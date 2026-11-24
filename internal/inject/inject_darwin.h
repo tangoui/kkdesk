@@ -1,5 +1,5 @@
-#ifndef MMDESK_INJECT_DARWIN_H
-#define MMDESK_INJECT_DARWIN_H
+#ifndef KKDESK_INJECT_DARWIN_H
+#define KKDESK_INJECT_DARWIN_H
 
 #include <stdint.h>
 

@@ -1,4 +1,4 @@
-// Package appui is mmdesk's interface (directory internal/ui): the main
+// Package appui is kkdesk's interface (directory internal/ui): the main
 // window (sidebar navigation; the 连接 page with this machine's address
 // and password, the form to control another machine and the recent
 // connections; the incoming-connection confirmation and the
@@ -25,7 +25,7 @@ import (
 	"github.com/tangoui/tango/ui/theme"
 	"github.com/tangoui/tango/uihost"
 
-	"mmdesk/internal/app"
+	"github.com/tangoui/kkdesk/internal/app"
 )
 
 // Connection modes of the 控制其他电脑 form.
@@ -100,7 +100,7 @@ func OpenMain(o MainOptions) (*Main, error) {
 		o.Form.Mode = modeControl
 	}
 	r, s, err := uihost.Open(o.App, uihost.Options{Surface: tango.SurfaceOptions{
-		Title:     "mmdesk",
+		Title:     "kkdesk",
 		Width:     1080,
 		Height:    720,
 		MinWidth:  720,
@@ -167,7 +167,7 @@ func (m *Main) sidebar(c *ui.Context, hs app.HostState) {
 			ui.Row(c, func() {
 				ui.Icon(c, icon.Monitor).Size(14).Color(th.TextOnPrimary)
 			}, layout.Size(24, 24), layout.Center()).Bg(th.Primary.Base).Radius(6)
-			ui.Text(c, "mmdesk").Strong().NoWrap()
+			ui.Text(c, "kkdesk").Strong().NoWrap()
 		}, layout.Gap(8), layout.Middle(), layout.PadVH(4, 16))
 		ui.Menu(c, navItems, &m.nav).Show()
 		ui.Spacer(c)
@@ -249,7 +249,7 @@ func (m *Main) connect(addr, pw string, viewOnly bool) {
 					m.ShowError(msg)
 				}
 			}); err != nil {
-				log.Printf("mmdesk: session window: %v", err)
+				log.Printf("kkdesk: session window: %v", err)
 				v.Close()
 			}
 			m.Invalidate()

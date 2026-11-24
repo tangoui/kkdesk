@@ -178,7 +178,7 @@ void *mmcap_start(int64_t intervalNs, int maxWidth, const char *excludeApp,
 		MMCapture *cap = [[MMCapture alloc] init];
 		cap.handle = handle;
 		cap.config = cfg;
-		cap.queue = dispatch_queue_create("mmdesk.capture", DISPATCH_QUEUE_SERIAL);
+		cap.queue = dispatch_queue_create("kkdesk.capture", DISPATCH_QUEUE_SERIAL);
 		dispatch_queue_set_specific(cap.queue, kQueueKey, (__bridge void *)cap, NULL);
 		cap.stream = [[SCStream alloc] initWithFilter:filter configuration:cfg delegate:nil];
 
@@ -223,7 +223,7 @@ void mmcap_set_fps(void *s, int64_t intervalNs) {
 			dispatch_semaphore_t sem = dispatch_semaphore_create(0);
 			[cap.stream updateConfiguration:cap.config completionHandler:^(NSError *e) {
 				if (e != nil) {
-					NSLog(@"mmdesk capture: update configuration: %@", e.localizedDescription);
+					NSLog(@"kkdesk capture: update configuration: %@", e.localizedDescription);
 				}
 				dispatch_semaphore_signal(sem);
 			}];

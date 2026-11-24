@@ -2,7 +2,7 @@
 
 package inject
 
-import "mmdesk/internal/input"
+import "github.com/tangoui/kkdesk/internal/input"
 
 // HasPermission always reports false on unsupported platforms.
 func HasPermission() bool { return false }

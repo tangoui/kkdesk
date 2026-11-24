@@ -1,6 +1,6 @@
 // VideoToolbox helpers for package codec (darwin, cgo).
-#ifndef MMDESK_CODEC_VT_H
-#define MMDESK_CODEC_VT_H
+#ifndef KKDESK_CODEC_VT_H
+#define KKDESK_CODEC_VT_H
 
 #include <stdint.h>
 #include <stddef.h>

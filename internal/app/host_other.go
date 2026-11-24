@@ -2,7 +2,7 @@
 
 package app
 
-import "mmdesk/internal/stats"
+import "github.com/tangoui/kkdesk/internal/stats"
 
 // PrepareProcess does nothing on this platform.
 func PrepareProcess() {}

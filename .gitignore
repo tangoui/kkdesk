@@ -1,6 +1,8 @@
-/mmdesk
+/kkdesk
 *.jsonl
 /dist/
 /build/
 zz_tan_*.syso
 .DS_Store
+go.work
+go.work.sum

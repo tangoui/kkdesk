@@ -23,13 +23,13 @@ func main() {
 	wh := flag.Int("h", 900, "window height")
 	flag.Parse()
 	quit := true
-	app := tango.New(tango.Options{Name: "anim", ID: "com.mmdesk.anim", QuitOnLastClose: &quit})
+	app := tango.New(tango.Options{Name: "anim", ID: "com.kkdesk.anim", QuitOnLastClose: &quit})
 	start := time.Now()
 	// Report the real render rate once per second on stdout, so the
 	// loopback summary can compare it with what capture delivers.
 	frames, sec := 0, time.Now()
 	app.OnReady(func() {
-		_, _, err := uihost.Open(app, uihost.Options{Surface: tango.SurfaceOptions{Title: "mmdesk anim", Width: *ww, Height: *wh, Centered: true,
+		_, _, err := uihost.Open(app, uihost.Options{Surface: tango.SurfaceOptions{Title: "kkdesk anim", Width: *ww, Height: *wh, Centered: true,
 			// Floating level without activating the app (no focus steal):
 			// a window opened behind others may be occluded and throttled.
 			Appearance: tango.Appearance{AlwaysOnTop: true}}}, func(c *ui.Context) {

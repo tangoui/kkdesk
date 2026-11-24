@@ -10,7 +10,7 @@ import (
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 
-	"mmdesk/internal/winmedia"
+	"github.com/tangoui/kkdesk/internal/winmedia"
 )
 
 var procGlobalMemoryStatusEx = syscall.NewLazyDLL("kernel32.dll").NewProc("GlobalMemoryStatusEx")
@@ -52,7 +52,7 @@ func platformInfo() []string {
 	out = append(out, fmt.Sprintf("os: %s %s, version %d.%d.%d.%d (ProductName %q)", name, display,
 		v.MajorVersion, v.MinorVersion, v.BuildNumber, ubr, product))
 	if v.MajorVersion < 10 || (v.MajorVersion == 10 && v.BuildNumber < 17763) {
-		out = append(out, "os: WARNING: older than Windows 10 1809 (build 17763), which mmdesk requires")
+		out = append(out, "os: WARNING: older than Windows 10 1809 (build 17763), which kkdesk requires")
 	}
 
 	if k, err := registry.OpenKey(registry.LOCAL_MACHINE, `HARDWARE\DESCRIPTION\System\CentralProcessor\0`, registry.QUERY_VALUE); err == nil {

@@ -1,8 +1,8 @@
-// Adapter and display enumeration for diagnostics (mmdesk -selftest and
+// Adapter and display enumeration for diagnostics (kkdesk -selftest and
 // the host log). Plain C declarations: included from the cgo preamble and
 // from sysinfo_windows.cpp.
-#ifndef MMDESK_WINMEDIA_SYSINFO_WINDOWS_H
-#define MMDESK_WINMEDIA_SYSINFO_WINDOWS_H
+#ifndef KKDESK_WINMEDIA_SYSINFO_WINDOWS_H
+#define KKDESK_WINMEDIA_SYSINFO_WINDOWS_H
 
 #include <stdint.h>
 

@@ -18,7 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"mmdesk/internal/winmedia"
+	"github.com/tangoui/kkdesk/internal/winmedia"
 )
 
 // ringSize is the number of NV12 output textures. The texture handed to

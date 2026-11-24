@@ -1,28 +1,28 @@
-# mmdesk Mac 自连验证 Implementation Plan
+# kkdesk Mac 自连验证 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 在一台 Mac 上跑通 mmdesk 的完整链路：`mmdesk -host` 采集屏幕 → H.264 硬件编码 → pion WebRTC → `mmdesk -connect 127.0.0.1` 硬件解码 → Tango `NativeHost` 原生视图上屏，鼠标键盘反向注入；记录分段延迟、帧率、码率和 CPU，写出第一份测量报告。
+**Goal:** 在一台 Mac 上跑通 kkdesk 的完整链路：`kkdesk -host` 采集屏幕 → H.264 硬件编码 → pion WebRTC → `kkdesk -connect 127.0.0.1` 硬件解码 → Tango `NativeHost` 原生视图上屏，鼠标键盘反向注入；记录分段延迟、帧率、码率和 CPU，写出第一份测量报告。
 
 **Architecture:** 一个 Go 程序两种角色。平台相关部分（采集、编解码、显示、注入）用 cgo 调 macOS 框架，放在 `internal/*/..._darwin.go`，对外是平台无关的 Go 接口，Windows 版后续步骤按同一接口实现。传输、信令、输入协议、统计是纯 Go，可在任何平台单测。界面用 Tango 自绘（`uihost.Open`），远程画面用 `uihost.NativeHost` 嵌入 `AVSampleBufferDisplayLayer` 视图，会话菜单用 `sys/menu` 的 `menu.Popup`。
 
 **Tech Stack:** Go 1.27、cgo（Objective-C，ScreenCaptureKit / VideoToolbox / AVFoundation / CoreGraphics）、`github.com/pion/webrtc/v4` v4.2.11、Tango（`github.com/tangoui/tango`，本地 `/Users/admin/min/tango`，需含 ed116886：`KeyEvent.HID`、`Context.PointerEvents`、`uihost.NativeHost`）。
 
-**Spec:** `docs/superpowers/specs/2026-11-24-mmdesk-spike-design.md`（第 2、5、7、8 节，推进顺序第 2 项）。
+**Spec:** `docs/superpowers/specs/2026-11-24-kkdesk-spike-design.md`（第 2、5、7、8 节，推进顺序第 2 项）。
 
 ## Global Constraints
 
-- 模块路径 `mmdesk`；`go.mod` 用 `replace github.com/tangoui/tango => ../tango`（本地 Tango 主工作区，已在 ed116886 之后）。编译 macOS 部分需 `CGO_ENABLED=1`（本机默认是 0）。
+- 模块路径 `kkdesk`；`go.mod` 用 `replace github.com/tangoui/tango => ../tango`（本地 Tango 主工作区，已在 ed116886 之后）。编译 macOS 部分需 `CGO_ENABLED=1`（本机默认是 0）。
 - 不复制 RustDesk / ToDesk / UU 的任何代码；只用系统框架和 pion。
 - 编码：H.264，VideoToolbox 硬件编码，`kVTCompressionPropertyKey_RealTime=true`、不允许帧重排（无 B 帧）、`MaxKeyFrameInterval` = 帧率×2、Baseline 或 Main（ConstrainedBaseline 优先，便于 WebRTC 协商）；收到 PLI 立即出关键帧。码率档位：自动（起步 8 Mbps，跟随 pion 带宽估计）、30/14/8/3 Mbps；帧率档位 30/60/90/144，不超过屏幕刷新率。
-- 采集：ScreenCaptureKit，主屏，输出 NV12（`kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange`），宽度超过 1920 时按比例缩到 1920 宽（偶数对齐），`minimumFrameInterval` = 1/帧率，`queueDepth` 小（3），排除所有名为 mmdesk 的进程的窗口（避免自连时画面套娃）；画面不变时不出新帧。
+- 采集：ScreenCaptureKit，主屏，输出 NV12（`kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange`），宽度超过 1920 时按比例缩到 1920 宽（偶数对齐），`minimumFrameInterval` = 1/帧率，`queueDepth` 小（3），排除所有名为 kkdesk 的进程的窗口（避免自连时画面套娃）；画面不变时不出新帧。
 - 显示：控制端用 `VTDecompressionSession` 硬解出 `CVPixelBuffer`，包成带 `kCMSampleAttachmentKey_DisplayImmediately` 的 `CMSampleBuffer` 交给 `AVSampleBufferDisplayLayer`；视图通过 `uihost.NativeHost`（`PassInput: true`）嵌入，画面按比例适配盒子。
 - 传输：pion 视频轨道 H.264（packetization-mode=1）；每帧带采集时间戳：用一个自定义 RTP 头扩展或随帧通过数据通道发送 `{rtpTimestamp → captureUnixNano}`，二选一，以实现简单为准；局域网只用 host 候选。输入两条数据通道：`input-move`（无序、`MaxRetransmits=0`）和 `input`（有序可靠）。
 - 信令：被控端监听 TCP（默认 21118），显示本机 IP 和 6 位数字临时密码；控制端连接后做 HMAC-SHA256 挑战应答（服务端发随机 nonce，客户端回 HMAC(password, nonce)），通过后交换 SDP（JSON 行协议），完成后 TCP 可关闭。
-- 输入协议：二进制小包。鼠标坐标归一化到 [0,1]（相对被控端主屏）；键盘发 `input.KeyEvent.HID`（无 HID 时不发）+ 按下/松开；滚轮发逻辑像素增量。被控端 HID → macOS virtual keycode（反查 Tango 的映射思路，mmdesk 内自写表）后用 `CGEventPost` 注入；需要辅助功能权限，首次启动检测并提示。自连时默认「仅查看」，注入由会话菜单开关打开（避免本机鼠标被自己的注入抢走）。
+- 输入协议：二进制小包。鼠标坐标归一化到 [0,1]（相对被控端主屏）；键盘发 `input.KeyEvent.HID`（无 HID 时不发）+ 按下/松开；滚轮发逻辑像素增量。被控端 HID → macOS virtual keycode（反查 Tango 的映射思路，kkdesk 内自写表）后用 `CGEventPost` 注入；需要辅助功能权限，首次启动检测并提示。自连时默认「仅查看」，注入由会话菜单开关打开（避免本机鼠标被自己的注入抢走）。
 - 测量：被控端每帧记录采集完成、编码完成、发出时间；控制端记录收齐、解码完成、送显时间，并用 `CVDisplayLink` 取送显后的下一个刷新时刻作为上屏时间。自连同一时钟，不做时钟同步（跨机时钟同步留到 Windows 步骤）。每秒统计帧率、码率、丢包；两端各每秒采样 CPU：本进程（`getrusage`）+ `VTDecoderXPCService`、`VTEncoderXPCService`、`WindowServer` 的增量（`ps -o %cpu`，或 `proc_pidinfo`）。日志写 JSON Lines 到 `-log` 指定文件。
 - 界面：验证用最小界面，风格按 `/Users/admin/min/outputs/remote-desktop-ui/index.html`：主窗口（本机 IP、临时密码可刷新、允许被控开关；对方 IP + 密码 + 连接按钮）；会话窗口（标签栏右侧延迟/帧率 + 「控制中心」按钮弹出原生菜单：画质码率档位、帧率档位、真彩/HDR/中继灰显、仅查看/控制切换、退出远控；下方整块 NativeHost）；被控端有人连入时弹确认，连接期间右下角面板可断开。
-- 提交：仓库 `/Users/admin/min/mmdesk`，作者用全局 git 身份，结尾加 `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`；不推送（尚无远端）。
+- 提交：仓库 `/Users/admin/min/kkdesk`，作者用全局 git 身份，结尾加 `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`；不推送（尚无远端）。
 - GUI 核对按后台方式进行（`TANGO_LAUNCH_BACKGROUND=1`，cua-driver 后台操作），不抢前台；需要屏幕录制 / 辅助功能权限时告诉用户由用户授权。
 - 编译测试用 `nice -n 19`。
 
@@ -117,8 +117,8 @@
 - Modify: `main.go（项目根目录：tan dev / tan package 编译根目录的 main 包）`（`-host`、`-connect addr`、`-password`、`-fps`、`-bitrate`、`-log`、`-autoaccept`（测量用）、`-view-only`）
 
 - [ ] 实现；`CGO_ENABLED=1 go build .`。
-- [ ] 后台实机：`mmdesk -host -autoaccept -log host.jsonl` 与 `mmdesk -connect 127.0.0.1 -password … -log view.jsonl`，确认会话窗口出现画面（cua-driver 后台截图）、帧率与延迟在标签栏显示；打开控制后后台发一次点击，被控端日志记录注入。
-- [ ] 提交 `feat: mmdesk app wiring host and viewer`。
+- [ ] 后台实机：`kkdesk -host -autoaccept -log host.jsonl` 与 `kkdesk -connect 127.0.0.1 -password … -log view.jsonl`，确认会话窗口出现画面（cua-driver 后台截图）、帧率与延迟在标签栏显示；打开控制后后台发一次点击，被控端日志记录注入。
+- [ ] 提交 `feat: kkdesk app wiring host and viewer`。
 
 ### Task 8: 自连测量与报告
 
@@ -127,5 +127,5 @@
 - Create: `docs/spike-report.md`（本步结果：各段中位数/P95、帧率、码率、CPU 两种口径；与成功标准对照；问题与下一步）
 
 - [ ] 跑 1080p60（自动码率）和原生分辨率参考各一次；如本机显示器支持更高刷新率再跑 90/120。
-- [ ] 归档原始日志到 `/Users/admin/min/outputs/mmdesk-spike/loopback-<日期>/`。
+- [ ] 归档原始日志到 `/Users/admin/min/outputs/kkdesk-spike/loopback-<日期>/`。
 - [ ] 提交 `docs: loopback measurements`。

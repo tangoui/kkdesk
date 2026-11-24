@@ -1,7 +1,7 @@
 {
   "$schema": "https://tangoui.github.io/tango/schema/tan.schema.json",
-  "name": "mmdesk",
-  "id": "com.mmdesk.desktop",
+  "name": "kkdesk",
+  "id": "com.kkdesk.desktop",
   "version": "0.1.0",
   "icon": "icon.png",
   "cgo": true,

@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
-	"mmdesk/internal/capture"
-	"mmdesk/internal/codec"
-	"mmdesk/internal/inject"
-	"mmdesk/internal/winmedia"
+	"github.com/tangoui/kkdesk/internal/capture"
+	"github.com/tangoui/kkdesk/internal/codec"
+	"github.com/tangoui/kkdesk/internal/inject"
+	"github.com/tangoui/kkdesk/internal/winmedia"
 )
 
 // SelftestConfig configures Selftest.
@@ -21,12 +21,12 @@ type SelftestConfig struct {
 	FPS         int    // capture and encode rate; default 60
 	MaxWidth    int    // capture width limit; default 1920
 	BitrateMbps int    // 0 = AutoBitrate
-	Dir         string // where mmdesk-selftest.log and selftest.h264 go; default OutputDir()
+	Dir         string // where kkdesk-selftest.log and selftest.h264 go; default OutputDir()
 }
 
 // Selftest file names.
 const (
-	SelftestLog  = "mmdesk-selftest.log"
+	SelftestLog  = "kkdesk-selftest.log"
 	SelftestH264 = "selftest.h264"
 )
 
@@ -39,7 +39,7 @@ const (
 // information, 3 s of screen capture, encoding 60 frames (keyframes forced
 // at 0 and 30, written to selftest.h264) and creating the input injector
 // (no input is sent). Everything is printed to stdout and written to
-// mmdesk-selftest.log. It reports whether every check passed.
+// kkdesk-selftest.log. It reports whether every check passed.
 func Selftest(cfg SelftestConfig) bool {
 	if cfg.FPS <= 0 {
 		cfg.FPS = 60
@@ -61,7 +61,7 @@ func Selftest(cfg SelftestConfig) bool {
 		defer f.Close()
 		w = io.MultiWriter(os.Stdout, f)
 	} else {
-		fmt.Fprintf(os.Stderr, "mmdesk: cannot write %s: %v (output on screen only)\n", logPath, err)
+		fmt.Fprintf(os.Stderr, "kkdesk: cannot write %s: %v (output on screen only)\n", logPath, err)
 	}
 	var mu sync.Mutex
 	p := func(format string, args ...any) {
@@ -77,7 +77,7 @@ func Selftest(cfg SelftestConfig) bool {
 	log.SetOutput(writerFunc(func(b []byte) (int, error) { p("  log: %s", trimNL(string(b))); return len(b), nil }))
 	defer func() { log.SetOutput(os.Stderr); log.SetFlags(log.LstdFlags) }()
 
-	p("== mmdesk self-test ==")
+	p("== kkdesk self-test ==")
 	p("log file: %s", logPath)
 	p("-- system --")
 	for _, l := range SystemInfo() {

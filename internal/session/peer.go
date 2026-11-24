@@ -18,7 +18,7 @@ import (
 	"github.com/pion/rtp/codecs"
 	"github.com/pion/webrtc/v4"
 
-	"mmdesk/internal/input"
+	"github.com/tangoui/kkdesk/internal/input"
 )
 
 const (
@@ -302,7 +302,7 @@ func (p *Peer) answer(offer webrtc.SessionDescription) (*webrtc.SessionDescripti
 	}
 	track, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{
 		MimeType: webrtc.MimeTypeH264, ClockRate: videoClock, SDPFmtpLine: h264Fmtp,
-	}, "video", "mmdesk")
+	}, "video", "kkdesk")
 	if err != nil {
 		return nil, err
 	}

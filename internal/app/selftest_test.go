@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"mmdesk/internal/capture"
-	"mmdesk/internal/stats"
+	"github.com/tangoui/kkdesk/internal/capture"
+	"github.com/tangoui/kkdesk/internal/stats"
 )
 
 func TestAnnexBTypes(t *testing.T) {
@@ -45,7 +45,7 @@ func TestStatsSummary(t *testing.T) {
 
 func TestSystemInfo(t *testing.T) {
 	info := SystemInfo()
-	if len(info) < 5 || !strings.HasPrefix(info[0], "mmdesk version: ") {
+	if len(info) < 5 || !strings.HasPrefix(info[0], "kkdesk version: ") {
 		t.Fatalf("SystemInfo = %q", info)
 	}
 	t.Logf("%s", strings.Join(info, "\n"))

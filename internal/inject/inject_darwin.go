@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"mmdesk/internal/input"
+	"github.com/tangoui/kkdesk/internal/input"
 )
 
 // HasPermission reports whether the process is trusted for Accessibility

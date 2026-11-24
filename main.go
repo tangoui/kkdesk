@@ -1,4 +1,4 @@
-// mmdesk is a remote desktop built with Tango. Its window is drawn by
+// kkdesk is a remote desktop built with Tango. Its window is drawn by
 // package ui (no WebView); the remote screen is a native video view hosted
 // with uihost.NativeHost.
 //
@@ -24,8 +24,8 @@ import (
 	"github.com/tangoui/tango"
 	"github.com/tangoui/tango/uihost"
 
-	"mmdesk/internal/app"
-	appui "mmdesk/internal/ui"
+	"github.com/tangoui/kkdesk/internal/app"
+	appui "github.com/tangoui/kkdesk/internal/ui"
 )
 
 // State is what survives a hot reload under tan dev: exported,
@@ -47,7 +47,7 @@ func main() {
 		return
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "mmdesk:", err)
+		fmt.Fprintln(os.Stderr, "kkdesk:", err)
 		fs.Usage()
 		os.Exit(2)
 	}
@@ -58,7 +58,7 @@ func main() {
 		return
 	}
 	if err := run(o); err != nil {
-		fmt.Fprintln(os.Stderr, "mmdesk:", err)
+		fmt.Fprintln(os.Stderr, "kkdesk:", err)
 		os.Exit(1)
 	}
 }
@@ -68,11 +68,11 @@ func run(o options) error {
 	if o.appLog != "" {
 		l, err := app.OpenAppLog(o.appLog)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "mmdesk: diagnostic log:", err)
+			fmt.Fprintln(os.Stderr, "kkdesk: diagnostic log:", err)
 		} else {
 			appLog = l
 			defer l.Close()
-			log.Printf("mmdesk: diagnostic log %s, args %q", l.Path, os.Args[1:])
+			log.Printf("kkdesk: diagnostic log %s, args %q", l.Path, os.Args[1:])
 			app.LogSystemInfo()
 		}
 	}
@@ -115,35 +115,35 @@ func run(o options) error {
 	// Never prompt for permissions here (measurement runs); explain instead.
 	if o.host {
 		if help := app.CaptureHelp(); help != "" {
-			log.Printf("mmdesk: %s", help)
+			log.Printf("kkdesk: %s", help)
 			return errors.New(help)
 		}
 		if help := app.InjectHelp(); help != "" {
-			fmt.Fprintln(os.Stderr, "mmdesk:", help)
+			fmt.Fprintln(os.Stderr, "kkdesk:", help)
 		}
 		if lim := app.InjectLimits(); lim != "" {
-			log.Printf("mmdesk: %s", lim)
+			log.Printf("kkdesk: %s", lim)
 		}
 	}
 	if o.connect == "" {
 		if err := host.SetEnabled(true); err != nil && o.host {
-			log.Printf("mmdesk: %v", err)
+			log.Printf("kkdesk: %v", err)
 			return err
 		}
 		if o.host {
-			line := fmt.Sprintf("mmdesk host listening on %s password %s", host.ListenAddr(), host.State().Password)
+			line := fmt.Sprintf("kkdesk host listening on %s password %s", host.ListenAddr(), host.State().Password)
 			fmt.Println(line)
 			appLog.FileOnly("%s (local addresses %v)", line, app.LocalIPv4())
 		}
 		if !o.host {
 			if help := app.CaptureHelp(); help != "" {
-				log.Printf("mmdesk: %s", help)
+				log.Printf("kkdesk: %s", help)
 			}
 		}
 	}
 
 	quit := true // closing the last window quits, on macOS too
-	a := tango.New(tango.Options{Name: "mmdesk", ID: "com.mmdesk.desktop", QuitOnLastClose: &quit})
+	a := tango.New(tango.Options{Name: "kkdesk", ID: "com.kkdesk.desktop", QuitOnLastClose: &quit})
 
 	var viewer *app.Viewer
 	openMain := func(hidden bool, errMsg string) {
@@ -164,18 +164,18 @@ func run(o options) error {
 		viewer = app.NewViewer(app.ViewerConfig{Addr: o.connect, Password: o.password, ViewOnly: o.viewOnly, Log: logw}, nil)
 		go func() {
 			if err := viewer.Connect(context.Background()); err != nil {
-				fmt.Fprintln(os.Stderr, "mmdesk:", err)
+				fmt.Fprintln(os.Stderr, "kkdesk:", err)
 				a.Post(func() { openMain(false, err.Error()) })
 				return
 			}
 			a.Post(func() {
 				err := appui.OpenSession(a, viewer, func(msg string) {
 					if msg != "" {
-						fmt.Fprintln(os.Stderr, "mmdesk:", msg)
+						fmt.Fprintln(os.Stderr, "kkdesk:", msg)
 					}
 				})
 				if err != nil {
-					fmt.Fprintln(os.Stderr, "mmdesk: session window:", err)
+					fmt.Fprintln(os.Stderr, "kkdesk: session window:", err)
 					viewer.Close()
 					a.Quit()
 				}

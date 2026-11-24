@@ -1,8 +1,8 @@
 // Media Foundation H.264 encoder (hardware MFT preferred, software
 // CMSH264EncoderMFT fallback). Plain C declarations shared by
 // encode_windows.go (cgo) and encode_windows.cpp.
-#ifndef MMDESK_ENCODE_WINDOWS_H
-#define MMDESK_ENCODE_WINDOWS_H
+#ifndef KKDESK_ENCODE_WINDOWS_H
+#define KKDESK_ENCODE_WINDOWS_H
 
 #include <stdint.h>
 

@@ -1,9 +1,9 @@
-# mmdesk 第一步：Mac 自连测量报告（2026-11-24）
+# kkdesk 第一步：Mac 自连测量报告（2026-11-24）
 
 机器：Mac mini M4，16 GB，macOS 26.6，4K 显示器（3840×2160，界面 1920×1080 @60 Hz）。
 测法：`scripts/loopback.sh`（被控端 `-host -autoaccept`，控制端 `-connect 127.0.0.1 -view-only`，同一时钟），
 内容为 `scripts/anim` 动画窗口（移动色块 + 毫秒计时），采集缩放到 1920 宽，H.264 硬件编码，自动码率 8 Mbps。
-原始日志：`/Users/admin/min/outputs/mmdesk-spike/loopback-2026-11-24/`（quiet-2141 为最终一组）。
+原始日志：`/Users/admin/min/outputs/kkdesk-spike/loopback-2026-11-24/`（quiet-2141 为最终一组）。
 
 ## 结果（quiet-2141/1080p60-anim960，60 s，动画源 59–60 fps，系统负载均值 7–14）
 
@@ -18,14 +18,14 @@
 
 分段中位数：采集→编码完成 20.3 ms，编码→发出 0.1 ms，发出→收齐（本机）约 0.3 ms，解码 0.9 ms，送显 0.1 ms，送显→上屏 11.5 ms（按刷新周期取整）。
 
-WindowServer 口径：只开动画、不开 mmdesk 时 WindowServer 为 64.3%，测量期间 61–66%，mmdesk 带来的合成增量约 +1.5%（在噪声范围内）。报告里的「总计」行含整机合成，不作为达标依据。
+WindowServer 口径：只开动画、不开 kkdesk 时 WindowServer 为 64.3%，测量期间 61–66%，kkdesk 带来的合成增量约 +1.5%（在噪声范围内）。报告里的「总计」行含整机合成，不作为达标依据。
 
 ## 帧率为什么只有 30
 
 - 管线之后没有丢帧：控制端收到的帧数与被控端编码帧数一致，延迟稳定。
 - 限制在采集：动画源稳定 60 fps，但 ScreenCaptureKit 只交出约 30–33 fps（`scripts/capdiag`：165 个间隔中 152 个超过 25 ms；Complete 223、Idle 19、Late 23）。把队列深度从 3 调到 6 无改善（已撤回）。
 - 同一管线在机器较空闲时测到过 49.5 fps；测量期间本机同时有其他会话的 GUI 测试和编译（负载均值 7–28，WindowServer 约 60%）。系统在 WindowServer 繁忙时会降低屏幕录制的交付频率。
-- 结论：60 fps 能否稳定达到取决于被控机的合成负载，需要在空闲机器和 Windows 被控端上复测；mmdesk 自身不是瓶颈。
+- 结论：60 fps 能否稳定达到取决于被控机的合成负载，需要在空闲机器和 Windows 被控端上复测；kkdesk 自身不是瓶颈。
 
 ## 已修正的测量问题
 

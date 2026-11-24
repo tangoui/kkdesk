@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"mmdesk/internal/capture"
-	"mmdesk/internal/codec"
-	"mmdesk/internal/stats"
+	"github.com/tangoui/kkdesk/internal/capture"
+	"github.com/tangoui/kkdesk/internal/codec"
+	"github.com/tangoui/kkdesk/internal/stats"
 )
 
 // Version is the build version (git describe), set by main from -ldflags.
@@ -33,7 +33,7 @@ func OutputDir() string {
 	if runtime.GOOS == "windows" {
 		if exe, err := os.Executable(); err == nil {
 			dir := filepath.Dir(exe)
-			if f, err := os.CreateTemp(dir, ".mmdesk-probe-*"); err == nil {
+			if f, err := os.CreateTemp(dir, ".kkdesk-probe-*"); err == nil {
 				name := f.Name()
 				f.Close()
 				os.Remove(name)
@@ -104,7 +104,7 @@ func (l *AppLog) Close() error {
 func SystemInfo() []string {
 	exe, _ := os.Executable()
 	out := []string{
-		"mmdesk version: " + Version,
+		"kkdesk version: " + Version,
 		"time: " + time.Now().Format(time.RFC3339),
 		fmt.Sprintf("go: %s %s/%s, %d logical CPUs", runtime.Version(), runtime.GOOS, runtime.GOARCH, runtime.NumCPU()),
 		"executable: " + exe,
