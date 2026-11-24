@@ -1,6 +1,7 @@
 // Package codec provides H.264 video encoding and decoding behind
 // platform-independent interfaces. The darwin implementation uses
-// VideoToolbox hardware sessions; other platforms currently return
+// VideoToolbox hardware sessions; the windows encoder uses Media Foundation
+// (hardware MFT, software fallback); other platforms currently return
 // ErrUnsupported.
 package codec
 
@@ -18,7 +19,8 @@ type Frame struct {
 	// Pixels is the platform pixel buffer. On darwin it is a CVPixelBufferRef
 	// (NV12 preferred); the caller keeps it retained for the duration of the
 	// Encode call and may release it afterwards (the encoder retains it as
-	// long as it needs it).
+	// long as it needs it). On windows it is an NV12 ID3D11Texture2D* on
+	// winmedia.Device(); the encoder copies it before Encode returns.
 	Pixels uintptr
 	// CaptureAt is when the frame was captured. It is passed through to the
 	// encoder output unchanged.

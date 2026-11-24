@@ -1,7 +1,9 @@
-// Package capture grabs the main display as NV12 CVPixelBuffers.
+// Package capture grabs the main display as NV12 frames.
 //
-// On macOS it uses ScreenCaptureKit (macOS 12.3+). Other platforms return
-// ErrUnsupported for now.
+// On macOS it uses ScreenCaptureKit (macOS 12.3+) and delivers
+// CVPixelBuffers. On Windows it uses DXGI Desktop Duplication and a D3D11
+// video processor and delivers NV12 ID3D11Texture2D textures on the shared
+// device of package winmedia. Other platforms return ErrUnsupported.
 package capture
 
 import (
@@ -15,8 +17,11 @@ var ErrUnsupported = errors.New("capture: unsupported platform")
 
 // Frame is one captured screen image.
 type Frame struct {
-	// Pixels is a CVPixelBufferRef (NV12, video range). It is only valid
-	// during the out callback; call CVPixelBufferRetain to keep it longer.
+	// Pixels is a CVPixelBufferRef (NV12, video range) on macOS and an
+	// ID3D11Texture2D* (NV12, BT.709 limited range, on winmedia.Device())
+	// on Windows. It is only valid during the out callback; on macOS call
+	// CVPixelBufferRetain to keep it longer, on Windows copy the texture
+	// (the capture reuses it after the callback returns).
 	Pixels uintptr
 	// CaptureAt is the capture time used for latency measurement: the
 	// earlier of the frame's SCK display time and the moment the capture
@@ -26,6 +31,10 @@ type Frame struct {
 	// (the PTS is the same instant), so CaptureAt is usually ArrivedAt.
 	// Both clocks are mach absolute time (verified equal to Go's monotonic
 	// clock), mapped to wall time through an offset taken at Start.
+	// On Windows it is the frame's DXGI LastPresentTime (QPC, mapped to
+	// wall time through an offset taken at Start) unless that lies more
+	// than 250 ms before AcquireNextFrame returned, else that return time;
+	// frames re-sent while the screen is unchanged use the re-send time.
 	CaptureAt time.Time
 	// ArrivedAt is when the capture callback was entered.
 	ArrivedAt time.Time
@@ -33,6 +42,7 @@ type Frame struct {
 	// vsync the composited frame is shown at locally. The encoder cannot
 	// finish before roughly this time (the surface is still being
 	// composited), so encode completion is measured ~6–8 ms after it.
+	// Always zero on Windows.
 	DisplayAt time.Time
 	// Width and Height are the pixel buffer dimensions.
 	Width, Height int
@@ -47,7 +57,8 @@ type Options struct {
 	// does not exceed MaxWidth. Values <= 0 mean no limit.
 	MaxWidth int
 	// ExcludeApp hides the windows of every application whose name or
-	// bundle executable name equals this value (case-insensitive).
+	// bundle executable name equals this value (case-insensitive). macOS
+	// only; ignored (and logged) on Windows.
 	ExcludeApp string
 }
 
@@ -107,12 +118,22 @@ func scaledSize(w, h, maxW int) (int, int) {
 	return w, h
 }
 
-// Stats counts ScreenCaptureKit callbacks by frame status.
+// Stats counts capture callbacks by frame status.
 type Stats struct {
 	Complete uint64 // frames with a new image (delivered to out)
-	Idle     uint64 // SCFrameStatusIdle: screen unchanged, no image
-	Other    uint64 // blank/suspended/started/stopped or malformed samples
+	Idle     uint64 // SCFrameStatusIdle / DXGI timeout or pointer-only: no new image
+	Other    uint64 // blank/suspended/started/stopped or malformed samples; DXGI errors
 	// Late counts complete frames whose SCK display time was after the
 	// callback arrival (CaptureAt then falls back to the arrival time).
 	Late uint64
+	// Resent counts unchanged frames delivered again (Windows: at least
+	// once per second while the screen is idle or duplication is lost).
+	// They are not included in Complete.
+	Resent uint64
+	// Reopened counts re-created duplications (Windows: access lost on
+	// mode change, UAC/lock screen, device loss).
+	Reopened uint64
+	// AcquireTotal sums the time spent in AcquireNextFrame calls that
+	// returned a new image (Windows; average = AcquireTotal/Complete).
+	AcquireTotal time.Duration
 }
