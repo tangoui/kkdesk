@@ -25,8 +25,6 @@ import (
 	"github.com/tangoui/tango/uihost"
 
 	"mmdesk/internal/app"
-	"mmdesk/internal/capture"
-	"mmdesk/internal/inject"
 	appui "mmdesk/internal/ui"
 )
 
@@ -38,7 +36,12 @@ type State struct {
 
 var st State
 
+// version is set at build time: -ldflags "-X main.version=$(git describe --tags --always --dirty)".
+var version = "dev"
+
 func main() {
+	app.Version = version
+	app.PrepareProcess() // Windows: per-monitor DPI awareness, before any window or display query
 	o, fs, err := parseFlags(os.Args[1:])
 	if errors.Is(err, flag.ErrHelp) {
 		return
@@ -48,6 +51,12 @@ func main() {
 		fs.Usage()
 		os.Exit(2)
 	}
+	if o.selftest {
+		if !app.Selftest(app.SelftestConfig{FPS: o.fps, MaxWidth: o.maxWidth, BitrateMbps: o.bitrate}) {
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(o); err != nil {
 		fmt.Fprintln(os.Stderr, "mmdesk:", err)
 		os.Exit(1)
@@ -55,6 +64,19 @@ func main() {
 }
 
 func run(o options) error {
+	var appLog *app.AppLog
+	if o.appLog != "" {
+		l, err := app.OpenAppLog(o.appLog)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "mmdesk: diagnostic log:", err)
+		} else {
+			appLog = l
+			defer l.Close()
+			log.Printf("mmdesk: diagnostic log %s, args %q", l.Path, os.Args[1:])
+			app.LogSystemInfo()
+		}
+	}
+
 	var logw io.Writer = io.Discard
 	if o.logPath != "" {
 		f, err := os.Create(o.logPath)
@@ -92,22 +114,31 @@ func run(o options) error {
 
 	// Never prompt for permissions here (measurement runs); explain instead.
 	if o.host {
-		if !capture.HasPermission() {
-			return errors.New(app.ScreenRecordingHelp)
+		if help := app.CaptureHelp(); help != "" {
+			log.Printf("mmdesk: %s", help)
+			return errors.New(help)
 		}
-		if !inject.HasPermission() {
-			fmt.Fprintln(os.Stderr, "mmdesk:", app.AccessibilityHelp)
+		if help := app.InjectHelp(); help != "" {
+			fmt.Fprintln(os.Stderr, "mmdesk:", help)
+		}
+		if lim := app.InjectLimits(); lim != "" {
+			log.Printf("mmdesk: %s", lim)
 		}
 	}
 	if o.connect == "" {
 		if err := host.SetEnabled(true); err != nil && o.host {
+			log.Printf("mmdesk: %v", err)
 			return err
 		}
 		if o.host {
-			fmt.Printf("mmdesk host listening on %s password %s\n", host.ListenAddr(), host.State().Password)
+			line := fmt.Sprintf("mmdesk host listening on %s password %s", host.ListenAddr(), host.State().Password)
+			fmt.Println(line)
+			appLog.FileOnly("%s (local addresses %v)", line, app.LocalIPv4())
 		}
-		if !o.host && !capture.HasPermission() {
-			log.Printf("mmdesk: %s", app.ScreenRecordingHelp)
+		if !o.host {
+			if help := app.CaptureHelp(); help != "" {
+				log.Printf("mmdesk: %s", help)
+			}
 		}
 	}
 

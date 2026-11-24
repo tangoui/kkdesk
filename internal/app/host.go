@@ -38,12 +38,6 @@ const ConfirmTimeout = 30 * time.Second
 // "auto" is a fixed 8 Mbps for now. TODO: follow a bandwidth estimate.
 const AutoBitrate = 8_000_000
 
-// Guidance texts for missing macOS permissions.
-const (
-	ScreenRecordingHelp = "需要屏幕录制权限：请在 系统设置 › 隐私与安全性 › 屏幕录制 中允许 mmdesk（或运行它的终端），然后重新启动 mmdesk。"
-	AccessibilityHelp   = "需要辅助功能权限才能被远程操作：请在 系统设置 › 隐私与安全性 › 辅助功能 中允许 mmdesk（或运行它的终端）。"
-)
-
 // HostConfig configures a Host.
 type HostConfig struct {
 	Addr        string // listen address; default ":21118"
@@ -387,9 +381,9 @@ func (h *Host) handle(p *session.Peer) {
 			return
 		}
 	}
-	if !capture.HasPermission() {
-		h.setErr(ScreenRecordingHelp)
-		log.Printf("mmdesk host: %s", ScreenRecordingHelp)
+	if help := CaptureHelp(); help != "" {
+		h.setErr(help)
+		log.Printf("mmdesk host: %s", help)
 		p.CloseWithReason("被控端没有屏幕录制权限")
 		return
 	}
@@ -417,7 +411,7 @@ func (h *Host) setErr(s string) {
 
 // stream runs capture → encode → peer until the peer is done.
 func (h *Host) stream(p *session.Peer) error {
-	rec := stats.NewRecorder(h.cfg.Log, "host", stats.ProcessCPU("VTEncoderXPCService", "WindowServer"))
+	rec := stats.NewRecorder(h.cfg.Log, "host", hostCPU())
 	rec.Start()
 	defer rec.Close()
 
@@ -431,10 +425,7 @@ func (h *Host) stream(p *session.Peer) error {
 
 	h.wireInput(p)
 
-	opts := capture.Options{FPS: h.cfg.FPS, MaxWidth: h.cfg.MaxWidth}
-	if excludeSelfWindows(p.RemoteAddr(), LocalIPv4(), os.Getenv("MMDESK_EXCLUDE_SELF")) {
-		opts.ExcludeApp = ExcludeAppName()
-	}
+	opts := capture.Options{FPS: h.cfg.FPS, MaxWidth: h.cfg.MaxWidth, ExcludeApp: captureExcludeApp(p.RemoteAddr())}
 	log.Printf("mmdesk host: capture %d fps, max width %d, exclude %q", opts.FPS, opts.MaxWidth, opts.ExcludeApp)
 	capt, err := capture.Start(opts, vs.frame)
 	if err != nil {
@@ -444,11 +435,21 @@ func (h *Host) stream(p *session.Peer) error {
 	vs.capt = capt
 	vs.mu.Unlock()
 	p.OnQuality(vs.setQuality)
-	<-p.Done()
+	tk := time.NewTicker(StatsSummaryInterval)
+loop:
+	for {
+		select {
+		case <-p.Done():
+			break loop
+		case <-tk.C:
+			log.Printf("mmdesk host: %s", statsSummary(rec.Last(), capt.Stats()))
+		}
+	}
+	tk.Stop()
 	st := capt.Stats()
 	capt.Close() // no frame callbacks after this
-	log.Printf("mmdesk host: capture frames complete=%d idle=%d other=%d display-after-callback=%d",
-		st.Complete, st.Idle, st.Other, st.Late)
+	log.Printf("mmdesk host: capture frames complete=%d idle=%d other=%d display-after-callback=%d resent=%d reopened=%d",
+		st.Complete, st.Idle, st.Other, st.Late, st.Resent, st.Reopened)
 	vs.mu.Lock()
 	if vs.enc != nil {
 		vs.enc.Close()
@@ -458,17 +459,26 @@ func (h *Host) stream(p *session.Peer) error {
 	return nil
 }
 
-// wireInput injects the controller's input when Accessibility is granted.
+// injectLimitsOnce logs InjectLimits once per process.
+var injectLimitsOnce sync.Once
+
+// wireInput injects the controller's input when the platform permits it
+// (macOS: Accessibility).
 func (h *Host) wireInput(p *session.Peer) {
 	var inj *inject.Injector
-	if inject.HasPermission() {
+	if help := InjectHelp(); help == "" {
 		if in, err := inject.New(); err == nil {
 			inj = in
+			b := in.Bounds()
+			log.Printf("mmdesk host: inject: primary display %.0fx%.0f at (%.0f,%.0f)", b.W, b.H, b.X, b.Y)
 		} else {
 			log.Printf("mmdesk host: inject: %v", err)
 		}
+		if lim := InjectLimits(); lim != "" {
+			injectLimitsOnce.Do(func() { log.Printf("mmdesk host: %s", lim) })
+		}
 	} else {
-		log.Printf("mmdesk host: %s 远程输入将被忽略。", AccessibilityHelp)
+		log.Printf("mmdesk host: %s 远程输入将被忽略。", help)
 	}
 	var n atomic.Int64
 	var errLogged atomic.Bool
@@ -528,6 +538,7 @@ func (v *videoSender) frame(f capture.Frame) {
 			return
 		}
 		v.enc, v.encW, v.encH = enc, f.Width, f.Height
+		log.Printf("mmdesk host: encoder %dx%d %d fps %d bps: %s", f.Width, f.Height, v.fps, v.bps, EncoderInfo(enc))
 		v.forceKey.Store(true)
 	}
 	if !f.DisplayAt.IsZero() {

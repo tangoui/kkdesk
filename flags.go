@@ -5,6 +5,10 @@ package main
 import (
 	"flag"
 	"fmt"
+	"path/filepath"
+	"runtime"
+
+	"mmdesk/internal/app"
 )
 
 type options struct {
@@ -17,6 +21,8 @@ type options struct {
 	logPath    string
 	autoAccept bool
 	viewOnly   bool
+	selftest   bool
+	appLog     string
 }
 
 func parseFlags(args []string) (options, *flag.FlagSet, error) {
@@ -31,8 +37,10 @@ func parseFlags(args []string) (options, *flag.FlagSet, error) {
 	fs.StringVar(&o.logPath, "log", "", "write JSON Lines stats to `file`")
 	fs.BoolVar(&o.autoAccept, "autoaccept", false, "host: accept incoming connections without asking (measurement)")
 	fs.BoolVar(&o.viewOnly, "view-only", false, "viewer: do not send input")
+	fs.BoolVar(&o.selftest, "selftest", false, "check capture, encoding and input injection without UI or network, write "+app.SelftestLog+" and "+app.SelftestH264+", then exit (0 = pass)")
+	fs.StringVar(&o.appLog, "applog", defaultAppLog(), "write a human-readable diagnostic log to `file` (\"\" = none)")
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Usage:\n  mmdesk -host [-autoaccept] [-fps N] [-bitrate Mbps] [-log file]\n  mmdesk -connect addr -password pw [-view-only] [-log file]\n\nFlags:\n")
+		fmt.Fprintf(fs.Output(), "Usage:\n  mmdesk -selftest\n  mmdesk -host [-autoaccept] [-fps N] [-bitrate Mbps] [-log file]\n  mmdesk -connect addr -password pw [-view-only] [-log file]\n\nFlags:\n")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -42,4 +50,13 @@ func parseFlags(args []string) (options, *flag.FlagSet, error) {
 		return o, fs, fmt.Errorf("-host and -connect are mutually exclusive")
 	}
 	return o, fs, nil
+}
+
+// defaultAppLog is mmdesk.log in app.OutputDir on Windows (users send it
+// back after a test), none elsewhere.
+func defaultAppLog() string {
+	if runtime.GOOS == "windows" {
+		return filepath.Join(app.OutputDir(), "mmdesk.log")
+	}
+	return ""
 }

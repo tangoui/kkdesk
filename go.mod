@@ -21,7 +21,6 @@ require (
 	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/image v0.47.0 // indirect
 	golang.org/x/net v0.59.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/time v0.10.0 // indirect
 )
 
@@ -32,6 +31,7 @@ require (
 	github.com/pion/rtp v1.10.1
 	github.com/pion/webrtc/v4 v4.2.11
 	github.com/tangoui/tango v0.0.0
+	golang.org/x/sys v0.49.0
 )
 
 replace github.com/tangoui/tango => ../tango
