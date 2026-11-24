@@ -40,6 +40,7 @@ const (
 	metaCapture byte = 'c' // 'c' u32 rtpTimestamp, i64 captureUnixNano (big endian)
 	metaBye     byte = 'b' // 'b' [reason UTF-8]
 	metaQuality byte = 'q' // 'q' u32 bitrateBps, u16 fps (big endian)
+	// metaPing and metaPong (clock sync) are defined in clock.go.
 )
 
 // ErrNotHost is returned by WriteVideo on a controller-side peer.
@@ -95,6 +96,8 @@ type Peer struct {
 
 	videoEv    chan videoEvent
 	remoteSSRC atomic.Uint32
+
+	clock ClockSync // controller: host clock offset estimate (clock.go)
 
 	framesSent, bytesSent, framesRecv, bytesRecv, framesDropped atomic.Uint64
 }
@@ -179,7 +182,12 @@ func (p *Peer) attach(dc *webrtc.DataChannel) {
 
 	dc.OnOpen(func() {
 		if p.opened.Add(1) == 3 {
-			p.readyOnce.Do(func() { close(p.ready) })
+			p.readyOnce.Do(func() {
+				close(p.ready)
+				if !p.isHost {
+					go p.clockLoop()
+				}
+			})
 		}
 	})
 	dc.OnClose(p.shutdown)
@@ -214,6 +222,8 @@ func (p *Peer) handleMeta(msg webrtc.DataChannelMessage) {
 		p.shutdown()
 	case metaQuality:
 		p.handleQuality(b)
+	case metaPing, metaPong:
+		p.handleClock(b)
 	case metaCapture:
 		if len(b) != 13 || p.isHost {
 			return

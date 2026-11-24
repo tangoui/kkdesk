@@ -358,7 +358,7 @@ func (v *Viewer) peerDone() <-chan struct{} {
 func (v *Viewer) decoded(pix uintptr, captureAt time.Time) {
 	decodedAt := time.Now()
 	v.mu.Lock()
-	view := v.view
+	view, peer := v.view, v.peer
 	v.mu.Unlock()
 	if view == nil {
 		return
@@ -368,9 +368,14 @@ func (v *Viewer) decoded(pix uintptr, captureAt time.Time) {
 		return
 	}
 	v.seq++
+	// captureAt is on the host's clock; stats converts it with the offset.
+	clk := stats.Clock{Remote: true}
+	if peer != nil {
+		clk.Offset, clk.RTT, clk.Synced = peer.ClockOffset()
+	}
 	v.rec.Frame(stats.FrameTimes{
 		Seq: v.seq, Capture: captureAt, Received: v.recvAt, Decoded: decodedAt,
-		Enqueued: enq, Presented: view.NextVsync(enq),
+		Enqueued: enq, Presented: view.NextVsync(enq), Clock: clk,
 	})
 	if !v.gotFrame.Swap(true) {
 		v.mu.Lock()

@@ -2,8 +2,11 @@
 // aggregates them once per second into JSON Lines (fps, bitrate, loss,
 // latency percentiles, per-segment medians, CPU) and summarises such a log.
 //
-// Both ends of a loopback session share one clock, so latencies are plain
-// differences of time.Time values; no clock synchronisation is attempted.
+// Latencies are differences of time.Time values on one clock. A viewer
+// frame's Capture comes from the host's clock; with FrameTimes.Clock it is
+// converted to the viewer's clock using the session's clock-offset estimate,
+// and frames without an estimate yield no latency (the line says
+// clock_synced=false) rather than a wrong one.
 package stats
 
 import (
@@ -25,6 +28,21 @@ import (
 type FrameTimes struct {
 	Seq                                                            uint64
 	Capture, Encoded, Sent, Received, Decoded, Enqueued, Presented time.Time
+	// Clock describes Capture on a viewer frame. The zero value means
+	// Capture is on the local clock (as on the host).
+	Clock Clock
+}
+
+// Clock is the clock state of a viewer frame whose Capture was taken on the
+// host. With Remote set, Capture is converted to the local clock as
+// Capture − Offset before anything is measured; if Synced is false there is
+// no estimate yet, so the frame counts toward fps and its later segments
+// but yields no latency and no segment starting at Capture.
+type Clock struct {
+	Remote bool          // Capture is on the host's clock
+	Synced bool          // Offset and RTT are valid
+	Offset time.Duration // host clock − local clock
+	RTT    time.Duration // round trip of the sample Offset is based on
 }
 
 // Segment names. A segment is measured between two consecutive non-zero
@@ -80,6 +98,12 @@ type Second struct {
 	LatencyP95 time.Duration
 	Segments   map[string]time.Duration // median of each segment
 	CPU        map[string]float64       // percent of one core
+	// Clock is the latest clock state seen in a remote-capture frame
+	// (sticky across seconds), nil if there has been none (host, loopback
+	// without clock info). ClockUnsynced counts this second's frames whose
+	// latency was skipped because the clock was not synced.
+	Clock         *Clock
+	ClockUnsynced int
 }
 
 // Report is the aggregate over a whole run.
@@ -94,6 +118,14 @@ type Report struct {
 	MeanLossPct    float64
 	Segments       map[string]time.Duration // median over all per-frame samples
 	CPU            map[string]float64       // mean percent per process
+	// Clock sync (viewer): seconds carrying clock state, how many of them
+	// were synced, frames skipped as unsynced, and the median offset and
+	// rtt over the synced seconds.
+	ClockSeconds        int
+	ClockSyncedSeconds  int
+	ClockUnsyncedFrames int
+	ClockOffset         time.Duration
+	ClockRTT            time.Duration
 }
 
 // line is the JSON form of one second. lat_ms and seg_samples_ms carry the
@@ -112,6 +144,12 @@ type line struct {
 	CPU          map[string]float64   `json:"cpu,omitempty"`
 	LatMs        []float64            `json:"lat_ms"`
 	SegSamplesMs map[string][]float64 `json:"seg_samples_ms"`
+	// Clock fields appear only when the recorder has seen a remote-capture
+	// frame; offset and rtt only while synced.
+	ClockSynced   *bool    `json:"clock_synced,omitempty"`
+	ClockOffsetMs *float64 `json:"clock_offset_ms,omitempty"`
+	ClockRTTMs    *float64 `json:"clock_rtt_ms,omitempty"`
+	ClockUnsynced int      `json:"clock_unsynced_frames,omitempty"`
 }
 
 // DefaultMaxSamples caps the per-frame samples a Recorder keeps in memory
@@ -129,21 +167,23 @@ type Recorder struct {
 
 	flushMu sync.Mutex // serialises Flush (cpu sampler is stateful)
 
-	mu      sync.Mutex
-	last    time.Time
-	frames  int
-	bytes   int64
-	loss    float64
-	lat     []time.Duration
-	seg     map[string][]time.Duration
-	allLat  []time.Duration
-	allSeg  map[string][]time.Duration
-	total   totals
-	stop    chan struct{}
-	done    chan struct{}
-	started bool
-	closed  bool
-	lastSec Second // latest Flush result, for live display
+	mu       sync.Mutex
+	last     time.Time
+	frames   int
+	bytes    int64
+	loss     float64
+	lat      []time.Duration
+	seg      map[string][]time.Duration
+	allLat   []time.Duration
+	allSeg   map[string][]time.Duration
+	clock    *Clock // latest remote clock state, sticky
+	unsynced int    // this second's frames skipped as unsynced
+	total    totals
+	stop     chan struct{}
+	done     chan struct{}
+	started  bool
+	closed   bool
+	lastSec  Second // latest Flush result, for live display
 }
 
 type totals struct {
@@ -151,6 +191,34 @@ type totals struct {
 	fps, bitrate, loss float64
 	cpuSum             map[string]float64
 	cpuN               map[string]int
+	clock              clockTotals
+}
+
+// clockTotals accumulates the per-second clock state for Report/Summary.
+type clockTotals struct {
+	seconds, synced, unsynced int
+	offset, rtt               []time.Duration // per synced second
+}
+
+func (c *clockTotals) add(clk *Clock, unsynced int) {
+	c.unsynced += unsynced
+	if clk == nil {
+		return
+	}
+	c.seconds++
+	if clk.Synced {
+		c.synced++
+		c.offset = append(c.offset, clk.Offset)
+		c.rtt = append(c.rtt, clk.RTT)
+	}
+}
+
+func (c *clockTotals) fill(rep *Report) {
+	rep.ClockSeconds, rep.ClockSyncedSeconds, rep.ClockUnsyncedFrames = c.seconds, c.synced, c.unsynced
+	off, rtt := slices.Clone(c.offset), slices.Clone(c.rtt)
+	slices.Sort(off)
+	slices.Sort(rtt)
+	rep.ClockOffset, rep.ClockRTT = percentile(off, 50), percentile(rtt, 50)
 }
 
 // NewRecorder returns a Recorder writing JSON Lines to w. role is written
@@ -178,6 +246,18 @@ func (r *Recorder) Frame(f FrameTimes) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.frames++
+	if f.Clock.Remote {
+		clk := f.Clock
+		r.clock = &clk
+		if !f.Capture.IsZero() {
+			if clk.Synced {
+				f.Capture = f.Capture.Add(-clk.Offset)
+			} else {
+				f.Capture = time.Time{}
+				r.unsynced++
+			}
+		}
+	}
 	if d, ok := f.latency(); ok {
 		r.lat = append(r.lat, d)
 		if len(r.allLat) < r.maxSamples {
@@ -243,12 +323,17 @@ func (r *Recorder) Flush(now time.Time) (Second, error) {
 	r.mu.Lock()
 	elapsed := now.Sub(r.last).Seconds()
 	s := Second{
-		Time:     now,
-		Role:     r.role,
-		Frames:   r.frames,
-		LossPct:  r.loss,
-		Segments: map[string]time.Duration{},
-		CPU:      cpu,
+		Time:          now,
+		Role:          r.role,
+		Frames:        r.frames,
+		LossPct:       r.loss,
+		Segments:      map[string]time.Duration{},
+		CPU:           cpu,
+		ClockUnsynced: r.unsynced,
+	}
+	if r.clock != nil {
+		clk := *r.clock
+		s.Clock = &clk
 	}
 	if elapsed > 0 {
 		s.FPS = float64(r.frames) / elapsed
@@ -256,6 +341,7 @@ func (r *Recorder) Flush(now time.Time) (Second, error) {
 	}
 	lat, seg := r.lat, r.seg
 	r.last, r.frames, r.bytes, r.lat, r.seg = now, 0, 0, nil, map[string][]time.Duration{}
+	r.unsynced = 0
 
 	t := &r.total
 	t.seconds++
@@ -267,24 +353,34 @@ func (r *Recorder) Flush(now time.Time) (Second, error) {
 		t.cpuSum[k] += v
 		t.cpuN[k]++
 	}
+	t.clock.add(s.Clock, s.ClockUnsynced)
 	r.mu.Unlock()
 
 	slices.Sort(lat)
 	s.LatencyP50 = percentile(lat, 50)
 	s.LatencyP95 = percentile(lat, 95)
 	l := line{
-		Time:         now,
-		Role:         s.Role,
-		Frames:       s.Frames,
-		FPS:          s.FPS,
-		BitrateBps:   s.BitrateBps,
-		LossPct:      s.LossPct,
-		LatencyP50Ms: toMs(s.LatencyP50),
-		LatencyP95Ms: toMs(s.LatencyP95),
-		SegmentsMs:   map[string]float64{},
-		CPU:          cpu,
-		LatMs:        msSlice(lat),
-		SegSamplesMs: map[string][]float64{},
+		Time:          now,
+		Role:          s.Role,
+		Frames:        s.Frames,
+		FPS:           s.FPS,
+		BitrateBps:    s.BitrateBps,
+		LossPct:       s.LossPct,
+		LatencyP50Ms:  toMs(s.LatencyP50),
+		LatencyP95Ms:  toMs(s.LatencyP95),
+		SegmentsMs:    map[string]float64{},
+		CPU:           cpu,
+		LatMs:         msSlice(lat),
+		SegSamplesMs:  map[string][]float64{},
+		ClockUnsynced: s.ClockUnsynced,
+	}
+	if c := s.Clock; c != nil {
+		synced := c.Synced
+		l.ClockSynced = &synced
+		if synced {
+			off, rtt := toMs(c.Offset), toMs(c.RTT)
+			l.ClockOffsetMs, l.ClockRTTMs = &off, &rtt
+		}
 	}
 	for k, v := range seg {
 		l.SegSamplesMs[k] = msSlice(v)
@@ -334,6 +430,7 @@ func (r *Recorder) Report() Report {
 	for k, sum := range t.cpuSum {
 		rep.CPU[k] = sum / float64(t.cpuN[k])
 	}
+	t.clock.fill(&rep)
 	return rep
 }
 
@@ -409,6 +506,7 @@ func Summary(path string) (Report, error) {
 	var lat []time.Duration
 	seg := map[string][]time.Duration{}
 	cpuN := map[string]int{}
+	var clk clockTotals
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 64*1024), 64*1024*1024)
 	n := 0
@@ -442,6 +540,16 @@ func Summary(path string) (Report, error) {
 			rep.CPU[k] += v
 			cpuN[k]++
 		}
+		var c *Clock
+		if l.ClockSynced != nil {
+			c = &Clock{Remote: true, Synced: *l.ClockSynced}
+			if l.ClockOffsetMs != nil && l.ClockRTTMs != nil {
+				c.Offset, c.RTT = fromMs(*l.ClockOffsetMs), fromMs(*l.ClockRTTMs)
+			} else {
+				c.Synced = false
+			}
+		}
+		clk.add(c, l.ClockUnsynced)
 	}
 	if err := sc.Err(); err != nil {
 		return Report{}, err
@@ -461,6 +569,7 @@ func Summary(path string) (Report, error) {
 		slices.Sort(v)
 		rep.Segments[k] = percentile(v, 50)
 	}
+	clk.fill(&rep)
 	return rep, nil
 }
 
