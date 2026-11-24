@@ -12,7 +12,7 @@ cd "$root"
 CGO_ENABLED=1 go build -o "$bin/mmdesk" . 2>/dev/null
 CGO_ENABLED=1 go build -o "$bin/anim" ./scripts/anim 2>/dev/null
 export TANGO_LAUNCH_BACKGROUND=1
-"$bin/anim" >"$out/anim.out" 2>&1 & anim=$!
+"$bin/anim" ${ANIM_ARGS:-} >"$out/anim.out" 2>&1 & anim=$!
 sleep 2
 "$bin/mmdesk" -host -autoaccept -password 123456 -log "$out/host.jsonl" "$@" >"$out/host.out" 2>&1 & host=$!
 for _ in $(seq 1 50); do grep -q 'listening' "$out/host.out" 2>/dev/null && break; sleep 0.2; done

@@ -5,6 +5,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"image/color"
 	"log"
@@ -18,6 +19,9 @@ import (
 )
 
 func main() {
+	ww := flag.Int("w", 1600, "window width")
+	wh := flag.Int("h", 900, "window height")
+	flag.Parse()
 	quit := true
 	app := tango.New(tango.Options{Name: "anim", ID: "com.mmdesk.anim", QuitOnLastClose: &quit})
 	start := time.Now()
@@ -25,12 +29,12 @@ func main() {
 	// loopback summary can compare it with what capture delivers.
 	frames, sec := 0, time.Now()
 	app.OnReady(func() {
-		_, _, err := uihost.Open(app, uihost.Options{Surface: tango.SurfaceOptions{Title: "mmdesk anim", Width: 1600, Height: 900, Centered: true,
+		_, _, err := uihost.Open(app, uihost.Options{Surface: tango.SurfaceOptions{Title: "mmdesk anim", Width: *ww, Height: *wh, Centered: true,
 			// Floating level without activating the app (no focus steal):
 			// a window opened behind others may be occluded and throttled.
 			Appearance: tango.Appearance{AlwaysOnTop: true}}}, func(c *ui.Context) {
 			t := c.Now().Sub(start).Seconds()
-			w, h := float32(1600), float32(900)
+			w, h := float32(*ww), float32(*wh)
 			for i := 0; i < 12; i++ {
 				x := float32(math.Mod(t*300+float64(i)*140, float64(w)+200)) - 200
 				hue := math.Mod(t*60+float64(i)*30, 360)
