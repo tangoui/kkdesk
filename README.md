@@ -40,7 +40,7 @@ scripts/build-windows.sh                  # 产出 kkdesk.exe 和说明
 
 ## 自托管跨网服务
 
-`kkdesk-server` 提供设备码信令和 TURN 中继。客户端自动选择 WebRTC 直连或中继。服务端可以运行在有公网 IPv4 和 TLS 证书的 Linux 服务器上。
+`kkdesk-server` 提供设备码信令和 TURN 中继。客户端自动选择 WebRTC 直连或中继。服务端可在有公网 IPv4 的 Linux 服务器上使用 IP + 公钥或域名 HTTPS。[IP + 公钥安装与客户端配置](https://tangoui.github.io/kkdesk/deploy/server.html#公网-ip-与服务器公钥)
 
 Debian 或 Ubuntu 上可以单独下载安装脚本。先把域名解析到服务器，并按部署指南开放端口。运行以下命令，将域名和 IPv4 替换成实际值。脚本会准备证书、密钥和开机启动服务。[服务器部署指南](https://tangoui.github.io/kkdesk/deploy/server.html#一键安装)
 

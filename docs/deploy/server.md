@@ -10,12 +10,12 @@
 ## 服务器要求
 
 - 一台有**公网 IPv4** 的 Linux 服务器；
-- 一个指向它的域名和对应的 **TLS 证书**（例如 Let's Encrypt）；
+- 使用域名 HTTPS 时，需要指向服务器的域名和域名证书。公网 IP 公钥模式由安装脚本生成 TLS 身份。
 - 放行下面的端口：
 
 | 端口 | 协议 | 用途 |
 |---|---|---|
-| 443（由 `-listen` 指定） | TCP | 信令（HTTPS） |
+| 8443（IP 公钥模式）或 443（域名 HTTPS） | TCP | 信令（HTTPS），可通过 `--listen-port` 修改 |
 | 3478 | UDP | TURN |
 | 49160–49259 | UDP | TURN 中继分配的端口范围 |
 | 5349（可选，由 `-turn-tls-listen` 指定） | TCP | TURN over TLS，适合只放行 TCP 的网络 |
@@ -26,13 +26,62 @@
 
 用公网 IPv4 安装时，服务端会生成并保存 Ed25519 密钥。客户端用服务器公钥验证信令和 TURN TLS 的服务器身份。
 
+### 1. 准备安装文件
+
+一键安装支持运行 systemd 的 Debian 和 Ubuntu。先在服务器上运行 `uname -m` 确认架构。
+
+| `uname -m` | 选择的 Linux 服务端包 |
+|---|---|
+| `x86_64` | 文件名以 `-linux-amd64.tar.gz` 结尾 |
+| `aarch64` | 文件名以 `-linux-arm64.tar.gz` 结尾 |
+
+用宝塔「文件」、云控制台或 SFTP 上传对应的预编译包，再解压。正式发布包可从 GitHub Releases 获取。也可按下文「构建」章节自行生成二进制，ARM64 服务器将 `GOARCH` 设为 `arm64`。[GitHub Releases](https://github.com/tangoui/kkdesk/releases)
+
+把压缩包名换成实际上传的文件名。
+
+```sh
+tar -xzf ./实际上传的文件名.tar.gz
+```
+
+安装脚本和 `kkdesk-server` 应放在同一个目录。如果压缩包只包含服务端二进制，在这个目录下载当前安装脚本。
+
+```sh
+curl -fsSL -o install-server.sh https://raw.githubusercontent.com/tangoui/kkdesk/main/scripts/install-server.sh
+```
+
+如果 GitHub Raw 无法访问，可用下文的 [备用下载地址](#下载缓慢或连接被重置) 获取支持 IP 公钥模式的脚本。
+
+### 2. 开放端口并安装
+
+在云安全组和服务器防火墙放行 **TCP 8443、5349** 和 **UDP 3478、49160–49259**。在安装文件所在目录运行以下命令，把示例 IP 换成服务器的公网 IPv4。以 root 登录时可以省略 `sudo`。
+
 ```sh
 sudo bash install-server.sh --ip 203.0.113.10 --binary ./kkdesk-server
 ```
 
-将示例 IP 换成实际公网 IP。可用 `--binary` 指定支持 `-tls-identity` 的服务端二进制，也可以省略它，让脚本构建服务器。默认放行 **TCP 8443、5349** 和 **UDP 3478、49160–49259**。通过 `--listen-port` 可修改信令端口。
+`--binary` 使用上传的二进制，跳过在服务器上下载 Go 和编译。二进制需要支持 `-tls-identity`。也可以省略 `--binary ./kkdesk-server`，由脚本构建服务端。通过 `--listen-port` 修改信令端口时，同时调整防火墙和客户端地址中的端口。
 
-安装成功后，在两台电脑的「设置 → 网络」填写脚本显示的地址（例如 `https://203.0.113.10:8443`）、**服务器公钥**和**服务密钥**。服务密钥的读取命令见下文。服务器启动日志也会记录公钥。私钥保存在 `/var/lib/kkdesk-server/tls-identity.pem`，重装时保留这个文件即可继续使用同一个公钥。
+### 3. 读取客户端配置
+
+安装成功后，脚本会显示跨网服务地址和服务器公钥。如果关掉了终端，可以在服务器上运行下面两条命令。第一条读取服务器公钥，第二条读取服务密钥。
+
+```sh
+sudo journalctl -u kkdesk-server -o cat --no-pager |
+  sed -n 's/.*kkdesk server public key: //p' | tail -1
+sudo sed -n 's/^KKDESK_SERVER_TOKEN=//p' /etc/kkdesk-server/server.env
+```
+
+在两台电脑上打开支持公钥模式的 kkdesk，进入「设置 → 网络」，填写相同的配置。
+
+| 字段 | 填写内容 |
+|---|---|
+| 跨网服务 | 脚本显示的 HTTPS 地址，例如 `https://203.0.113.10:8443` |
+| 服务器公钥 | 第一条命令输出的值 |
+| 服务密钥 | 第二条命令输出的值 |
+
+点「保存跨网配置」。被控端打开「允许被远程控制」，连接页出现 `KD-` 开头的设备码表示已上线。控制端将设备码填入「对方地址」并连接，被控端点「接受」。
+
+私钥保存在 `/var/lib/kkdesk-server/tls-identity.pem`，服务密钥保存在 `/etc/kkdesk-server/server.env`。重装时保留这两个文件，两端即可继续使用原来的公钥和服务密钥。
 
 ## 一键安装
 
@@ -59,12 +108,11 @@ sudo sed -n 's/^KKDESK_SERVER_TOKEN=//p' /etc/kkdesk-server/server.env
 
 ### 下载缓慢或连接被重置
 
-如果下载脚本时出现 `curl: (35) ... Connection reset by peer`，可以通过 jsDelivr 下载同一个脚本。链接固定到发布安装脚本的 Git 提交。把示例域名和 IP 换成实际值。
+如果下载脚本时出现 `curl: (35) ... Connection reset by peer`，可以通过 jsDelivr 下载脚本。链接固定到支持 IP 公钥模式的 Git 提交。下载后按所选模式运行上面的安装命令。
 
 ```sh
 curl -fsSL --connect-timeout 5 --max-time 20 -o install-server.sh \
-  https://cdn.jsdelivr.net/gh/tangoui/kkdesk@1acc6dfb8d5f63bbe432fe7294f5e5704b62a151/scripts/install-server.sh &&
-  sudo bash install-server.sh desk.example.com 203.0.113.10
+  https://cdn.jsdelivr.net/gh/tangoui/kkdesk@e8d3c20025f2966d0c55bf69910cad55825490de/scripts/install-server.sh
 ```
 
 如果是安装脚本下载 Go 或 Go 模块时太慢，可以在网络较快的电脑上准备好 Linux 二进制和安装脚本，再通过 SFTP 或云控制台上传到服务器。服务器上运行 `uname -m` 确认架构，`x86_64` 对应 `amd64`，`aarch64` 对应 `arm64`。
@@ -115,7 +163,7 @@ export KKDESK_TURN_SECRET="$(openssl rand -hex 32)"    # 只留在服务器上
 | `-tls-identity` | | 公网 IP 模式的 Ed25519 私钥文件。服务首次启动时创建，后续启动复用。 |
 | `-turn-listen` | `0.0.0.0:3478` | TURN UDP 监听地址。 |
 | `-turn-tls-listen` | | 可选的 TURN over TLS 监听地址，例如 `:5349`。 |
-| `-turn-host` | | TURN TLS 使用的公网域名。 |
+| `-turn-host` | | TURN TLS 使用的公网域名或 IP。公钥模式使用服务器的公网 IP。 |
 | `-turn-public-ip` | | 公布给客户端的中继公网 IPv4。 |
 | `-relay-bind` | `0.0.0.0` | 中继分配绑定的本机 IPv4。 |
 | `-relay-min` | `49160` | 中继 UDP 端口范围的起点。 |
@@ -167,7 +215,7 @@ sudo systemctl enable --now kkdesk-server
 
 ## 客户端配置与验证
 
-访问 `https://desk.example.com/healthz`。返回 `ok` 表示 HTTPS 信令服务正在响应。中继连通性可通过强制中继验证。
+使用域名 HTTPS 时，访问 `https://desk.example.com/healthz`。返回 `ok` 表示 HTTPS 信令服务正在响应。公网 IP 公钥模式通过客户端保存配置后是否出现设备码来验证信令。中继连通性可通过强制中继验证。
 
 1. 两台电脑在「设置 › 网络」填同一个 **跨网服务** 地址（`https://desk.example.com`）和 **服务密钥**，点「保存跨网配置」。
 2. 被控端开启「允许被远程控制」，连接页出现 `KD-` 开头的设备码，说明已经在服务上线。
