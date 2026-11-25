@@ -105,7 +105,9 @@ func (m *Main) hostCard(c *ui.Context, hs app.HostState) {
 				}
 			}, layout.Gap(4), layout.Middle())
 		}, layout.Gap(4), layout.PadVH(12, 0))
-		// 允许被远程控制
+		// 允许被远程控制: the switch shows what the host wants, also while it
+		// retries a busy port.
+		m.allow = hs.Enabled
 		ui.Row(c, func() {
 			col := th.Success.Base
 			if !m.allow {
@@ -114,8 +116,7 @@ func (m *Main) hostCard(c *ui.Context, hs app.HostState) {
 			dot(c, col, 6)
 			ui.Text(c, "允许被远程控制").Size(13).Secondary().Layout(layout.Grow(1))
 			if ui.Switch(c, &m.allow).A11yLabel("允许被远程控制").Changed() {
-				on := m.allow
-				go m.o.Host.SetEnabled(on)
+				_ = m.o.Host.SetEnabled(m.allow) // quick; a busy port is retried in the background
 			}
 		}, layout.Gap(10), layout.Middle(), layout.PadVH(10, 12)).Bg(th.FillQuaternary).Radius(th.Radius)
 		if st := hostStatus(hs); st != "" {

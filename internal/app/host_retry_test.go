@@ -61,3 +61,25 @@ func TestHostRetryStopsWhenDisabled(t *testing.T) {
 		t.Fatalf("host listened after being turned off: %+v", h.State())
 	}
 }
+
+// The UI's switch follows Enabled, which stays on while a busy port is retried.
+func TestHostStateEnabledWhileRetrying(t *testing.T) {
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer busy.Close()
+	h := NewHost(HostConfig{Addr: busy.Addr().String(), Password: "123456"}, nil)
+	defer h.Close()
+	if h.State().Enabled {
+		t.Fatal("a new host reports Enabled")
+	}
+	_ = h.SetEnabled(true)
+	if !h.State().Enabled {
+		t.Fatal("Enabled false while retrying a busy port")
+	}
+	_ = h.SetEnabled(false)
+	if h.State().Enabled {
+		t.Fatal("Enabled still true after turning off")
+	}
+}

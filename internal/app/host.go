@@ -63,6 +63,7 @@ const (
 
 // HostState is a snapshot for the UI.
 type HostState struct {
+	Enabled  bool // listening wanted (SetEnabled(true)), even while a busy port is retried
 	Phase    HostPhase
 	Addrs    []string // local IPv4 addresses
 	Port     int
@@ -231,7 +232,7 @@ func (h *Host) State() HostState {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	s := HostState{Phase: h.phase, Addrs: h.addrs, Port: Port, Password: h.password, Err: h.errMsg, Notice: h.notice,
-		FileAccess: h.fileAccess.Load()}
+		FileAccess: h.fileAccess.Load(), Enabled: h.wantOn}
 	if tcp, err := net.ResolveTCPAddr("tcp", h.cfg.Addr); err == nil && tcp.Port != 0 {
 		s.Port = tcp.Port
 	}
