@@ -25,6 +25,7 @@ const (
 	// h264Fmtp is Constrained Baseline 3.1, non-interleaved packetization.
 	h264Fmtp    = "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f"
 	h264PT      = 102
+	h264RTXPT   = 103
 	videoClock  = 90000
 	rtpMTU      = 1200
 	readyWait   = 15 * time.Second
@@ -134,6 +135,20 @@ func newConfiguredPeer(isHost, loopback bool, mode Mode, config webrtc.Configura
 		PayloadType:        h264PT,
 	}, webrtc.RTPCodecTypeVideo); err != nil {
 		return nil, err
+	}
+	if isHost {
+		// The default NACK responder uses a dedicated retransmission stream
+		// when the receiver offers RTX for this H.264 codec.
+		if err := m.RegisterCodec(webrtc.RTPCodecParameters{
+			RTPCodecCapability: webrtc.RTPCodecCapability{
+				MimeType:    webrtc.MimeTypeRTX,
+				ClockRate:   videoClock,
+				SDPFmtpLine: fmt.Sprintf("apt=%d", h264PT),
+			},
+			PayloadType: h264RTXPT,
+		}, webrtc.RTPCodecTypeVideo); err != nil {
+			return nil, err
+		}
 	}
 	ir := &interceptor.Registry{}
 	if err := webrtc.RegisterDefaultInterceptors(m, ir); err != nil {
