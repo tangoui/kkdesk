@@ -47,19 +47,24 @@ class _DevicesPageState extends State<DevicesPage> {
       return SlidableAutoCloseBehavior(
         child: ListView(
           keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-          padding: const EdgeInsets.fromLTRB(20, 1, 20, 25),
+          padding: EdgeInsets.fromLTRB(
+            20,
+            1,
+            20,
+            25 + MediaQuery.paddingOf(context).bottom,
+          ),
           children: [
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
-                IconButton(
+                KIconButton(
                   key: const ValueKey('scan'),
                   tooltip: '扫码配对',
                   icon: const Icon(CupertinoIcons.viewfinder, size: 25),
                   color: context.action,
                   onPressed: widget.scan,
                 ),
-                IconButton(
+                KIconButton(
                   tooltip: '添加电脑',
                   icon: const Icon(CupertinoIcons.add, size: 27),
                   color: context.action,
@@ -69,34 +74,15 @@ class _DevicesPageState extends State<DevicesPage> {
             ),
             const PageTitle('设备'),
             const SizedBox(height: 13),
-            TextField(
+            KInput(
               controller: _search,
               textInputAction: TextInputAction.search,
-              decoration: InputDecoration(
-                contentPadding: const EdgeInsets.symmetric(vertical: 10),
-                filled: true,
-                fillColor: context.recessed,
-                prefixIcon: Icon(
-                  CupertinoIcons.search,
-                  size: 18,
-                  color: context.muted,
-                ),
-                suffixIcon: query.isEmpty
-                    ? null
-                    : IconButton(
-                        tooltip: '清除搜索',
-                        icon: const Icon(
-                          CupertinoIcons.clear_circled_solid,
-                          size: 17,
-                        ),
-                        onPressed: _search.clear,
-                      ),
-                hintText: '搜索电脑',
-                hintStyle: TextStyle(color: context.muted, fontSize: 15),
-                border: OutlineInputBorder(
-                  borderSide: BorderSide.none,
-                  borderRadius: BorderRadius.circular(12),
-                ),
+              hint: '搜索电脑',
+              clearLabel: '清除搜索',
+              leading: Icon(
+                CupertinoIcons.search,
+                size: 18,
+                color: context.muted,
               ),
             ),
             const SizedBox(height: 23),
@@ -165,31 +151,22 @@ class _DeviceRow extends StatelessWidget {
         motion: const DrawerMotion(),
         extentRatio: .65,
         children: [
-          SlidableAction(
-            padding: EdgeInsets.zero,
-            onPressed: online ? (_) => view() : null,
-            icon: CupertinoIcons.eye,
+          _SwipeAction(
             label: '仅查看',
-            backgroundColor: online
-                ? const Color(0xff1566d4)
-                : const Color(0xff666670),
-            foregroundColor: Colors.white,
+            icon: CupertinoIcons.eye,
+            color: blue,
+            onTap: online ? view : null,
           ),
-          SlidableAction(
-            padding: EdgeInsets.zero,
-            onPressed: null,
-            icon: CupertinoIcons.folder,
+          const _SwipeAction(
             label: '传文件',
-            backgroundColor: const Color(0xff666670),
-            foregroundColor: Colors.white,
+            icon: CupertinoIcons.folder,
+            color: Color(0xff666670),
           ),
-          SlidableAction(
-            padding: EdgeInsets.zero,
-            onPressed: (_) => rename(),
-            icon: CupertinoIcons.pencil,
+          _SwipeAction(
             label: '改名',
-            backgroundColor: const Color(0xff454550),
-            foregroundColor: Colors.white,
+            icon: CupertinoIcons.pencil,
+            color: const Color(0xff454550),
+            onTap: rename,
           ),
         ],
       ),
@@ -240,21 +217,15 @@ class _DeviceRow extends StatelessWidget {
             ),
             const SizedBox(width: 8),
             if (online)
-              TextButton(
+              KButton(
                 key: ValueKey('connect-${computer.id}'),
-                style: TextButton.styleFrom(
-                  backgroundColor: context.blueTint,
-                  foregroundColor: context.action,
-                  visualDensity: VisualDensity.compact,
-                  minimumSize: const Size(65, 36),
-                  padding: const EdgeInsets.symmetric(horizontal: 13),
-                  textStyle: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-                onPressed: connect,
-                child: const Text('连接'),
+                label: '连接',
+                variant: KButtonVariant.secondary,
+                compact: true,
+                onTap: connect,
               )
             else
-              IconButton(
+              KIconButton(
                 onPressed: rename,
                 tooltip: '更改名称',
                 icon: Icon(
@@ -270,6 +241,54 @@ class _DeviceRow extends StatelessWidget {
   }
 }
 
+class _SwipeAction extends StatelessWidget {
+  const _SwipeAction({
+    required this.label,
+    required this.icon,
+    required this.color,
+    this.onTap,
+  });
+  final String label;
+  final IconData icon;
+  final Color color;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) => Expanded(
+    child: ColoredBox(
+      color: onTap == null ? const Color(0xff666670) : color,
+      child: KPress(
+        onTap: onTap == null
+            ? null
+            : () {
+                Slidable.of(context)?.close();
+                onTap!();
+              },
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                color: onTap == null ? Colors.white54 : Colors.white,
+                size: 19,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                label,
+                style: TextStyle(
+                  color: onTap == null ? Colors.white54 : Colors.white,
+                  fontSize: 11,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
 class LanSignIn extends StatefulWidget {
   const LanSignIn({super.key});
 
@@ -278,7 +297,9 @@ class LanSignIn extends StatefulWidget {
 }
 
 class _LanSignInState extends State<LanSignIn> {
-  final _form = GlobalKey<FormState>();
+  final _passwordFocus = FocusNode();
+  String? _addressError;
+  String? _passwordError;
   final _address = TextEditingController();
   final _password = TextEditingController();
   bool _obscure = true;
@@ -287,86 +308,83 @@ class _LanSignInState extends State<LanSignIn> {
   void dispose() {
     _address.dispose();
     _password.dispose();
+    _passwordFocus.dispose();
     super.dispose();
   }
 
   void _submit() {
-    if (_form.currentState!.validate()) {
-      Navigator.pop(context, (
-        address: _address.text.trim(),
-        password: _password.text,
-      ));
+    final address = _address.text.trim();
+    final endpoint = Uri.tryParse('tcp://$address');
+    final validAddress =
+        endpoint != null &&
+        endpoint.host.isNotEmpty &&
+        endpoint.path.isEmpty &&
+        endpoint.userInfo.isEmpty &&
+        !endpoint.hasQuery &&
+        !endpoint.hasFragment &&
+        (!endpoint.hasPort || (endpoint.port >= 1 && endpoint.port <= 65535));
+    setState(() {
+      _addressError = validAddress ? null : '请输入有效的电脑地址，可附加端口';
+      _passwordError = _password.text.isEmpty ? '请输入连接密码' : null;
+    });
+    if (_addressError == null && _passwordError == null) {
+      Navigator.pop(context, (address: address, password: _password.text));
     }
   }
 
   @override
-  Widget build(BuildContext context) => Form(
-    key: _form,
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Text(
-          '局域网连接',
-          textAlign: TextAlign.center,
-          style: Theme.of(context).textTheme.titleLarge,
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Text(
+        '局域网连接',
+        textAlign: TextAlign.center,
+        style: Theme.of(context).textTheme.titleLarge,
+      ),
+      const SizedBox(height: 8),
+      Text(
+        '输入电脑端显示的地址和连接密码',
+        textAlign: TextAlign.center,
+        style: TextStyle(color: context.muted),
+      ),
+      const SizedBox(height: 20),
+      KInput(
+        controller: _address,
+        label: '电脑地址',
+        hint: '192.168.1.10:21118',
+        error: _addressError,
+        keyboardType: TextInputType.url,
+        textInputAction: TextInputAction.next,
+        onSubmitted: (_) => _passwordFocus.requestFocus(),
+        onChanged: (_) {
+          if (_addressError != null) setState(() => _addressError = null);
+        },
+      ),
+      const SizedBox(height: 12),
+      KInput(
+        controller: _password,
+        focusNode: _passwordFocus,
+        label: '连接密码',
+        error: _passwordError,
+        obscureText: _obscure,
+        textInputAction: TextInputAction.done,
+        onSubmitted: (_) => _submit(),
+        onChanged: (_) {
+          if (_passwordError != null) setState(() => _passwordError = null);
+        },
+        trailing: KIconButton(
+          tooltip: _obscure ? '显示密码' : '隐藏密码',
+          onPressed: () => setState(() => _obscure = !_obscure),
+          icon: Icon(_obscure ? CupertinoIcons.eye : CupertinoIcons.eye_slash),
         ),
-        const SizedBox(height: 8),
-        Text(
-          '输入电脑端显示的地址和连接密码',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: context.muted),
-        ),
-        const SizedBox(height: 20),
-        TextFormField(
-          autofocus: true,
-          controller: _address,
-          keyboardType: TextInputType.url,
-          textInputAction: TextInputAction.next,
-          autocorrect: false,
-          decoration: const InputDecoration(
-            labelText: '电脑地址',
-            hintText: '192.168.1.10:21118',
-            border: OutlineInputBorder(),
-          ),
-          validator: (value) {
-            final endpoint = Uri.tryParse('tcp://${value?.trim() ?? ''}');
-            return endpoint == null ||
-                    endpoint.host.isEmpty ||
-                    endpoint.path.isNotEmpty ||
-                    endpoint.userInfo.isNotEmpty ||
-                    endpoint.hasQuery ||
-                    endpoint.hasFragment ||
-                    (endpoint.hasPort &&
-                        (endpoint.port < 1 || endpoint.port > 65535))
-                ? '请输入有效的电脑地址，可附加端口'
-                : null;
-          },
-        ),
-        const SizedBox(height: 12),
-        TextFormField(
-          controller: _password,
-          obscureText: _obscure,
-          textInputAction: TextInputAction.done,
-          autocorrect: false,
-          enableSuggestions: false,
-          onFieldSubmitted: (_) => _submit(),
-          decoration: InputDecoration(
-            labelText: '连接密码',
-            border: const OutlineInputBorder(),
-            suffixIcon: IconButton(
-              tooltip: _obscure ? '显示密码' : '隐藏密码',
-              onPressed: () => setState(() => _obscure = !_obscure),
-              icon: Icon(
-                _obscure ? CupertinoIcons.eye : CupertinoIcons.eye_slash,
-              ),
-            ),
-          ),
-          validator: (value) =>
-              value == null || value.isEmpty ? '请输入连接密码' : null,
-        ),
-        const SizedBox(height: 16),
-        FilledButton(onPressed: _submit, child: const Text('连接')),
-      ],
-    ),
+      ),
+      const SizedBox(height: 16),
+      KButton(label: '连接', onTap: _submit),
+      KButton(
+        label: '取消',
+        variant: KButtonVariant.text,
+        onTap: () => Navigator.pop(context),
+      ),
+    ],
   );
 }

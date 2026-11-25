@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../activity_history.dart';
 import '../mobile_services.dart';
 import '../touch_controller.dart';
 import 'common.dart';
@@ -19,12 +20,14 @@ class RemotePage extends StatefulWidget {
     required this.computer,
     required this.session,
     required this.settings,
+    required this.history,
     this.viewOnly = false,
   });
 
   final Computer computer;
   final RemoteSession session;
   final MobileSettings settings;
+  final ActivityHistory history;
   final bool viewOnly;
 
   @override
@@ -41,6 +44,9 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   final _input = FocusNode();
   final _surface = ValueNotifier(0);
   Timer? _hold;
+  DateTime? _connectedAt;
+  final _connectedClock = Stopwatch();
+  ConnectionPath? _connectionPath;
   Timer? _captionTimer;
   Timer? _imeDismiss;
   _Panel? _panel;
@@ -93,22 +99,21 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   }
 
   Future<void> _instructions() async {
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('远程手势'),
-        content: const SingleChildScrollView(
-          child: Text(
-            '触控板\n单指滑动移动光标，轻点左键。双指轻点右键、滑动滚动。按住再滑动可拖拽。\n\n'
-            '直接点按\n轻点左键，长按右键。双指捏合缩放，双指滑动平移画面或滚动。\n\n'
-            '点开悬浮球可切换模式，或再次打开此说明。',
-          ),
+    await kDialog<void>(
+      context,
+      builder: (context) => KDialog(
+        title: '远程手势',
+        content: const Text(
+          '触控板：单指移动光标，轻点左键。双指轻点右键、滑动滚动。按住再滑动可拖拽。\n\n'
+          '直接点按：轻点左键，长按右键。双指捏合缩放，双指滑动平移画面或滚动。\n\n'
+          '点开悬浮球可切换模式，或再次打开说明。',
+          textAlign: TextAlign.start,
         ),
         actions: [
-          FilledButton(
+          KButton(
             key: const ValueKey('gestures-done'),
-            onPressed: () => Navigator.pop(context),
-            child: const Text('知道了'),
+            label: '知道了',
+            onTap: () => Navigator.pop(context),
           ),
         ],
       ),
@@ -118,11 +123,37 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
 
   void _sessionChanged() {
     if (!mounted) return;
-    if (widget.session.status.phase == RemotePhase.ended) {
+    final status = widget.session.status;
+    if (status.phase == RemotePhase.connected) {
+      _connectedAt ??= DateTime.now();
+      _connectedClock.start();
+      _connectionPath = status.path;
+    }
+    if (status.phase == RemotePhase.ended) {
+      _recordConnection();
       _touch.cancel();
       _closeKeyboard();
     }
     setState(() {});
+  }
+
+  void _recordConnection() {
+    final start = _connectedAt;
+    final path = _connectionPath;
+    if (start == null || path == null) return;
+    _connectedAt = null;
+    _connectedClock.stop();
+    final entry = (
+      computer: widget.computer.name,
+      start: start,
+      duration: _connectedClock.elapsed,
+      path: path.label,
+    );
+    final history = widget.history;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(history.recordConnection(entry));
+    });
+    WidgetsBinding.instance.ensureVisualUpdate();
   }
 
   @override
@@ -163,6 +194,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     _surface.dispose();
     _input.dispose();
     widget.session.removeListener(_sessionChanged);
+    _recordConnection();
     unawaited(_leave());
     super.dispose();
   }
@@ -272,7 +304,10 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
             return Stack(
               fit: StackFit.expand,
               children: [
-                Positioned.fill(bottom: displayBottom, child: _desktop()),
+                Positioned.fill(
+                  bottom: displayBottom,
+                  child: _desktop(size.height),
+                ),
                 if (_panel != null)
                   Positioned.fill(
                     child: GestureDetector(
@@ -338,13 +373,13 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     ),
   );
 
-  Widget _desktop() => LayoutBuilder(
+  Widget _desktop(double fullHeight) => LayoutBuilder(
     builder: (context, constraints) {
       final width = constraints.maxWidth;
       final height = constraints.maxHeight;
       if (width <= 0 || height <= 0) return const SizedBox.shrink();
       final ratio = widget.session.aspectRatio;
-      final fitWidth = math.min(width, height * ratio);
+      final fitWidth = math.min(width, fullHeight * ratio);
       _touch.layout(Point(width, height), Point(fitWidth, fitWidth / ratio));
       return Listener(
         behavior: HitTestBehavior.opaque,
@@ -367,6 +402,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                     top: origin.y,
                     width: size.x,
                     height: size.y,
+                    key: const ValueKey('remote-video-frame'),
                     child: video!,
                   ),
                   if (!widget.viewOnly &&
@@ -396,22 +432,17 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     final status = widget.session.status;
     final ended = status.phase == RemotePhase.ended;
     return Center(
-      child: Material(
-        color: const Color(0xed24242b),
-        borderRadius: BorderRadius.circular(18),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: context.card,
+          borderRadius: BorderRadius.circular(14),
+        ),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(24, 18, 24, 13),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (!ended)
-                const SizedBox.square(
-                  dimension: 22,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: Colors.white,
-                  ),
-                ),
+              if (!ended) const KLoader(radius: 11),
               if (!ended) const SizedBox(height: 13),
               Text(
                 ended
@@ -420,14 +451,12 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                               widget.computer.confirmOnHost
                           ? '等待电脑确认…'
                           : '正在连接…'),
-                style: const TextStyle(color: Colors.white, fontSize: 15),
+                style: TextStyle(color: context.ink, fontSize: 15),
               ),
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: Text(
-                  ended ? '返回设备' : '取消',
-                  style: const TextStyle(color: Color(0xff91bdff)),
-                ),
+              KButton(
+                variant: KButtonVariant.text,
+                onTap: () => Navigator.pop(context),
+                label: ended ? '返回设备' : '取消',
               ),
             ],
           ),
@@ -542,8 +571,8 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     borderRadius: BorderRadius.circular(18),
     child: BackdropFilter(
       filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-      child: Material(
-        color: const Color(0xe5202029),
+      child: ColoredBox(
+        color: context.card.withValues(alpha: .92),
         child: ConstrainedBox(
           constraints: BoxConstraints(maxHeight: maxHeight),
           child: SingleChildScrollView(
@@ -567,7 +596,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
       case _Panel.menu:
         return [
           _ConnectionStatus(session.status),
-          const Divider(color: Colors.white24, thickness: .5, height: 1),
+          const KRule(),
           _row(
             '键盘',
             CupertinoIcons.keyboard,
@@ -716,19 +745,22 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     IconData icon, {
     String? key,
     String? trailing,
-    Color color = Colors.white,
+    Color? color,
     VoidCallback? onTap,
-  }) => InkWell(
+  }) => KPress(
     key: key == null ? null : ValueKey(key),
     onTap: onTap,
-    borderRadius: BorderRadius.circular(8),
     child: Padding(
       padding: const EdgeInsets.symmetric(horizontal: 5),
       child: SizedBox(
         height: 39,
         child: Row(
           children: [
-            Icon(icon, size: 17, color: onTap == null ? Colors.white38 : color),
+            Icon(
+              icon,
+              size: 17,
+              color: onTap == null ? context.muted : color ?? context.ink,
+            ),
             const SizedBox(width: 10),
             Expanded(
               child: Text(
@@ -736,14 +768,14 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                 maxLines: 1,
                 style: TextStyle(
                   fontSize: 14,
-                  color: onTap == null ? Colors.white38 : color,
+                  color: onTap == null ? context.muted : color ?? context.ink,
                 ),
               ),
             ),
             if (trailing != null)
               Text(
                 trailing,
-                style: const TextStyle(color: Colors.white60, fontSize: 12),
+                style: TextStyle(color: context.muted, fontSize: 12),
               ),
           ],
         ),
@@ -753,36 +785,43 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
 
   Future<void> _clipboard() async {
     setState(() => _panel = null);
-    final send = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('剪贴板'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('复制到手机'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('发送到电脑'),
-          ),
+    final send = await appSheet<bool>(
+      context,
+      (context) => KOptionGroup(
+        title: '剪贴板',
+        children: [
+          KRow(title: '复制到手机', onTap: () => Navigator.pop(context, false)),
+          KRow(title: '发送到电脑', onTap: () => Navigator.pop(context, true)),
         ],
       ),
+      grouped: true,
     );
     if (send == null || !mounted) return;
     try {
+      final String text;
       if (send) {
         final item = await Clipboard.getData(Clipboard.kTextPlain);
         if (!mounted) return;
-        await widget.session.writeClipboard(item?.text ?? '');
+        text = item?.text ?? '';
+        await widget.session.writeClipboard(text);
       } else {
-        final text = await widget.session.readClipboard();
+        text = await widget.session.readClipboard();
         if (!mounted) return;
         await Clipboard.setData(ClipboardData(text: text));
       }
-      if (mounted) _brief(send ? '已发送到电脑剪贴板' : '已复制到手机剪贴板');
+      if (!mounted) return;
+      widget.history.recordClipboard((
+        computer: widget.computer.name,
+        time: DateTime.now(),
+        text: text,
+      ));
+      KNotice.show(
+        context,
+        send ? '已发送到电脑剪贴板' : '已复制到手机剪贴板',
+        kind: KNoticeKind.success,
+      );
     } on Exception {
-      if (mounted) _brief('无法访问剪贴板');
+      if (mounted) KNotice.show(context, '无法访问剪贴板', kind: KNoticeKind.error);
     }
   }
 }
@@ -818,7 +857,7 @@ class _ConnectionStatus extends StatelessWidget {
           Expanded(
             child: Text(
               label,
-              style: const TextStyle(color: Colors.white70, fontSize: 13),
+              style: TextStyle(color: context.muted, fontSize: 13),
             ),
           ),
         ],

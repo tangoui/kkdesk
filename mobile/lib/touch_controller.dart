@@ -101,6 +101,7 @@ class TouchController {
     _viewport = viewport;
     _desktop = fittedDesktop;
     _positionAt(Point((viewport.x - size.x) / 2, (viewport.y - size.y) / 2));
+    _followCursor();
   }
 
   void down(int finger, Point<double> point) {
@@ -258,6 +259,7 @@ class TouchController {
       Point(value.x.clamp(0.0, 1.0), value.y.clamp(0.0, 1.0));
 
   void _click(Point<double> position, MouseButton button) {
+    _cursor = position;
     send(PointerButton(position, button, true));
     send(PointerButton(position, button, false));
   }

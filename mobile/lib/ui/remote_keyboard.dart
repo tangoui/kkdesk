@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../mobile_services.dart';
+import 'kit/kit.dart';
 
 class RemoteKeys {
   RemoteKeys(this.session);
@@ -120,7 +121,7 @@ class RemoteKeyboardBar extends StatelessWidget {
       ('→', 0x4f),
       for (var index = 0; index < 12; index++) ('F${index + 1}', 0x3a + index),
     ];
-    return Material(
+    return ColoredBox(
       color: const Color(0xff25252c),
       child: SizedBox(
         height: 47,
@@ -137,21 +138,14 @@ class RemoteKeyboardBar extends StatelessWidget {
                   final latched = hid < 0 && keys.modifiers & -hid != 0;
                   return Semantics(
                     selected: hid < 0 ? latched : null,
-                    child: TextButton(
-                      style: TextButton.styleFrom(
-                        fixedSize: const Size.fromHeight(37),
-                        minimumSize: const Size(39, 36),
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        foregroundColor: Colors.white,
-                        backgroundColor: latched
-                            ? const Color(0xff166edb)
-                            : const Color(0xff3b3b45),
-                      ),
-                      onPressed: () {
+                    child: KButton(
+                      label: label,
+                      compact: true,
+                      ink: Colors.white,
+                      fill: latched
+                          ? const Color(0xff166edb)
+                          : const Color(0xff3b3b45),
+                      onTap: () {
                         if (hid >= 0) {
                           keys.press(hid);
                         } else {
@@ -159,13 +153,12 @@ class RemoteKeyboardBar extends StatelessWidget {
                           changed();
                         }
                       },
-                      child: Text(label, style: const TextStyle(fontSize: 13)),
                     ),
                   );
                 },
               ),
             ),
-            IconButton(
+            KIconButton(
               tooltip: '收起键盘',
               color: Colors.white,
               onPressed: close,

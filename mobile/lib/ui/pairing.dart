@@ -89,17 +89,18 @@ class _ScanPageState extends State<ScanPage> {
         if (result != null) {
           _finish(result);
         } else {
-          ScaffoldMessenger.of(
+          KNotice.show(
             context,
-          ).showSnackBar(const SnackBar(content: Text('相册图片中没有 kkdesk 配对二维码')));
+            '相册图片中没有 kkdesk 配对二维码',
+            kind: KNoticeKind.error,
+          );
         }
       } finally {
         await temporary?.dispose();
       }
     } on Exception {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('无法读取这张照片')));
+        KNotice.show(context, '无法读取这张照片', kind: KNoticeKind.error);
       }
     } finally {
       if (mounted && !_finishing) setState(() => _busy = false);
@@ -314,11 +315,12 @@ class _ScanAction extends StatelessWidget {
   final bool wide;
 
   @override
-  Widget build(BuildContext context) => Material(
-    color: Colors.white.withValues(alpha: .16),
-    borderRadius: BorderRadius.circular(wide ? 14 : 25),
-    child: InkWell(
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      color: Colors.white.withValues(alpha: .16),
       borderRadius: BorderRadius.circular(wide ? 14 : 25),
+    ),
+    child: KPress(
       onTap: onTap,
       child: Tooltip(
         message: wide ? '' : label,
@@ -441,7 +443,7 @@ class _ManualCodeState extends State<_ManualCode> {
         textAlign: TextAlign.center,
       ),
       const SizedBox(height: 18),
-      TextField(
+      KInput(
         key: const ValueKey('pair-code'),
         autofocus: true,
         controller: _controller,
@@ -454,15 +456,12 @@ class _ManualCodeState extends State<_ManualCode> {
         onSubmitted: (_) => _submit(),
         textInputAction: TextInputAction.done,
         textAlign: TextAlign.center,
-        decoration: const InputDecoration(
-          hintText: '00000000',
-          border: OutlineInputBorder(),
-        ),
+        hint: '00000000',
       ),
       const SizedBox(height: 14),
-      FilledButton(
-        onPressed: _controller.text.length == 8 ? _submit : null,
-        child: const Text('继续'),
+      KButton(
+        label: '继续',
+        onTap: _controller.text.length == 8 ? _submit : null,
       ),
     ],
   );
@@ -583,13 +582,7 @@ class PairVerification extends StatelessWidget {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  SizedBox.square(
-                    dimension: 16,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: context.action,
-                    ),
-                  ),
+                  const KLoader(),
                   const SizedBox(width: 9),
                   Text(
                     '等待电脑确认…',
@@ -604,15 +597,16 @@ class PairVerification extends StatelessWidget {
           else
             SizedBox(
               width: double.infinity,
-              child: FilledButton(
-                onPressed: () => Navigator.pop(context, status),
-                child: Text(success ? '完成' : '重新扫码'),
+              child: KButton(
+                onTap: () => Navigator.pop(context, status),
+                label: success ? '完成' : '重新扫码',
               ),
             ),
           if (!success)
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('取消'),
+            KButton(
+              onTap: () => Navigator.pop(context),
+              label: '取消',
+              variant: KButtonVariant.text,
             ),
         ],
       );

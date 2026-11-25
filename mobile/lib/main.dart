@@ -1,4 +1,4 @@
-import 'dart:async';
+import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -12,6 +12,7 @@ import 'ui/devices.dart';
 import 'ui/pairing.dart';
 import 'ui/remote.dart';
 import 'ui/settings.dart';
+import 'ui/transfers.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -80,14 +81,7 @@ class _KkdeskAppState extends State<KkdeskApp> with WidgetsBindingObserver {
     scaffoldBackgroundColor: brightness == Brightness.dark
         ? Colors.black
         : const Color(0xfff2f2f7),
-    filledButtonTheme: FilledButtonThemeData(
-      style: FilledButton.styleFrom(
-        backgroundColor: const Color(0xff0865e0),
-        foregroundColor: Colors.white,
-        minimumSize: const Size(0, 49),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
-      ),
-    ),
+    splashFactory: NoSplash.splashFactory,
   );
 
   @override
@@ -155,7 +149,7 @@ class _AppLockState extends State<_AppLock> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(CupertinoIcons.lock_shield, color: context.action, size: 76),
+            Image.asset('assets/kkdesk_mark.png', width: 72, height: 72),
             const SizedBox(height: 16),
             const PageTitle('kkdesk 已锁定'),
             const SizedBox(height: 10),
@@ -164,9 +158,9 @@ class _AppLockState extends State<_AppLock> {
               style: TextStyle(color: context.muted),
             ),
             const SizedBox(height: 24),
-            FilledButton(
-              onPressed: _busy ? null : _unlock,
-              child: const Text('解锁'),
+            SizedBox(
+              width: 180,
+              child: KButton(label: '解锁', onTap: _busy ? null : _unlock),
             ),
           ],
         ),
@@ -187,8 +181,6 @@ class _Home extends StatefulWidget {
 class _HomeState extends State<_Home> {
   int _tab = 0;
   bool _connecting = false;
-  Computer? _paired;
-  Timer? _toast;
   MobileServices get _services => widget.services;
 
   @override
@@ -205,17 +197,21 @@ class _HomeState extends State<_Home> {
     }
   }
 
-  @override
-  void dispose() {
-    _toast?.cancel();
-    super.dispose();
-  }
-
   Future<bool> _authorize(String reason) async {
+    final confirmed = await kConfirm(
+      context,
+      title: '验证身份',
+      message: '$reason。请使用面容 ID 或指纹。',
+      confirm: '继续验证',
+    );
+    if (confirmed != true || !mounted) return false;
     final authorized = await widget.auth(reason);
     if (!authorized && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('生物识别未通过。请重试，或在系统设置中录入面容或指纹。')),
+      KNotice.show(
+        context,
+        '生物识别未通过',
+        detail: '请重试，或在系统设置中录入面容或指纹。',
+        kind: KNoticeKind.error,
       );
     }
     return authorized;
@@ -253,21 +249,19 @@ class _HomeState extends State<_Home> {
       if (result == PairStatus.success) {
         await _services.devices.add(request.computer);
         if (!mounted) return;
-        _toast?.cancel();
-        setState(() {
-          _tab = 0;
-          _paired = request.computer;
-        });
-        _toast = Timer(const Duration(seconds: 4), () {
-          if (mounted) setState(() => _paired = null);
-        });
+        setState(() => _tab = 0);
+        KNotice.show(
+          context,
+          '已配对',
+          detail: '${request.computer.name} 已加入设备列表',
+          kind: KNoticeKind.success,
+        );
       } else if (result != null) {
         await _scan();
       }
     } on FormatException catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(error.message)));
+        KNotice.show(context, error.message, kind: KNoticeKind.error);
       }
     }
   }
@@ -276,25 +270,24 @@ class _HomeState extends State<_Home> {
     FocusScope.of(context).unfocus();
     final action = await appSheet<bool>(
       context,
-      (context) => Column(
-        mainAxisSize: MainAxisSize.min,
+      (context) => KOptionGroup(
+        title: '添加电脑',
         children: [
-          Text('添加电脑', style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 10),
-          ListTile(
+          KRow(
+            title: '扫码配对',
             leading: Icon(CupertinoIcons.viewfinder, color: context.action),
-            title: const Text('扫码配对'),
-            trailing: const Icon(CupertinoIcons.chevron_right, size: 17),
+            chevron: true,
             onTap: () => Navigator.pop(context, true),
           ),
-          ListTile(
+          KRow(
+            title: '局域网地址 + 密码',
             leading: Icon(CupertinoIcons.link, color: context.action),
-            title: const Text('局域网地址 + 密码'),
-            trailing: const Icon(CupertinoIcons.chevron_right, size: 17),
+            chevron: true,
             onTap: () => Navigator.pop(context, false),
           ),
         ],
       ),
+      grouped: true,
     );
     if (!mounted || action == null) return;
     if (action) {
@@ -350,6 +343,7 @@ class _HomeState extends State<_Home> {
         computer: computer,
         session: session,
         settings: _services.settings,
+        history: _services.history,
         viewOnly: viewOnly,
       ),
     ),
@@ -369,61 +363,67 @@ class _HomeState extends State<_Home> {
             ),
     child: Scaffold(
       backgroundColor: context.background,
+      extendBody: true,
       body: SafeArea(
         bottom: false,
-        child: Stack(
+        child: IndexedStack(
+          index: _tab,
           children: [
-            IndexedStack(
-              index: _tab,
-              children: [
-                DevicesPage(
-                  devices: _services.devices,
-                  scan: _scan,
-                  add: _add,
-                  connect: _connect,
-                ),
-                SettingsPage(services: _services, authenticate: _authorize),
-              ],
+            DevicesPage(
+              devices: _services.devices,
+              scan: _scan,
+              add: _add,
+              connect: _connect,
             ),
-            if (_tab == 0 && _paired != null)
-              Positioned(
-                top: 5,
-                left: 21,
-                right: 21,
-                child: _PairedBanner(
-                  computer: _paired!,
-                  dismiss: () => setState(() => _paired = null),
-                ),
-              ),
+            TransfersPage(history: _services.history),
+            SettingsPage(services: _services, authenticate: _authorize),
           ],
         ),
       ),
-      bottomNavigationBar: DecoratedBox(
-        decoration: BoxDecoration(
-          color: context.card,
-          border: Border(top: BorderSide(color: context.line)),
-        ),
-        child: SafeArea(
-          top: false,
-          child: Row(
-            children: [
-              _tabItem(0, '设备', CupertinoIcons.device_desktop),
-              _tabItem(1, '我的', CupertinoIcons.person),
-            ],
+      bottomNavigationBar: ClipRect(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+          child: ColoredBox(
+            color: context.card.withValues(alpha: .82),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const KRule(),
+                SafeArea(
+                  top: false,
+                  child: Row(
+                    children: [
+                      _tabItem(
+                        0,
+                        '设备',
+                        CupertinoIcons.device_desktop,
+                        'devices-tab',
+                      ),
+                      _tabItem(
+                        1,
+                        '传输',
+                        CupertinoIcons.arrow_right_arrow_left,
+                        'transfers-tab',
+                      ),
+                      _tabItem(2, '我的', CupertinoIcons.person, 'mine-tab'),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
     ),
   );
 
-  Widget _tabItem(int index, String title, IconData icon) {
+  Widget _tabItem(int index, String title, IconData icon, String key) {
     final color = _tab == index ? context.action : context.muted;
     return Expanded(
       child: Semantics(
-        key: ValueKey(index == 0 ? 'devices-tab' : 'mine-tab'),
+        key: ValueKey(key),
         selected: _tab == index,
-        button: true,
-        child: InkWell(
+        child: KPress(
           onTap: () {
             FocusScope.of(context).unfocus();
             setState(() => _tab = index);
@@ -433,7 +433,7 @@ class _HomeState extends State<_Home> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(icon, color: color, size: 25),
+                Icon(icon, color: color, size: 24),
                 const SizedBox(height: 4),
                 Text(
                   title,
@@ -450,35 +450,4 @@ class _HomeState extends State<_Home> {
       ),
     );
   }
-}
-
-class _PairedBanner extends StatelessWidget {
-  const _PairedBanner({required this.computer, required this.dismiss});
-  final Computer computer;
-  final VoidCallback dismiss;
-
-  @override
-  Widget build(BuildContext context) => Material(
-    elevation: 9,
-    shadowColor: Colors.black26,
-    color: context.card,
-    borderRadius: BorderRadius.circular(17),
-    child: ListTile(
-      leading: const CircleAvatar(
-        radius: 17,
-        backgroundColor: green,
-        child: Icon(CupertinoIcons.check_mark, color: Colors.white, size: 19),
-      ),
-      title: const Text('已配对', style: TextStyle(fontWeight: FontWeight.w700)),
-      subtitle: Text(
-        '${computer.name} 已加入设备列表',
-        style: TextStyle(color: context.muted, fontSize: 12),
-      ),
-      trailing: IconButton(
-        tooltip: '关闭提示',
-        onPressed: dismiss,
-        icon: Icon(CupertinoIcons.xmark, size: 16, color: context.muted),
-      ),
-    ),
-  );
 }
