@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/tangoui/kkdesk/internal/clipsync"
 	"github.com/tangoui/kkdesk/internal/codec"
 	"github.com/tangoui/kkdesk/internal/display"
 	"github.com/tangoui/kkdesk/internal/files"
@@ -40,6 +41,9 @@ type ViewerConfig struct {
 	FPS        int
 	BitrateBps int
 	Remote     rendezvous.Config
+	// Clipboard is the local clipboard, synced with the host's while
+	// controlling (not view-only, not files-only); nil disables syncing.
+	Clipboard clipsync.Clipboard
 }
 
 // ViewerPhase is the viewer's connection state.
@@ -220,6 +224,8 @@ func (v *Viewer) Connect(ctx context.Context) error {
 	fps, bps := v.fps, v.bitrate
 	v.mu.Unlock()
 	p.OnVideo(v.video)
+	stopClip := v.syncClipboard(p)
+	go func() { <-p.Done(); stopClip() }()
 	go v.watch(p)
 	addSession(v)
 	if !v.cfg.FilesOnly && (v.cfg.FPS > 0 || v.cfg.BitrateBps > 0) {
@@ -262,6 +268,24 @@ func unreachable(err error) bool {
 	}
 	var errno syscall.Errno
 	return errors.As(err, &errno) && (errno == 10065 || errno == 10051)
+}
+
+// syncClipboard keeps this clipboard and the host's in step while
+// controlling; the returned function stops it. The host has the final say
+// (its 剪贴板 permission).
+func (v *Viewer) syncClipboard(p *session.Peer) (stop func()) {
+	if v.cfg.Clipboard == nil || v.cfg.FilesOnly {
+		return func() {}
+	}
+	cs := clipsync.Start(clipsync.Options{
+		Local:   v.cfg.Clipboard,
+		Send:    p.SendClipboard,
+		Allowed: func() bool { return !v.ViewOnly() },
+		MaxLen:  session.MaxClipboard,
+		Logf:    func(format string, args ...any) { log.Printf("kkdesk viewer: "+format, args...) },
+	})
+	p.OnClipboard(cs.Receive)
+	return func() { p.OnClipboard(nil); cs.Stop() }
 }
 
 func (v *Viewer) watch(p *session.Peer) {

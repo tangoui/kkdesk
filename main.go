@@ -105,7 +105,12 @@ func run(o options) error {
 		}
 	}
 	store := openStore()
-	host := app.NewHost(hostConfig(o, store, logw), func() { invalidate() })
+	board := &appui.Clipboard{} // the app is set once it exists
+	hcfg := hostConfig(o, store, logw)
+	if !o.host { // measurement runs leave the clipboard alone
+		hcfg.Clipboard = board
+	}
+	host := app.NewHost(hcfg, func() { invalidate() })
 
 	// Never prompt for permissions here (measurement runs); explain instead.
 	if o.host {
@@ -139,11 +144,12 @@ func run(o options) error {
 
 	quit := true // closing the last window quits, on macOS too
 	a := tango.New(tango.Options{Name: "kkdesk", ID: "com.kkdesk.desktop", QuitOnLastClose: &quit})
+	board.SetApp(a)
 
 	var viewer *app.Viewer
 	openMain := func(hidden bool, errMsg string) {
 		m, err := appui.OpenMain(appui.MainOptions{
-			App: a, Host: host, Store: store, Form: &st.Form, ViewerLog: logw,
+			App: a, Host: host, Store: store, Form: &st.Form, ViewerLog: logw, Clipboard: board,
 			ViewOnly: o.viewOnly, Hidden: hidden, Error: errMsg,
 		})
 		if err != nil {
@@ -158,7 +164,7 @@ func run(o options) error {
 		}
 		settings := store.Settings()
 		viewer = app.NewViewer(app.ViewerConfig{Addr: o.connect, Password: o.password, ViewOnly: o.viewOnly, FilesOnly: o.files, Log: logw,
-			Remote: rendezvous.Config{URL: settings.RemoteURL, Token: settings.RemoteToken}}, nil)
+			Remote: rendezvous.Config{URL: settings.RemoteURL, Token: settings.RemoteToken}, Clipboard: board}, nil)
 		go func() {
 			if err := viewer.Connect(context.Background()); err != nil {
 				fmt.Fprintln(os.Stderr, "kkdesk:", err)

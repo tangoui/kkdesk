@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/tangoui/kkdesk/internal/capture"
+	"github.com/tangoui/kkdesk/internal/clipsync"
 	"github.com/tangoui/kkdesk/internal/codec"
 	"github.com/tangoui/kkdesk/internal/config"
 	"github.com/tangoui/kkdesk/internal/files"
@@ -63,6 +64,10 @@ type HostConfig struct {
 	// system refused the configured one (to save it, so the next start
 	// listens there directly and the address stays the same).
 	OnPortMoved func(port int)
+	// Clipboard is the local clipboard, synced with the controller's
+	// during remote control while the 剪贴板 permission is on; nil
+	// disables syncing.
+	Clipboard   clipsync.Clipboard
 	FPS         int // capture frame rate
 	MaxWidth    int // capture width limit; 0 = native
 	BitrateMbps int // 0 = auto
@@ -107,6 +112,9 @@ type HostState struct {
 	RemoteCode string
 	RemoteErr  string
 	RemotePeer bool
+	// ClipboardAccess: the clipboard is synced with the controller's (the
+	// 剪贴板 permission).
+	ClipboardAccess bool
 }
 
 // Host accepts controllers and streams this screen to one at a time. Its
@@ -139,6 +147,7 @@ type Host struct {
 	remotePeer bool
 
 	fileAccess atomic.Bool // the 文件传输 permission; on by default
+	clipAccess atomic.Bool // the 剪贴板 permission; on by default
 }
 
 // NewHost returns a host that is not listening yet (see SetEnabled). notify
@@ -164,6 +173,7 @@ func NewHost(cfg HostConfig, notify func()) *Host {
 		h.remote.code = rendezvous.NewCode()
 	}
 	h.fileAccess.Store(true)
+	h.clipAccess.Store(true)
 	h.mu.Lock()
 	if cfg.Password == "" {
 		h.newPasswordLocked()
@@ -305,6 +315,37 @@ func (h *Host) SetFileAccess(on bool) {
 	h.notify()
 }
 
+// ClipboardAccess reports whether the clipboard is synced with the
+// controller's.
+func (h *Host) ClipboardAccess() bool { return h.clipAccess.Load() }
+
+// SetClipboardAccess turns the 剪贴板 permission on or off; it applies to
+// the next change of either clipboard.
+func (h *Host) SetClipboardAccess(on bool) {
+	if h.clipAccess.Swap(on) == on {
+		return
+	}
+	log.Printf("kkdesk host: clipboard access %v", on)
+	h.notify()
+}
+
+// syncClipboard keeps this clipboard and the controller's in step during a
+// remote control session; call the returned function when it ends.
+func (h *Host) syncClipboard(p *session.Peer) (stop func()) {
+	if h.cfg.Clipboard == nil {
+		return func() {}
+	}
+	cs := clipsync.Start(clipsync.Options{
+		Local:   h.cfg.Clipboard,
+		Send:    p.SendClipboard,
+		Allowed: h.clipAccess.Load,
+		MaxLen:  session.MaxClipboard,
+		Logf:    func(format string, args ...any) { log.Printf("kkdesk host: "+format, args...) },
+	})
+	p.OnClipboard(cs.Receive) // in order, on the meta channel goroutine
+	return func() { p.OnClipboard(nil); cs.Stop() }
+}
+
 // NewPassword returns a random 6-digit password.
 func NewPassword() string {
 	n, err := rand.Int(rand.Reader, big.NewInt(1_000_000))
@@ -367,7 +408,7 @@ func (h *Host) State() HostState {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	s := HostState{Phase: h.phase, Addrs: h.addrs, Port: Port, Password: h.password, Err: h.errMsg, Notice: h.notice,
-		FileAccess: h.fileAccess.Load(), Enabled: h.wantOn, PasswordSince: h.pwSince, Rotate: h.cfg.Rotate,
+		FileAccess: h.fileAccess.Load(), ClipboardAccess: h.clipAccess.Load(), Enabled: h.wantOn, PasswordSince: h.pwSince, Rotate: h.cfg.Rotate,
 		HasFixed: h.cfg.Fixed != "", AutoAccept: h.cfg.AutoAccept}
 	if h.remote.online {
 		s.RemoteCode = h.remote.code
@@ -723,7 +764,10 @@ func (h *Host) handle(p *session.Peer, remoteCtx context.Context) {
 	h.phase, h.since = HostActive, time.Now()
 	h.mu.Unlock()
 	h.notify()
-	if err := h.stream(p); err != nil {
+	stopClip := h.syncClipboard(p)
+	err := h.stream(p)
+	stopClip()
+	if err != nil {
 		h.setErr(err.Error())
 		log.Printf("kkdesk host: %v", err)
 		p.CloseWithReason("被控端出错：" + err.Error())

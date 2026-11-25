@@ -102,10 +102,7 @@ func (m *Main) sessionsPage(c *ui.Context, hs app.HostState) {
 					if !permShown(hs, p.label) {
 						continue
 					}
-					on := p.on
-					if p.label == permFiles {
-						on = hs.FileAccess
-					}
+					on, _ := permState(hs, p.label, p.on)
 					if on {
 						ui.Tag(c, p.label).Color("blue")
 					}

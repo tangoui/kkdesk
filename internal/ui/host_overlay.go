@@ -14,14 +14,39 @@ import (
 )
 
 // Permissions shown on the confirmation and the controlled panel.
-// 键盘鼠标 is always on and 文件传输 is the host's switch; 剪贴板 and 声音
-// do not exist yet and are shown off.
-const permFiles = "文件传输"
+// 键盘鼠标 is always on; 剪贴板 and 文件传输 are the host's switches; 声音
+// does not exist yet and is shown off.
+const (
+	permClipboard = "剪贴板"
+	permFiles     = "文件传输"
+)
 
 var perms = []struct {
 	label string
 	on    bool
-}{{"键盘鼠标", true}, {"剪贴板", false}, {permFiles, true}, {"声音", false}}
+}{{"键盘鼠标", true}, {permClipboard, true}, {permFiles, true}, {"声音", false}}
+
+// permState is whether a permission is on and whether the host's user can
+// switch it.
+func permState(hs app.HostState, label string, fixed bool) (on, toggle bool) {
+	switch label {
+	case permClipboard:
+		return hs.ClipboardAccess, true
+	case permFiles:
+		return hs.FileAccess, true
+	}
+	return fixed, false
+}
+
+// setPerm switches a permission (off the UI thread: it may stop transfers).
+func (m *Main) setPerm(label string, on bool) {
+	switch label {
+	case permClipboard:
+		go m.o.Host.SetClipboardAccess(on)
+	case permFiles:
+		go m.o.Host.SetFileAccess(on)
+	}
+}
 
 // permShown reports whether a permission applies to the session: a
 // files-only session shares no screen, so only 文件传输 is shown.
@@ -66,19 +91,14 @@ func (m *Main) confirm(c *ui.Context, hs app.HostState) {
 					if !permShown(hs, p.label) {
 						continue
 					}
-					if p.label == permFiles {
-						on := hs.FileAccess
-						if ui.Checkbox(c, p.label, &on).Changed() {
-							go m.o.Host.SetFileAccess(on)
-						}
-						continue
+					on, toggle := permState(hs, p.label, p.on)
+					if ui.Checkbox(c, p.label, &on).Disabled(!toggle).Changed() {
+						m.setPerm(p.label, on)
 					}
-					on := p.on
-					ui.Checkbox(c, p.label, &on).Disabled(true)
 				}
 			}, layout.GapXY(16, 8), layout.WrapItems())
 			if !hs.FilesOnly {
-				ui.Text(c, "剪贴板和声音暂未支持。").Size(12).Tertiary()
+				ui.Text(c, "声音暂未支持。剪贴板只同步文字。").Size(12).Tertiary()
 			}
 		}, layout.Gap(14), layout.Padding(insets(4, 0, 0, 0)))
 	})
@@ -110,14 +130,10 @@ func (m *Main) controlledPanel(c *ui.Context, hs app.HostState) {
 				if !permShown(hs, p.label) {
 					continue
 				}
-				if p.label == permFiles {
-					if permChip(c, p.label, hs.FileAccess, true) {
-						on := !hs.FileAccess
-						go m.o.Host.SetFileAccess(on)
-					}
-					continue
+				on, toggle := permState(hs, p.label, p.on)
+				if permChip(c, p.label, on, toggle) {
+					m.setPerm(p.label, !on)
 				}
-				permChip(c, p.label, p.on, false)
 			}
 		}, layout.GapXY(6, 6), layout.WrapItems())
 		ui.Row(c, func() {

@@ -84,6 +84,10 @@ type Peer struct {
 	onInput    func(input.Event)
 	onKeyframe func()
 	onQuality  func(Quality)
+	// onClipboard receives clipboard text; clip joins its chunks (meta
+	// channel callback only).
+	onClipboard func(string)
+	clip        clipAssembler
 	// pendingQuality is the latest request received before OnQuality.
 	pendingQuality *Quality
 	reason         string // close reason sent by the other side
@@ -246,6 +250,8 @@ func (p *Peer) handleMeta(msg webrtc.DataChannelMessage) {
 		p.shutdown()
 	case metaQuality:
 		p.handleQuality(b)
+	case metaClip:
+		p.handleClip(b)
 	case metaPing, metaPong:
 		p.handleClock(b)
 	case metaCapture:

@@ -27,6 +27,7 @@ import (
 	"github.com/tangoui/tango/uihost"
 
 	"github.com/tangoui/kkdesk/internal/app"
+	"github.com/tangoui/kkdesk/internal/clipsync"
 	"github.com/tangoui/kkdesk/internal/config"
 	"github.com/tangoui/kkdesk/internal/rendezvous"
 )
@@ -72,6 +73,7 @@ type MainOptions struct {
 	ViewOnly  bool          // force view-only for those sessions
 	Hidden    bool          // create the window hidden (-connect)
 	Error     string        // initial error shown on the form
+	Clipboard *Clipboard    // synced with the other side while controlling
 }
 
 // Main is the main window.
@@ -277,7 +279,8 @@ func (m *Main) connect(addr, pw, mode string) {
 	filesOnly := mode == modeTransfer
 	st := m.o.Store.Settings()
 	v := app.NewViewer(app.ViewerConfig{Addr: addr, Password: pw, ViewOnly: viewOnly, FilesOnly: filesOnly, Log: m.o.ViewerLog,
-		FPS: st.FPS, BitrateBps: st.BitrateMbps * 1_000_000, Remote: rendezvous.Config{URL: st.RemoteURL, Token: st.RemoteToken}}, nil)
+		Clipboard: m.clipboard(),
+		FPS:       st.FPS, BitrateBps: st.BitrateMbps * 1_000_000, Remote: rendezvous.Config{URL: st.RemoteURL, Token: st.RemoteToken}}, nil)
 	go func() {
 		err := v.Connect(context.Background())
 		m.mu.Lock()
@@ -314,6 +317,15 @@ func (m *Main) connect(addr, pw, mode string) {
 			m.Invalidate()
 		})
 	}()
+}
+
+// clipboard is the clipboard for viewers, or nil (a nil *Clipboard must not
+// become a non-nil interface).
+func (m *Main) clipboard() clipsync.Clipboard {
+	if m.o.Clipboard == nil {
+		return nil
+	}
+	return m.o.Clipboard
 }
 
 // addRecent records a successful connection. Main thread.
