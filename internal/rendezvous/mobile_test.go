@@ -1,10 +1,16 @@
 package rendezvous
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"errors"
+	"io"
+	"net"
+	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -159,7 +165,11 @@ func TestMobileFinalReplyRequiresGuestWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(broker)
+	reject := &atomic.Bool{}
+	rejected := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		broker.ServeHTTP(rejectFinalWriter{ResponseWriter: w, reject: reject, rejected: rejected}, r)
+	}))
 	defer server.Close()
 	cfg := Config{URL: server.URL, Token: strings.Repeat("a", 32)}
 	identity, err := pairing.Open(t.TempDir())
@@ -174,20 +184,9 @@ func TestMobileFinalReplyRequiresGuestWrite(t *testing.T) {
 	}
 	defer host.Close()
 	replies := make(chan error, 1)
-	entered := make(chan context.Context, 1)
-	proceed := make(chan struct{})
-	defer close(proceed)
 	go host.Serve(ctx, func(call context.Context, ex MobileExchange) {
-		request, err := ex.Receive(call)
-		if err != nil {
+		if _, err := ex.Receive(call); err != nil {
 			return
-		}
-		if request.Status == "disconnect" {
-			entered <- call
-			select {
-			case <-call.Done():
-			case <-proceed:
-			}
 		}
 		replies <- ex.Send(call, pairing.Message{Type: "result", Status: "committed"})
 	})
@@ -211,29 +210,58 @@ func TestMobileFinalReplyRequiresGuestWrite(t *testing.T) {
 		t.Fatal("missing guest delivery acknowledgement")
 	}
 	guest.Close()
-	disconnected, err := OpenMobile(ctx, cfg, identity.ID(), false)
+	failing, err := OpenMobile(ctx, cfg, identity.ID(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer disconnected.Close()
-	if err := disconnected.Send(ctx, pairing.Message{Type: "request", Status: "disconnect"}); err != nil {
+	defer failing.Close()
+	reject.Store(true)
+	if err := failing.Send(ctx, pairing.Message{Type: "request"}); err != nil {
 		t.Fatal(err)
 	}
 	select {
-	case <-entered:
+	case <-rejected:
 	case <-ctx.Done():
-		t.Fatal("request never reached host")
+		t.Fatal("relay never attempted the guest write")
 	}
-	disconnected.Close()
 	select {
 	case err := <-replies:
 		if err == nil {
-			t.Fatal("final reply was acknowledged after guest disconnected")
+			t.Fatal("final reply was acknowledged after the guest write failed")
 		}
 	case <-ctx.Done():
-		t.Fatal("host did not learn the guest disconnected")
+		t.Fatal("host did not learn the guest write failed")
 	}
 	if online, err := MobileOnline(ctx, cfg, identity.ID()); err != nil || !online {
-		t.Fatalf("guest disconnect dropped host: %v, %v", online, err)
+		t.Fatalf("guest write failure dropped host: %v, %v", online, err)
 	}
+}
+
+type rejectFinalWriter struct {
+	http.ResponseWriter
+	reject   *atomic.Bool
+	rejected chan<- struct{}
+}
+
+func (w rejectFinalWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	conn, rw, err := w.ResponseWriter.(http.Hijacker).Hijack()
+	if err != nil {
+		return nil, nil, err
+	}
+	rw.Writer.Reset(rejectFinalFrame{Writer: conn, reject: w.reject, rejected: w.rejected})
+	return conn, rw, nil
+}
+
+type rejectFinalFrame struct {
+	io.Writer
+	reject   *atomic.Bool
+	rejected chan<- struct{}
+}
+
+func (w rejectFinalFrame) Write(data []byte) (int, error) {
+	if bytes.Contains(data, []byte(`"status":"committed"`)) && w.reject.CompareAndSwap(true, false) {
+		w.rejected <- struct{}{}
+		return 0, io.ErrClosedPipe
+	}
+	return w.Writer.Write(data)
 }
