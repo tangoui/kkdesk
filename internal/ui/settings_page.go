@@ -117,7 +117,7 @@ func (m *Main) settingsPage(c *ui.Context, hs app.HostState) {
 		}, layout.W(160), layout.Padding(insets(4, 0, 4, 0)))
 		panel(c, func() {
 			ui.ConfigProvider(c).Theme(settingsTheme(c.Theme.Dark)).Body(func() {
-				f := ui.Form(c).LabelWidth(140)
+				f := ui.Form(c).LabelWidth(140).LabelAlign(ui.AlignStart)
 				f.Body(func() {
 					switch s.tab {
 					case "quality":
@@ -212,12 +212,21 @@ func (m *Main) securitySettings(c *ui.Context, f *ui.FormW, hs app.HostState) {
 
 // switchRow is a switch with its text; changed runs on a toggle.
 func switchRow(c *ui.Context, val *bool, label string, changed func(bool)) {
-	ui.Row(c, func() {
+	controlRow(c, func() {
 		if ui.Switch(c, val).A11yLabel(label).Changed() {
 			changed(*val)
 		}
 		ui.Text(c, label).Size(14)
-	}, layout.Gap(8), layout.Middle())
+	}, layout.Gap(8))
+}
+
+// controlRow lays out a form control shorter than the label line (a switch
+// is 22 px, the label line 32 px) in a row as tall as the label line and
+// centered in it, so the label and the control share a middle line instead
+// of the label sitting lower.
+func controlRow(c *ui.Context, fn func(), opts ...layout.Option) {
+	formTheme := c.ThemeFor(theme.CompForm).Components.Form
+	ui.Row(c, fn, append([]layout.Option{layout.H(formTheme.LabelHeight), layout.Middle()}, opts...)...)
 }
 
 func (m *Main) qualitySettings(c *ui.Context, f *ui.FormW) {
@@ -334,7 +343,7 @@ func (m *Main) generalSettings(c *ui.Context, f *ui.FormW) {
 		reveal = "在资源管理器中显示"
 	}
 	f.Item("配置文件").Help("设置和我的设备都保存在这个文件里，不会上传。").Body(func() {
-		ui.Row(c, func() {
+		controlRow(c, func() {
 			ui.Text(c, m.o.Store.Path()).Size(13).Secondary().Ellipsis().Layout(layout.Grow(1), layout.MinW(0))
 			if ui.Button(c, reveal).Small().Clicked() {
 				path, a := m.o.Store.Path(), m.o.App
@@ -345,7 +354,7 @@ func (m *Main) generalSettings(c *ui.Context, f *ui.FormW) {
 					}
 				})
 			}
-		}, layout.Gap(8), layout.Middle())
+		}, layout.Gap(8))
 	})
 }
 

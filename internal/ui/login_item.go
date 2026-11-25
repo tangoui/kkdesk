@@ -8,7 +8,6 @@ import (
 
 	"github.com/tangoui/tango/sys/autostart"
 	"github.com/tangoui/tango/ui"
-	"github.com/tangoui/tango/ui/layout"
 )
 
 type loginItemSetting struct {
@@ -47,14 +46,14 @@ func (m *Main) loginItemSettings(c *ui.Context, f *ui.FormW) {
 		item.Help("登录当前系统账户后自动打开 kkdesk。")
 	}
 	item.Body(func() {
-		ui.Row(c, func() {
+		controlRow(c, func() {
 			on := state.on
 			disabled := state.err != nil || (dev || exeErr != nil) && !on
 			if !ui.Switch(c, &on).A11yLabel("登录时自动启动").Disabled(disabled).Changed() {
 				return
 			}
 			setLoginItem(c, state, on)
-		}, layout.Middle())
+		})
 	})
 }
 
