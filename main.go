@@ -247,6 +247,14 @@ func hostConfig(o options, store *config.Store, logw io.Writer) app.HostConfig {
 	}
 	if cfg.Addr == "" {
 		cfg.Addr = fmt.Sprintf(":%d", st.Port)
+		// The system refused the saved port (a Windows reserved range):
+		// keep the port the host moved to, so the address stays the same
+		// from the next start on. Not with -listen (measurement scripts).
+		cfg.OnPortMoved = func(port int) {
+			if err := store.UpdateSettings(func(s *config.Settings) { s.Port = port }); err != nil {
+				log.Printf("kkdesk: save port: %v", err)
+			}
+		}
 	}
 	if o.set["fps"] {
 		cfg.FPS = o.fps

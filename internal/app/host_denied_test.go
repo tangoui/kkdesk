@@ -30,7 +30,8 @@ func TestHostMovesOffAReservedPort(t *testing.T) {
 	}
 	defer func() { listen = old }()
 
-	h := NewHost(HostConfig{Addr: reserved, Password: "123456"}, nil)
+	moved := 0
+	h := NewHost(HostConfig{Addr: reserved, Password: "123456", OnPortMoved: func(p int) { moved = p }}, nil)
 	defer h.Close()
 	if err := h.SetEnabled(true); err != nil {
 		t.Fatalf("SetEnabled = %v, want a fallback port", err)
@@ -44,6 +45,47 @@ func TestHostMovesOffAReservedPort(t *testing.T) {
 	}
 	if !strings.Contains(s.Notice, "已改用 "+strconv.Itoa(s.Port)) {
 		t.Fatalf("notice %q does not name the new port %d", s.Notice, s.Port)
+	}
+	if moved != s.Port {
+		t.Fatalf("OnPortMoved got %d, want %d (saved so the next start uses it)", moved, s.Port)
+	}
+}
+
+// A Hyper-V reservation usually spans 100 ports or more, so all the ports
+// right after the configured one can be refused too: the system picks a free
+// port (it never hands out a reserved one), which is saved and kept across
+// restarts of the listener.
+func TestHostLetsTheSystemPickWhenTheWholeRangeIsReserved(t *testing.T) {
+	old := listen
+	listen = func(addr string, pw ...string) (*session.Host, error) {
+		if _, p, _ := net.SplitHostPort(addr); p != "0" {
+			return nil, &net.OpError{Op: "listen", Net: "tcp", Err: os.NewSyscallError("bind", syscall.Errno(10013))}
+		}
+		return session.Listen(addr, pw...)
+	}
+	defer func() { listen = old }()
+
+	moved := 0
+	h := NewHost(HostConfig{Addr: "127.0.0.1:21115", Password: "123456", OnPortMoved: func(p int) { moved = p }}, nil)
+	defer h.Close()
+	if err := h.SetEnabled(true); err != nil {
+		t.Fatalf("SetEnabled = %v, want a system-picked port", err)
+	}
+	s := h.State()
+	if s.Err != "" || s.Phase != HostListening || s.Port == 0 || s.Port == 21115 {
+		t.Fatalf("state: %+v", s)
+	}
+	if moved != s.Port || !strings.Contains(s.Notice, "已改用 "+strconv.Itoa(s.Port)) {
+		t.Fatalf("moved %d, notice %q, port %d", moved, s.Notice, s.Port)
+	}
+	// Turning the host off and on again keeps the new port.
+	_ = h.SetEnabled(false)
+	listen = session.Listen
+	if err := h.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	if p := h.State().Port; p != s.Port {
+		t.Fatalf("port after restart %d, want %d", p, s.Port)
 	}
 }
 

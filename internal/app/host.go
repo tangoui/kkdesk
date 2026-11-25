@@ -57,7 +57,11 @@ type HostConfig struct {
 	Rotate string
 	// OnPassword is called with every new temporary password (to save
 	// it). It runs with the host locked: it must not call the host.
-	OnPassword  func(config.TempPassword)
+	OnPassword func(config.TempPassword)
+	// OnPortMoved is called with the port the host moved to because the
+	// system refused the configured one (to save it, so the next start
+	// listens there directly and the address stays the same).
+	OnPortMoved func(port int)
 	FPS         int // capture frame rate
 	MaxWidth    int // capture width limit; 0 = native
 	BitrateMbps int // 0 = auto
@@ -424,14 +428,19 @@ func (h *Host) startLocked() error {
 	if err != nil && addrDenied(err) {
 		// Windows reserves port ranges for Hyper-V, WSL and Docker
 		// (netsh interface ipv4 show excludedportrange protocol=tcp);
-		// binding inside one fails with WSAEACCES. Use the next free port.
+		// binding inside one fails with WSAEACCES. Try the next ports,
+		// then let the system pick one: a reservation often spans 100
+		// ports or more, and the system never hands out a reserved port.
 		host, port := splitPort(h.cfg.Addr)
+		cands := []int{}
 		for i := 1; i <= altPorts && port > 0 && port+i <= 65535; i++ {
-			alt := net.JoinHostPort(host, strconv.Itoa(port+i))
-			l2, err2 := listen(alt, h.password, h.cfg.Fixed)
+			cands = append(cands, port+i)
+		}
+		cands = append(cands, 0)
+		for _, p := range cands {
+			l2, err2 := listen(net.JoinHostPort(host, strconv.Itoa(p)), h.password, h.cfg.Fixed)
 			if err2 == nil {
 				ln, err = l2, nil
-				h.notice = fmt.Sprintf("端口 %d 被系统保留（常见于 Hyper-V、WSL、Docker），已改用 %d", port, port+i)
 				break
 			}
 			if !addrDenied(err2) && !addrInUse(err2) {
@@ -439,8 +448,15 @@ func (h *Host) startLocked() error {
 			}
 		}
 		if err != nil {
-			h.errMsg = fmt.Sprintf("端口 %d 及之后 %d 个端口都被系统保留或占用，请在「设置 › 网络」里换一个端口", port, altPorts)
+			h.errMsg = fmt.Sprintf("端口 %d 被系统保留，也没能找到其他可用端口，请在「设置 › 网络」里换一个端口", port)
 			return err
+		}
+		got := ln.Addr().(*net.TCPAddr).Port
+		h.cfg.Addr = net.JoinHostPort(host, strconv.Itoa(got)) // kept when the listener restarts
+		h.notice = fmt.Sprintf("端口 %d 被系统保留（常见于 Hyper-V、WSL、Docker），已改用 %d", port, got)
+		if h.cfg.OnPortMoved != nil {
+			h.cfg.OnPortMoved(got)
+			h.notice += "，并设为默认端口"
 		}
 	}
 	if err != nil {

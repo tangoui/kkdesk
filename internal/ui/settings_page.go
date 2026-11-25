@@ -24,6 +24,7 @@ type settingsState struct {
 	fixedErr string
 	port     float64
 	portErr  string
+	saved    int // st.Port the draft was taken from
 
 	// bound controls, refreshed from the store every frame
 	rotate, fps, bitrate, theme string
@@ -32,7 +33,7 @@ type settingsState struct {
 
 func (s *settingsState) init(st config.Settings) {
 	s.tab = "security"
-	s.port = float64(st.Port)
+	s.port, s.saved = float64(st.Port), st.Port
 }
 
 var settingsNav = []ui.MenuItem{
@@ -97,6 +98,9 @@ func (m *Main) settingsPage(c *ui.Context, hs app.HostState) {
 	st := m.o.Store.Settings()
 	s.rotate, s.confirm, s.allow = hs.Rotate, st.Confirm, st.AllowRemote
 	s.fps, s.bitrate, s.theme = itoa(st.FPS), itoa(st.BitrateMbps), st.Theme
+	if st.Port != s.saved { // changed elsewhere (the host moved off a reserved port)
+		s.port, s.saved = float64(st.Port), st.Port
+	}
 	ui.Title(c, "设置", 4)
 	ui.Row(c, func() {
 		panel(c, func() {
