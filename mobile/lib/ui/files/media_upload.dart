@@ -32,6 +32,8 @@ Future<UploadSource> _uploadSource(
   return UploadSource.file(
     name: mediaUploadName(
       item['name'] as String?,
+      isOriginalName: item['isOriginalName'] == true,
+      exportedName: item['exportedName'] as String?,
       extension: item['extension'] as String? ?? '',
       video: item['video'] == true,
       timestamp: timestamp,
@@ -47,34 +49,52 @@ String mediaUploadName(
   required String extension,
   required bool video,
   required DateTime timestamp,
+  bool isOriginalName = false,
+  String? exportedName,
 }) {
-  final name = (originalName ?? '')
-      .split(RegExp(r'[/\\]'))
-      .last
-      .replaceAll(RegExp(r'[<>:"|?*\x00-\x1f]'), '_')
-      .trim();
-  final dot = name.lastIndexOf('.');
-  final candidate = dot > 0 ? name.substring(dot + 1) : '';
-  final originalExtension = _extension.hasMatch(candidate) ? candidate : '';
-  var stem = (originalExtension.isEmpty ? name : name.substring(0, dot))
-      .replaceAll(RegExp(r'^\.+|[. ]+$'), '');
-  final exportedExtension = _extension.hasMatch(extension) ? extension : '';
-  final sameFormat =
-      _canonicalExtension(originalExtension) ==
-      _canonicalExtension(exportedExtension);
-
-  if (stem.isEmpty || _temporaryName.hasMatch(stem)) {
+  final original = _splitFilename(originalName);
+  final exported = _splitFilename(exportedName);
+  final useOriginal = _usableStem(original.stem, isOriginal: isOriginalName);
+  final preferred = useOriginal ? original : exported;
+  var stem = preferred.stem;
+  if (!useOriginal && !_usableStem(stem)) {
     final local = timestamp.toLocal();
     String pad(int part) => part.toString().padLeft(2, '0');
     stem =
         '${video ? '视频' : '照片'}_${local.year}${pad(local.month)}'
         '${pad(local.day)}_${pad(local.hour)}${pad(local.minute)}${pad(local.second)}';
   }
-  final suffix = exportedExtension.isEmpty || sameFormat
-      ? originalExtension
-      : exportedExtension.toLowerCase();
+
+  final actualExtension = _extension.hasMatch(extension)
+      ? extension
+      : (exported.suffix.isNotEmpty ? exported.suffix : original.suffix);
+  final suffix =
+      actualExtension.isEmpty ||
+          _canonicalExtension(preferred.suffix) ==
+              _canonicalExtension(actualExtension)
+      ? preferred.suffix
+      : actualExtension.toLowerCase();
   return suffix.isEmpty ? stem : '$stem.$suffix';
 }
+
+({String stem, String suffix}) _splitFilename(String? input) {
+  final name = (input ?? '')
+      .split(RegExp(r'[/\\]'))
+      .last
+      .replaceAll(RegExp(r'[<>:"|?*\x00-\x1f]'), '_')
+      .trim();
+  final dot = name.lastIndexOf('.');
+  final candidate = dot > 0 ? name.substring(dot + 1) : '';
+  final suffix = _extension.hasMatch(candidate) ? candidate : '';
+  final stem = (suffix.isEmpty ? name : name.substring(0, dot)).replaceAll(
+    RegExp(r'^\.+|[. ]+$'),
+    '',
+  );
+  return (stem: stem, suffix: suffix);
+}
+
+bool _usableStem(String stem, {bool isOriginal = false}) =>
+    stem.isNotEmpty && (isOriginal || !_temporaryName.hasMatch(stem));
 
 String _canonicalExtension(String value) => switch (value.toLowerCase()) {
   'jpeg' => 'jpg',
