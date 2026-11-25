@@ -304,23 +304,8 @@ func NewPassword() string {
 }
 
 // LocalIPv4 lists the IPv4 addresses of the interfaces that are up,
-// excluding loopback.
-func LocalIPv4() []string {
-	var out []string
-	ifs, _ := net.Interfaces()
-	for _, i := range ifs {
-		if i.Flags&net.FlagUp == 0 || i.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		addrs, _ := i.Addrs()
-		for _, a := range addrs {
-			if n, ok := a.(*net.IPNet); ok && n.IP.To4() != nil && !n.IP.IsLinkLocalUnicast() {
-				out = append(out, n.IP.String())
-			}
-		}
-	}
-	return out
-}
+// excluding loopback, the most reachable first (see rankAddrs).
+func LocalIPv4() []string { return localIPv4() }
 
 // ExcludeAppName is the application name whose windows capture hides: this
 // process's executable name, which macOS reports as the app name of an
