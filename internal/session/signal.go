@@ -10,7 +10,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/pion/webrtc/v4"
@@ -19,6 +22,11 @@ import (
 // ErrBadPassword is returned by Dial when the host rejects the password, and
 // by Host.Accept when a client fails the challenge. The host keeps listening.
 var ErrBadPassword = errors.New("session: bad password")
+
+// ErrProbe is returned by Host.Accept when the client closed the connection
+// without answering the challenge: a port probe (the 我的设备 online
+// check) or an aborted dial. The host keeps listening.
+var ErrProbe = errors.New("session: connection closed before authentication")
 
 // signalTimeout bounds the whole TCP signaling exchange when the caller's
 // context has no earlier deadline.
@@ -75,17 +83,51 @@ func computeMAC(password string, nonce []byte) []byte {
 
 // Host listens for controller connections.
 type Host struct {
-	ln       *net.TCPListener
-	password string
+	ln *net.TCPListener
+
+	mu        sync.Mutex
+	passwords []string // any of them passes the challenge; never ""
 }
 
 // Listen starts listening for signaling connections on addr (e.g. ":21118").
-func Listen(addr, password string) (*Host, error) {
+// A client passes the challenge with any of passwords (the temporary and
+// the fixed one); empty passwords are ignored.
+func Listen(addr string, passwords ...string) (*Host, error) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
 	}
-	return &Host{ln: ln.(*net.TCPListener), password: password}, nil
+	h := &Host{ln: ln.(*net.TCPListener)}
+	h.SetPasswords(passwords...)
+	return h, nil
+}
+
+// SetPasswords replaces the accepted passwords; the next challenge uses
+// them, so a removed password stops working at once. Empty passwords are
+// ignored. Established peers are not affected.
+func (h *Host) SetPasswords(passwords ...string) {
+	var pws []string
+	for _, pw := range passwords {
+		if pw != "" {
+			pws = append(pws, pw)
+		}
+	}
+	h.mu.Lock()
+	h.passwords = pws
+	h.mu.Unlock()
+}
+
+// verify reports whether mac answers nonce with one of the passwords. Every
+// password is checked, so the time does not tell which one matched.
+func (h *Host) verify(mac, nonce []byte) bool {
+	h.mu.Lock()
+	pws := h.passwords
+	h.mu.Unlock()
+	ok := 0
+	for _, pw := range pws {
+		ok |= subtle.ConstantTimeCompare(mac, computeMAC(pw, nonce))
+	}
+	return ok == 1
 }
 
 // Addr returns the listening address.
@@ -121,10 +163,13 @@ func (h *Host) Accept(ctx context.Context) (*Peer, error) {
 	}
 	m, err := sc.recv()
 	if err != nil {
+		if closedEarly(err) {
+			return nil, ErrProbe
+		}
 		return nil, fmt.Errorf("session: read challenge response: %w", err)
 	}
 	mac, err := base64.StdEncoding.DecodeString(m.MAC)
-	if err != nil || subtle.ConstantTimeCompare(mac, computeMAC(h.password, nonce)) != 1 {
+	if err != nil || !h.verify(mac, nonce) {
 		f := false
 		_ = sc.send(sigMsg{OK: &f, Error: "bad password"})
 		return nil, ErrBadPassword
@@ -237,6 +282,13 @@ func DialWithOptions(ctx context.Context, addr, password string, opts DialOption
 		return nil, err
 	}
 	return p, nil
+}
+
+// closedEarly reports a read error caused by the client closing (EOF or a
+// reset), as opposed to a timeout or garbage.
+func closedEarly(err error) bool {
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, net.ErrClosed)
 }
 
 func isLoopback(a net.Addr) bool {

@@ -84,13 +84,15 @@ type Peer struct {
 	onInput    func(input.Event)
 	onKeyframe func()
 	onQuality  func(Quality)
-	reason     string // close reason sent by the other side
-	remote     string // remote signaling address
-	dcMove     *webrtc.DataChannel
-	dcInput    *webrtc.DataChannel
-	dcMeta     *webrtc.DataChannel
-	files      *fileChannel
-	lastPLI    time.Time
+	// pendingQuality is the latest request received before OnQuality.
+	pendingQuality *Quality
+	reason         string // close reason sent by the other side
+	remote         string // remote signaling address
+	dcMove         *webrtc.DataChannel
+	dcInput        *webrtc.DataChannel
+	dcMeta         *webrtc.DataChannel
+	files          *fileChannel
+	lastPLI        time.Time
 
 	opened    atomic.Int32
 	ready     chan struct{}

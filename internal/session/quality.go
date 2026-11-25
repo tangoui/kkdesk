@@ -32,10 +32,17 @@ func (p *Peer) SendQuality(q Quality) error {
 
 // OnQuality sets the callback for quality requests from the controller
 // (host).
+// A request that arrived before (the host's user was still confirming the
+// connection) is delivered to f at once.
 func (p *Peer) OnQuality(f func(Quality)) {
 	p.mu.Lock()
 	p.onQuality = f
+	pending := p.pendingQuality
+	p.pendingQuality = nil
 	p.mu.Unlock()
+	if f != nil && pending != nil {
+		f(*pending)
+	}
 }
 
 func (p *Peer) handleQuality(b []byte) {
@@ -45,6 +52,9 @@ func (p *Peer) handleQuality(b []byte) {
 	q := Quality{BitrateBps: int(binary.BigEndian.Uint32(b[1:])), FPS: int(binary.BigEndian.Uint16(b[5:]))}
 	p.mu.Lock()
 	f := p.onQuality
+	if f == nil {
+		p.pendingQuality = &q // the latest request wins
+	}
 	p.mu.Unlock()
 	if f != nil {
 		f(q)
