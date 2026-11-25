@@ -68,7 +68,7 @@ flutter build apk --release --target-platform android-arm64 \
 
 - 第一轮被控端采集到编码完成 P50 为 15.4 ms，编码完成到发送 P50 为 0.1 ms。iPhone 解码平均 6.9 ms。上表抖动缓冲和解码时长由相同时间窗内的 libwebrtc 累计值差分计算。其余网络、接收排队和时钟偏移无法分别按帧定量。RTT 在 RTX 轮为 97.9–646.0 ms，在紧接的对照轮为 42.1–1,076.7 ms。链路波动限制了跨轮比较。
 - Pion 已有 NACK responder，现有 PLI/FIR 处理会要求编码器在下一帧输出 IDR。此次补上 H.264 RTX 协商，两种接收端的 SDP 兼容性均有回归测试。iPhone 的 RTX 对照轮收到 1,300 个重传包，报告 7 个 PLI 和 0 个 FIR。保留 RTX，继续维持原版发送帧率和码率。
-- 零 playout-delay 已通过本地 RTP 验证，但 iPhone 对照时严重丢包和停顿，未留下足够可比较的样本。最终提交撤下该实验。降码率和降帧率也未测出稳定收益。拥塞控制调参和 720p 未测试。
+- 零 playout-delay 已通过本地 RTP 验证，但 iPhone 对照时严重丢包和停顿，未留下足够可比较的样本。最终提交撤下该实验。降码率和降帧率也未测出稳定收益。拥塞控制仍待测试，720p 追加结果见下文。
 - iOS 接收端使用 `RTCVideoView`，逐帧探针直接挂在原生视频轨上，因此表中延迟不含 Flutter 纹理上屏。VideoToolbox 的统计仍将 `powerEfficientDecoder` 标为 `false`，实际硬件加速还需独立确认。
 - Mac 自连采用相同的 45 秒脚本，改动前 P50 / P95 为 37.2 / 49.5 ms，改动后为 26.2 / 37.0 ms，均为零丢包。改动后也低于最初报告的 33.0 / 49.8 ms。
 
@@ -83,3 +83,14 @@ flutter build apk --release --target-platform android-arm64 \
 原始 iPhone 和 Mac 日志位于本机 `/tmp/kkdesk-mobile-spike/latency-*`，Android 截图和启动、触控、帧率日志位于该目录的 `latency-android-final/`。Go 全量测试、Windows vet、Go 格式检查、Flutter 分析与 3 项测试均通过。
 
 **1080p 真机延迟仍未达到 80 ms，中位数最好为 304.0 ms。第 1 期未开始。**
+
+### iPhone 解锁后追加复测
+
+2026-11-25 17:15–17:18，沿用已提交的 RTX 版本和接收端测量口径。两轮都请求 60 fps、自动码率，先测 1080p，再以 `-maxwidth 1280` 测 720p。
+
+| 分辨率 | 匹配帧数 | P50 / P95（ms） | 解码帧率 | RTP 丢失 / 重传包数 | 抖动缓冲 / 解码均值（ms/帧） |
+|---|---:|---:|---:|---:|---:|
+| 1920×1080 | 953 | 490.3 / 1,625.2 | 24.1 | 2,047 / 727 | 223.5 / 7.2 |
+| 1280×720 | 99 | 2,999.7 / 3,406.5 | 9.5 | 1,801 / 987 | 830.6 / 5.2 |
+
+1080p 轮 Mac 采集到发送的 10 秒日志快照 P50 为 15.3–17.9 ms。720p 轮的时钟同步 RTT 为 146.5–2,012.3 ms，样本数量和网络状态限制了分辨率之间的比较。1080p 仍未通过 80 ms 门槛。原始日志在 `/tmp/kkdesk-mobile-spike/latency-rtx-recheck/` 和 `/tmp/kkdesk-mobile-spike/latency-rtx-720p/`。
