@@ -15,6 +15,8 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 	"github.com/pion/webrtc/v4"
+
+	"github.com/tangoui/kkdesk/internal/pairing"
 )
 
 const (
@@ -84,6 +86,9 @@ func IsCode(code string) bool {
 }
 
 type message struct {
+	Device    string                     `json:"device,omitempty"`
+	Mobile    *pairing.Message           `json:"mobile,omitempty"`
+	Online    bool                       `json:"online,omitempty"`
 	Type      string                     `json:"type"`
 	Code      string                     `json:"code,omitempty"`
 	ID        string                     `json:"id,omitempty"`

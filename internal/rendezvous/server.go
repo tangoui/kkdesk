@@ -27,6 +27,7 @@ type Server struct {
 
 	mu      sync.Mutex
 	devices map[string]*registration
+	mobile  map[string]*mobileRegistration
 }
 
 type registration struct {
@@ -63,7 +64,7 @@ func NewServerWithOptions(token, turnSecret string, iceURLs []string, opts Serve
 	}
 	s := &Server{token: sha256.Sum256([]byte("Bearer " + token)), turnSecret: turnSecret,
 		credentialTTL: opts.CredentialTTL, slots: make(chan struct{}, opts.MaxConnections),
-		devices: make(map[string]*registration)}
+		devices: make(map[string]*registration), mobile: make(map[string]*mobileRegistration)}
 	for _, u := range iceURLs {
 		switch {
 		case strings.HasPrefix(u, "stun:"):
@@ -118,6 +119,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	msg, err := read(ctx, conn)
 	cancel()
 	if err != nil {
+		return
+	}
+	if s.handleMobile(r.Context(), conn, msg) {
 		return
 	}
 	if !IsCode(msg.Code) {
