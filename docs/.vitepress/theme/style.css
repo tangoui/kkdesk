@@ -1,33 +1,34 @@
-/* kkdesk brand: the wine red and terracotta of the logo (前后双屏) on its
-   cream plate. Dark mode uses lighter tints so links stay readable. */
+/* kkdesk brand: the blue of the app icon (the same palette as MinCode):
+   plate #7AA2FD → #335FE3, white front screen, cyan #67E8F9 back screen.
+   Dark mode uses lighter tints so links stay readable. */
 :root {
-  --vp-c-brand-1: #8a3a50;
-  --vp-c-brand-2: #a04c43;
-  --vp-c-brand-3: #6f3144;
-  --vp-c-brand-soft: rgba(160, 76, 67, 0.14);
+  --vp-c-brand-1: #335fe3;
+  --vp-c-brand-2: #4a74ee;
+  --vp-c-brand-3: #2a4fc4;
+  --vp-c-brand-soft: rgba(90, 133, 242, 0.14);
 
   --vp-home-hero-name-color: transparent;
-  --vp-home-hero-name-background: linear-gradient(120deg, #6f3144 20%, #be6655);
-  --vp-home-hero-image-background-image: radial-gradient(circle, #f7e3c5 0%, rgba(247, 227, 197, 0) 70%);
-  --vp-home-hero-image-filter: blur(8px);
+  --vp-home-hero-name-background: linear-gradient(120deg, #335fe3 25%, #22b8d6);
+  --vp-home-hero-image-background-image: radial-gradient(circle, rgba(103, 232, 249, 0.45) 0%, rgba(122, 162, 253, 0.25) 45%, rgba(122, 162, 253, 0) 70%);
+  --vp-home-hero-image-filter: blur(24px);
 
-  --vp-button-brand-bg: #8a3a50;
-  --vp-button-brand-hover-bg: #a04c43;
-  --vp-button-brand-active-bg: #6f3144;
+  --vp-button-brand-bg: #335fe3;
+  --vp-button-brand-hover-bg: #4a74ee;
+  --vp-button-brand-active-bg: #2a4fc4;
 }
 
 .dark {
-  --vp-c-brand-1: #e59a88;
-  --vp-c-brand-2: #d98272;
-  --vp-c-brand-3: #be6655;
-  --vp-c-brand-soft: rgba(229, 154, 136, 0.16);
+  --vp-c-brand-1: #8aaeff;
+  --vp-c-brand-2: #7aa2fd;
+  --vp-c-brand-3: #5a85f2;
+  --vp-c-brand-soft: rgba(122, 162, 253, 0.16);
 
-  --vp-home-hero-name-background: linear-gradient(120deg, #f2c6b4 20%, #e08a78);
-  --vp-home-hero-image-background-image: radial-gradient(circle, rgba(190, 102, 85, 0.35) 0%, rgba(190, 102, 85, 0) 70%);
+  --vp-home-hero-name-background: linear-gradient(120deg, #8aaeff 25%, #67e8f9);
+  --vp-home-hero-image-background-image: radial-gradient(circle, rgba(103, 232, 249, 0.28) 0%, rgba(90, 133, 242, 0.22) 45%, rgba(90, 133, 242, 0) 70%);
 
-  --vp-button-brand-bg: #a04c43;
-  --vp-button-brand-hover-bg: #be6655;
-  --vp-button-brand-active-bg: #8a3a50;
+  --vp-button-brand-bg: #4a74ee;
+  --vp-button-brand-hover-bg: #5a85f2;
+  --vp-button-brand-active-bg: #335fe3;
 }
 
 /* Screenshots of the app: a hairline frame so light pages do not melt into

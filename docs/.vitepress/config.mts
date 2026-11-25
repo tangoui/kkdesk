@@ -13,7 +13,7 @@ export default defineConfig({
   srcExclude: ['superpowers/**', 'design/**', 'spike-report.md', 'README.md'],
   head: [['link', { rel: 'icon', type: 'image/svg+xml', href: '/kkdesk/logo.svg' }]],
   themeConfig: {
-    logo: { light: '/logo.svg', dark: '/logo-dark.svg' },
+    logo: '/logo.svg', // the blue tile reads on light and dark
     nav: [
       { text: '使用指南', link: '/guide/introduction', activeMatch: '/guide/' },
       { text: '部署跨网服务', link: '/deploy/server', activeMatch: '/deploy/' },

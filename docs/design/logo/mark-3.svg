@@ -1,6 +1,35 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" role="img">
-  <title>kkdesk · 前后双屏 · 界面标</title>
-  <path fill="none" stroke="#A04C43" stroke-width="2.1"
-        stroke-linecap="round" d="M9.15 6.35V5.55A1.7 1.7 0 0 1 10.85 3.85H19.6A1.7 1.7 0 0 1 21.3 5.55V11.25A1.7 1.7 0 0 1 19.6 12.95H19.05"/>
-  <path fill="#6F3144" fill-rule="evenodd" d="M4.45 8.95H14.35A2.2 2.2 0 0 1 16.55 11.15V15.6A2.2 2.2 0 0 1 14.35 17.8H10.6V19.45H12.3A1.05 1.05 0 0 1 12.3 21.55H6.5A1.05 1.05 0 0 1 6.5 19.45H8.2V17.8H4.45A2.2 2.2 0 0 1 2.25 15.6V11.15A2.2 2.2 0 0 1 4.45 8.95ZM4.65 11.2Q4.45 11.2 4.45 11.4V15.35Q4.45 15.55 4.65 15.55H14.15Q14.35 15.55 14.35 15.35V11.4Q14.35 11.2 14.15 11.2Z"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="96 86 832 828" role="img">
+  <title>kkdesk · 前后双屏 · 界面标（蓝）</title>
+  <defs>
+    <path id="plate" d="M357 86H667C763 86 816 92 864 138C912 184 928 243 928 345V655C928 757 912 816 864 862C816 908 763 914 667 914H357C261 914 208 908 160 862C112 816 96 757 96 655V345C96 243 112 184 160 138C208 92 261 86 357 86Z"/>
+    <linearGradient id="plate-color" x1="0" y1="0" x2=".78" y2="1">
+      <stop offset="0" stop-color="#7AA2FD"/>
+      <stop offset=".5" stop-color="#5A85F2"/>
+      <stop offset="1" stop-color="#335FE3"/>
+    </linearGradient>
+    <linearGradient id="symbol-light" x1="0" y1="0" x2=".78" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#FFFFFF"/>
+    </linearGradient>
+    <linearGradient id="symbol-accent" x1="0" y1="0" x2=".78" y2="1">
+      <stop offset="0" stop-color="#67E8F9"/>
+      <stop offset="1" stop-color="#67E8F9"/>
+    </linearGradient>
+    <radialGradient id="plate-glow" cx=".23" cy="0" r=".86" gradientTransform="matrix(1 0 0 .75 0 0)">
+      <stop stop-color="#FFFFFF" stop-opacity=".18"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="soft-shadow" x="-10%" y="-10%" width="120%" height="125%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="18"/>
+    </filter>
+  </defs>
+  <use href="#plate" fill="url(#plate-color)"/>
+  <use href="#plate" fill="url(#plate-glow)"/>
+  <use href="#plate" fill="none" stroke="#FFFFFF" stroke-opacity=".27" stroke-width="2"
+       transform="translate(2.56 2.5) scale(.995)"/>
+  <g transform="translate(134.2 110) scale(31.8)">
+    <path fill="none" stroke="url(#symbol-accent)" stroke-width="2.1"
+          stroke-linecap="round" d="M9.15 6.35V5.55A1.7 1.7 0 0 1 10.85 3.85H19.6A1.7 1.7 0 0 1 21.3 5.55V11.25A1.7 1.7 0 0 1 19.6 12.95H19.05"/>
+    <path fill="url(#symbol-light)" fill-rule="evenodd" d="M4.45 8.95H14.35A2.2 2.2 0 0 1 16.55 11.15V15.6A2.2 2.2 0 0 1 14.35 17.8H10.6V19.45H12.3A1.05 1.05 0 0 1 12.3 21.55H6.5A1.05 1.05 0 0 1 6.5 19.45H8.2V17.8H4.45A2.2 2.2 0 0 1 2.25 15.6V11.15A2.2 2.2 0 0 1 4.45 8.95ZM4.65 11.2Q4.45 11.2 4.45 11.4V15.35Q4.45 15.55 4.65 15.55H14.15Q14.35 15.55 14.35 15.35V11.4Q14.35 11.2 14.15 11.2Z"/>
+  </g>
 </svg>

@@ -23,7 +23,6 @@ import (
 	"github.com/tangoui/tango/ui/icon/antd"
 	"github.com/tangoui/tango/ui/layout"
 	"github.com/tangoui/tango/ui/text"
-	"github.com/tangoui/tango/ui/theme"
 	"github.com/tangoui/tango/uihost"
 
 	"github.com/tangoui/kkdesk/internal/app"
@@ -212,14 +211,8 @@ func (m *Main) sidebar(c *ui.Context, hs app.HostState) {
 	th := c.Theme
 	ui.Column(c, func() {
 		ui.Row(c, func() {
-			if mark := brandMark(); mark != nil && th.Dark {
-				// The wine-red mark disappears on the dark sidebar: put it on
-				// the app icon's cream plate.
-				ui.Row(c, func() {
-					ui.Image(c, mark).Size(20, 20)
-				}, layout.Size(24, 24), layout.Center()).Bg(theme.Hex("#F7E3C5")).Radius(6)
-			} else if mark != nil {
-				ui.Image(c, mark).Size(24, 24)
+			if mark := brandMark(); mark != nil {
+				ui.Image(c, mark).Size(24, 24) // its own blue plate: fine on light and dark
 			} else {
 				ui.Row(c, func() {
 					ui.Icon(c, icon.Monitor).Size(14).Color(th.TextOnPrimary)

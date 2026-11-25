@@ -8,8 +8,9 @@ import (
 	"sync"
 )
 
-// The kkdesk mark (docs/design/logo/mark-3.svg, rendered at 96 px for the
-// 24 pt brand slot on Retina screens).
+// The kkdesk mark: the app icon's blue plate with the two screens, without
+// its shadow (docs/design/logo/mark-3.svg, rendered at 96 px for the 24 pt
+// brand slot on Retina screens).
 //
 //go:embed assets/mark.png
 var markPNG []byte
