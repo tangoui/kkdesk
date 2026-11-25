@@ -22,6 +22,27 @@
 
 服务器在 NAT 后面时，要把这些端口映射进来，并且路由器要支持对公布的公网地址做回环转发。
 
+## 一键安装
+
+支持运行 systemd 的 **Debian／Ubuntu**，架构为 x86_64 或 arm64。先把域名的 A 记录指向实际公网 IPv4。安装脚本会复用已有的 Let's Encrypt 证书，或通过 Certbot 申请证书。申请和续期时，公网需要能访问服务器的 TCP 80，且该端口可由 Certbot 使用。一键安装也会启用 TCP 5349 上的 TURN TLS。
+
+在服务器上单独下载并运行安装脚本，将示例域名和 IP 换成实际值。
+
+```sh
+curl -fsSL -o install-server.sh https://raw.githubusercontent.com/tangoui/kkdesk/main/scripts/install-server.sh &&
+  sudo bash install-server.sh desk.example.com 203.0.113.10
+```
+
+脚本会构建并启动服务，创建 `/etc/kkdesk-server/server.env` 和 `/etc/kkdesk-server/server.json`，并设置开机启动。重复执行会沿用这两个文件。手头已有支持 `-config` 的当前架构二进制时，可以在命令末尾加 `--binary ./kkdesk-server`。
+
+成功时会显示客户端的 HTTPS 地址。用下面的命令读取要填给客户端的服务密钥：
+
+```sh
+sudo sed -n 's/^KKDESK_SERVER_TOKEN=//p' /etc/kkdesk-server/server.env
+```
+
+以下章节提供手动部署所需的构建命令和配置参数。
+
 ## 构建
 
 在仓库根目录：
