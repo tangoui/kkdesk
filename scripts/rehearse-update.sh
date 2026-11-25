@@ -9,9 +9,10 @@
 #
 #   scripts/rehearse-update.sh [workdir]     # default /tmp/kkdesk-update-rehearsal
 #
-# Needs: tan, the update key (TANGO_UPDATE_KEY_FILE, default
-# ~/.config/kkdesk-release/update.key) and a codesign identity
-# (TANGO_SIGN_IDENTITY, default the first one in the keychain). The
+# Needs: tan and the update key (TANGO_UPDATE_KEY_FILE, default
+# ~/.config/kkdesk-release/update.key). The apps are signed ad hoc like the
+# release workflow's; TANGO_SIGN_IDENTITY signs them with that identity
+# instead. The
 # versions are 0.0.x so they never get ahead of a real release; the
 # updater state they leave is removed at the end.
 set -euo pipefail
@@ -19,15 +20,14 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 work=${1:-/tmp/kkdesk-update-rehearsal}
 export TANGO_UPDATE_KEY_FILE=${TANGO_UPDATE_KEY_FILE:-$HOME/.config/kkdesk-release/update.key}
-identity=${TANGO_SIGN_IDENTITY:-$(security find-identity -v -p codesigning | sed -n 's/^ *1) [0-9A-F]* "\(.*\)"$/\1/p')}
+identity=${TANGO_SIGN_IDENTITY:-}
 port=8765
 state="$HOME/Library/Application Support/tango-updater/com.kkdesk.desktop"
 [ -f "$TANGO_UPDATE_KEY_FILE" ] || { echo "no update key at $TANGO_UPDATE_KEY_FILE" >&2; exit 1; }
-[ -n "$identity" ] || { echo "no codesign identity (set TANGO_SIGN_IDENTITY)" >&2; exit 1; }
 [ ! -e "$state" ] || { echo "updater state exists at $state; move it away first" >&2; exit 1; }
 
 rm -rf "$work" && mkdir -p "$work"
-echo "work dir $work, identity: $identity"
+echo "work dir $work, signing: ${identity:-ad hoc}"
 
 # build <version>: a signed .app with automation, then its release dir.
 build() {
@@ -45,7 +45,11 @@ PY
 	# build does not take: swap in an executable built with it (and with
 	# tango_release, as tan build adds, which turns self-update on).
 	(cd "$src" && CGO_ENABLED=1 go build -tags tango_dev,tango_release -trimpath -ldflags "-s -w" -o build/darwin-*/kkdesk.app/Contents/MacOS/kkdesk .)
-	tan sign -identity "$identity" "$src"/build/darwin-*/kkdesk.app >/dev/null
+	if [ -n "$identity" ]; then
+		tan sign -identity "$identity" "$src"/build/darwin-*/kkdesk.app >/dev/null
+	else
+		codesign --force --deep --sign - "$src"/build/darwin-*/kkdesk.app
+	fi
 	local prev=()
 	[ "$v" = 0.0.2 ] && prev=(-prev "$work/release-0.0.1")
 	(cd "$src" && tan release-manifest -build build -o "$work/release-$v" -url "http://127.0.0.1:$port/" ${prev[@]+"${prev[@]}"})

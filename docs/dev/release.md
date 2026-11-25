@@ -14,7 +14,7 @@ kkdesk 的发布和自动更新用的是 Tango 的 `service/updater`：每个 Gi
 
 3. GitHub Actions 的 **Release** 工作流（`.github/workflows/release.yml`）会：
    - 检查标签和 `tan.json` 的版本一致；
-   - 构建 macOS（Apple 芯片、Intel，各自签名）、Windows（x64）、Linux（x64、arm64）客户端和 `kkdesk-server`；
+   - 构建 macOS（Apple 芯片、Intel，临时签名）、Windows（x64）、Linux（x64、arm64）客户端和 `kkdesk-server`；
    - 下载上一个 Release 的文件，生成到新版本的二进制补丁；
    - 用发布密钥签名 `latest.json`，连同所有文件和 `SHA256SUMS` 发布成 GitHub Release。
 
@@ -34,20 +34,17 @@ kkdesk 的发布和自动更新用的是 Tango 的 `service/updater`：每个 Gi
 
 ## 密钥
 
-仓库的 Actions 密钥：
-
-| 名称 | 内容 |
-|---|---|
-| `TANGO_UPDATE_KEY` | 更新签名私钥（`tan keygen` 生成）。公钥写在 `internal/update/update.go`。 |
-| `MACOS_CERT_P12` | macOS 代码签名证书和私钥（.p12）的 base64。 |
-| `MACOS_CERT_PASSWORD` | 上面 .p12 的密码。 |
-| `TANGO_SIGN_IDENTITY` | codesign 身份，例如 `Apple Development: … (TEAMID)`。 |
+仓库只需要一个 Actions 密钥 `TANGO_UPDATE_KEY`：更新签名私钥（`tan keygen` 生成），公钥写在 `internal/update/update.go`。
 
 ::: danger 更新私钥丢了或泄露了
 私钥丢失后，已安装的客户端再也收不到更新；泄露后别人可以给你的用户推送伪造的更新。私钥要离线备份，不要放进仓库。需要换钥匙时，先发一个同时信任新旧公钥（`Updater.PublicKeys`）的版本，再改用新钥匙签名。
 :::
 
-macOS 签名的身份要保持不变：自动更新会检查新旧版本的 Team ID 是否一致，macOS 也按签名身份记住「屏幕录制」「辅助功能」权限。
+### macOS 代码签名
+
+macOS 包目前是**临时签名**（`codesign --sign -`），不需要证书。代价是 macOS 按签名身份记住「屏幕录制」「辅助功能」权限，临时签名每个版本都不同，所以用户每次更新后要重新授权；第一次打开也要在「隐私与安全性」里点「仍要打开」。
+
+以后有了 Developer ID 证书，可以在工作流里导入证书、改用 `tan sign`（加 `-notarize` 公证）。注意：一旦发布过带 Team ID 的版本，之后的版本必须用同一个 Team ID 签名，更新器会拒绝 Team ID 不一致的新版本。
 
 ## 清单定期重签
 
@@ -61,7 +58,7 @@ macOS 签名的身份要保持不变：自动更新会检查新旧版本的 Team
 scripts/rehearse-update.sh
 ```
 
-脚本会构建并签名两个版本（0.0.1 和 0.0.2，用 0.0.x 是为了不影响真实版本），用发布密钥签名 0.0.2 的清单（包含从 0.0.1 的补丁），在 `127.0.0.1:8765` 上提供下载，然后运行端到端测试 `TestE2EUpdate`：0.0.1 在「设置 › 通用」里检查更新、下载、安装并重启到 0.0.2，新版本确认启动成功。需要本机有更新私钥（默认 `~/.config/kkdesk-release/update.key`）和一个 codesign 身份。
+脚本会构建并签名两个版本（0.0.1 和 0.0.2，用 0.0.x 是为了不影响真实版本），用发布密钥签名 0.0.2 的清单（包含从 0.0.1 的补丁），在 `127.0.0.1:8765` 上提供下载，然后运行端到端测试 `TestE2EUpdate`：0.0.1 在「设置 › 通用」里检查更新、下载、安装并重启到 0.0.2，新版本确认启动成功。需要本机有更新私钥（默认 `~/.config/kkdesk-release/update.key`）。应用和发版一样临时签名；设置 `TANGO_SIGN_IDENTITY` 可以改用指定的证书签名。
 
 ## 本地测试其他清单
 

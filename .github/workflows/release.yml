@@ -1,16 +1,17 @@
 name: Release
 
 # Pushing a tag vX.Y.Z (equal to "version" in tan.json) builds kkdesk for
-# macOS (Apple silicon and Intel, signed), Windows (x64) and Linux (x64 and
+# macOS (Apple silicon and Intel, ad-hoc signed), Windows (x64) and Linux (x64 and
 # arm64) plus kkdesk-server, signs the update manifest (latest.json, with
 # binary patches from the previous release) and publishes a GitHub release.
 # Clients find it at releases/latest/download/latest.json (internal/update).
 #
-# Secrets:
-#   TANGO_UPDATE_KEY      private update key from tan keygen
-#   MACOS_CERT_P12        base64 of the code signing certificate and key (.p12)
-#   MACOS_CERT_PASSWORD   password of the .p12
-#   TANGO_SIGN_IDENTITY   codesign identity, e.g. "Apple Development: … (TEAMID)"
+# Secret: TANGO_UPDATE_KEY, the private update key from tan keygen.
+#
+# The macOS apps are signed ad hoc (no certificate). macOS keys the Screen
+# Recording and Accessibility permissions to the signature, so users grant
+# them again after each update; a Developer ID certificate (tan sign) would
+# keep them.
 on:
   push:
     tags: ["v*"]
@@ -52,27 +53,13 @@ jobs:
           go-version-file: go.mod
       - name: Install tan
         run: go install github.com/tangoui/tango/cmd/tan@$TAN_VERSION
-      - name: Import the signing certificate
-        env:
-          P12: ${{ secrets.MACOS_CERT_P12 }}
-          P12_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
-        run: |
-          kc="$RUNNER_TEMP/signing.keychain-db"
-          kcpw=$(openssl rand -hex 16)
-          echo "$P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
-          security create-keychain -p "$kcpw" "$kc"
-          security set-keychain-settings -lut 21600 "$kc"
-          security unlock-keychain -p "$kcpw" "$kc"
-          security import "$RUNNER_TEMP/cert.p12" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$kc"
-          security set-key-partition-list -S apple-tool:,apple: -k "$kcpw" "$kc" >/dev/null
-          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
-          rm "$RUNNER_TEMP/cert.p12"
-      - name: Build and sign
-        env:
-          TANGO_SIGN_IDENTITY: ${{ secrets.TANGO_SIGN_IDENTITY }}
+      - name: Build and sign ad hoc
         run: |
           tan build -platform darwin/arm64,darwin/amd64 -o build
-          for app in build/darwin-*/kkdesk.app; do tan sign "$app"; done
+          for app in build/darwin-*/kkdesk.app; do
+            codesign --force --deep --sign - "$app"
+            codesign --verify --deep --strict "$app"
+          done
           tar -czf macos-build.tar.gz build # keeps the bundles' permissions
       - uses: actions/upload-artifact@v7.0.2
         with:
