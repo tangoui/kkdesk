@@ -65,7 +65,17 @@ func TestE2ENav(t *testing.T) {
 		}
 	}()
 	w := app.Window("kkdesk")
+	if w.FindRegexp(a11y.RoleButton, "^(稍后|复制并分享)$").Name() == "稍后" {
+		w.Find(a11y.RoleButton, "稍后").Click()
+		w.Find(a11y.RoleDialog, "需要屏幕录制权限").WaitGone()
+	}
 	w.FindContains(a11y.RoleNone, "等待连接").Wait()
+	if permission := w.Find(a11y.RoleButton, "配置屏幕录制权限"); permission.Exists() {
+		share := w.Find(a11y.RoleButton, "复制并分享").Bounds()
+		if bounds := permission.Bounds(); bounds.Y != share.Y || bounds.X <= share.X {
+			t.Fatalf("expected share and permission buttons on the same row, got %+v and %+v", share, bounds)
+		}
+	}
 	nav := func(page string) { t.Helper(); w.Find(a11y.RoleMenuItem, page).Click() }
 	dump := func(what string) { t.Helper(); t.Logf("%s:\n%s", what, w.Dump()) }
 

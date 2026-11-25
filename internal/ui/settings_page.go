@@ -10,6 +10,7 @@ import (
 	"github.com/tangoui/tango/ui"
 	"github.com/tangoui/tango/ui/layout"
 	"github.com/tangoui/tango/ui/text"
+	"github.com/tangoui/tango/ui/theme"
 
 	"github.com/tangoui/kkdesk/internal/app"
 	"github.com/tangoui/kkdesk/internal/config"
@@ -279,7 +280,10 @@ func (m *Main) generalSettings(c *ui.Context, f *ui.FormW) {
 		}
 	})
 	f.Item("版本").Body(func() {
-		ui.Text(c, "kkdesk "+app.Version).Layout(layout.Padding(insets(5, 0, 0, 0)))
+		formTheme := c.ThemeFor(theme.CompForm).Components.Form
+		ui.Row(c, func() {
+			ui.Text(c, "kkdesk "+app.Version).Size(formTheme.LabelFontSize)
+		}, layout.H(formTheme.LabelHeight), layout.Middle())
 	})
 	reveal := "在访达中显示"
 	if runtime.GOOS == "windows" {

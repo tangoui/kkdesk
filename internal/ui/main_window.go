@@ -46,6 +46,8 @@ type Form struct {
 	Password string
 	Mode     string   // modeControl (default), modeView or modeTransfer
 	Recent   []Recent // successful connections, newest first
+
+	ScreenRecordingPromptShown bool // suppress repeated prompts on hot reload
 }
 
 // Recent is one entry of 最近连接.
@@ -80,14 +82,15 @@ type Main struct {
 	prober *app.Prober // online state of 我的设备
 
 	// UI thread
-	allow    bool
-	nav      string // selected sidebar item
-	showPW   bool
-	rotate   string // 临时密码 rotation (config.Rotate*), bound to the setting
-	hostname string
-	dev      devicesState
-	xfer     filesPageState
-	set      settingsState
+	allow           bool
+	nav             string // selected sidebar item
+	showPW          bool
+	rotate          string // 临时密码 rotation (config.Rotate*), bound to the setting
+	hostname        string
+	dev             devicesState
+	xfer            filesPageState
+	set             settingsState
+	screenRecording screenRecordingGuide
 
 	mu         sync.Mutex
 	connecting bool
@@ -133,6 +136,13 @@ func OpenMain(o MainOptions) (*Main, error) {
 	m.prober = app.NewProber(app.ProberConfig{}, m.Invalidate)
 	m.syncProbeTargets()
 	app.Watch(m.Invalidate)
+	s.OnFocused(func() {
+		r.Post(func() {
+			if m.screenRecording.enabled {
+				m.screenRecording.refresh(screenRecordingMissing())
+			}
+		})
+	})
 	s.OnClosed(func() { go m.prober.Close() }) // probing stops with the window
 	return m, nil
 }
@@ -158,6 +168,7 @@ func (m *Main) ShowError(msg string) {
 func (m *Main) page(c *ui.Context) {
 	th := c.Theme
 	hs := m.o.Host.State()
+	m.screenRecording.update(hs.Enabled, &m.o.Form.ScreenRecordingPromptShown, screenRecordingMissing)
 	ui.Row(c, func() {
 		m.sidebar(c, hs)
 		ui.Column(c, func() {
@@ -185,7 +196,11 @@ func (m *Main) page(c *ui.Context) {
 			}
 		}, layout.Grow(1)).Bg(th.BgLayout)
 	}, layout.Grow(1))
-	m.confirm(c, hs)
+	if hs.Phase == app.HostPending {
+		m.confirm(c, hs)
+	} else {
+		m.screenRecording.dialog(c, os.Getenv("TANGO_DEV_ROLE") == "worker", openScreenRecordingSettings)
+	}
 }
 
 // sidebar is the left column: brand, navigation and status footer.
