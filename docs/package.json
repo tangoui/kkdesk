@@ -1,6 +1,7 @@
 {
   "name": "kkdesk-docs",
   "private": true,
+  "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
     "dev": "vitepress dev",

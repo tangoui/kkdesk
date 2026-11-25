@@ -90,6 +90,9 @@ export default defineConfig({
         },
       },
     },
-    footer: { message: 'kkdesk · 基于 Tango 构建' },
+    footer: {
+      message: '以 <a href="https://www.gnu.org/licenses/agpl-3.0.html">AGPL-3.0</a> 许可证发布 · 基于 Tango 构建',
+    },
+    socialLinks: [{ icon: 'github', link: 'https://github.com/tangoui/kkdesk' }],
   },
 })

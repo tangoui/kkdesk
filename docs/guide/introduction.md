@@ -43,3 +43,9 @@ kkdesk 还在验证原型阶段。
 ```
 
 视频是 H.264，走 WebRTC 的 RTP；键盘鼠标、画质切换、时钟同步、剪贴板和文件传输都走 WebRTC 数据通道。细节见 [架构](/dev/architecture)。
+
+## 许可证
+
+kkdesk（客户端和 `kkdesk-server`）以 [GNU Affero 通用公共许可证第 3 版（AGPL-3.0）](https://www.gnu.org/licenses/agpl-3.0.html) 发布，全文见仓库根目录的 [`LICENSE`](https://github.com/tangoui/kkdesk/blob/main/LICENSE)。
+
+简单说：可以自由使用、修改和分发；分发修改后的版本时要以同样的许可证公开源代码。AGPL 比 GPL 多一条：**如果你修改了 kkdesk（例如 `kkdesk-server`）并通过网络向别人提供服务，也要向这些用户提供修改后的源代码。** 只是原样部署、自己使用不受影响。具体以许可证原文为准。
