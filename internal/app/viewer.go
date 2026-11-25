@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -213,10 +214,29 @@ func DialError(addr string, err error) string {
 		return fmt.Sprintf("连接 %s 超时", addr)
 	case errors.Is(err, syscall.ECONNREFUSED):
 		return fmt.Sprintf("无法连接到 %s：对方没有开启远程控制", addr)
+	case unreachable(err):
+		// The usual cause: the two machines sit behind different routers
+		// (or a guest network), so this one has no route to the other.
+		msg := fmt.Sprintf("无法连接到 %s：网络不通，两台电脑可能不在同一个局域网", addr)
+		if ips := LocalIPv4(); len(ips) > 0 {
+			msg += "（本机是 " + strings.Join(ips, "、") + "）"
+		}
+		return msg + "。请把两台电脑接到同一个路由器或 Wi-Fi，或从对方连接本机"
 	case errors.As(err, new(*net.OpError)):
 		return fmt.Sprintf("无法连接到 %s：%v", addr, err)
 	}
 	return fmt.Sprintf("连接失败：%v", err)
+}
+
+// unreachable reports a dial error caused by having no route to the host
+// or its network (EHOSTUNREACH, ENETUNREACH; WSAEHOSTUNREACH 10065 and
+// WSAENETUNREACH 10051 on Windows).
+func unreachable(err error) bool {
+	if errors.Is(err, syscall.EHOSTUNREACH) || errors.Is(err, syscall.ENETUNREACH) {
+		return true
+	}
+	var errno syscall.Errno
+	return errors.As(err, &errno) && (errno == 10065 || errno == 10051)
 }
 
 func (v *Viewer) watch(p *session.Peer) {

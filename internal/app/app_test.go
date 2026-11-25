@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"fmt"
+	"net"
+	"os"
 	"strings"
 	"syscall"
 	"testing"
@@ -55,6 +57,9 @@ func TestDialError(t *testing.T) {
 		{context.DeadlineExceeded, "超时"},
 		{fmt.Errorf("dial: %w", syscall.ECONNREFUSED), "没有开启远程控制"},
 		{fmt.Errorf("session: rejected: x"), "连接失败"},
+		{&net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", syscall.EHOSTUNREACH)}, "不在同一个局域网"},
+		{&net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", syscall.ENETUNREACH)}, "不在同一个局域网"},
+		{&net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connectex", syscall.Errno(10065))}, "不在同一个局域网"}, // WSAEHOSTUNREACH
 	} {
 		if got := DialError("h:1", tc.err); !strings.Contains(got, tc.want) {
 			t.Errorf("DialError(%v) = %q, want it to contain %q", tc.err, got, tc.want)
