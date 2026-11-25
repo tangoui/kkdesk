@@ -94,3 +94,9 @@ flutter build apk --release --target-platform android-arm64 \
 | 1280×720 | 99 | 2,999.7 / 3,406.5 | 9.5 | 1,801 / 987 | 830.6 / 5.2 |
 
 1080p 轮 Mac 采集到发送的 10 秒日志快照 P50 为 15.3–17.9 ms。720p 轮的时钟同步 RTT 为 146.5–2,012.3 ms，样本数量和网络状态限制了分辨率之间的比较。1080p 仍未通过 80 ms 门槛。原始日志在 `/tmp/kkdesk-mobile-spike/latency-rtx-recheck/` 和 `/tmp/kkdesk-mobile-spike/latency-rtx-720p/`。
+
+### Wi‑Fi 链路初步排查
+
+根据用户补充的网络测量，Mac `ping` 路由器 `192.168.1.1` 的往返延迟平均为 350 ms，最高为 1.3 s。Mac `ping` iPhone `192.168.1.148` 的往返延迟平均为 459 ms，丢包率为 10%。排查时 Mac 的 `awdl0` 为 `active`，其影响仍待单独验证。
+
+路由器和手机的 `ping` 均出现数百毫秒的往返延迟，结合 1080p 复测中 Mac 采集到发送及 iPhone 解码耗时，初步判断 Wi‑Fi 链路是本次延迟超标的主要因素。代码调优在此暂停，第 1 期尚未开始。
