@@ -1,0 +1,46 @@
+name: Re-sign update manifest
+
+# The manifest of a release (latest.json) expires 30 days after it was
+# signed, and clients then refuse it. Every week this re-signs the latest
+# release's manifest with a fresh expiry (version and files unchanged) and
+# replaces the asset.
+on:
+  schedule:
+    - cron: "17 3 * * 1" # Mondays 03:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  TAN_VERSION: v0.2.1
+
+jobs:
+  resign:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Install tan
+        run: go install github.com/tangoui/tango/cmd/tan@$TAN_VERSION
+      - name: Re-sign and replace latest.json
+        env:
+          TANGO_UPDATE_KEY: ${{ secrets.TANGO_UPDATE_KEY }}
+        run: |
+          tag=$(gh release view --json tagName -q .tagName 2>/dev/null || true)
+          if [ -z "$tag" ]; then
+            echo "no release yet"
+            exit 0
+          fi
+          gh release download "$tag" -p latest.json -D manifest
+          tan sign-update manifest/latest.json
+          gh release upload "$tag" manifest/latest.json --clobber
+          echo "re-signed the manifest of $tag"

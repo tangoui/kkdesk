@@ -1,0 +1,182 @@
+name: Release
+
+# Pushing a tag vX.Y.Z (equal to "version" in tan.json) builds kkdesk for
+# macOS (Apple silicon and Intel, signed), Windows (x64) and Linux (x64 and
+# arm64) plus kkdesk-server, signs the update manifest (latest.json, with
+# binary patches from the previous release) and publishes a GitHub release.
+# Clients find it at releases/latest/download/latest.json (internal/update).
+#
+# Secrets:
+#   TANGO_UPDATE_KEY      private update key from tan keygen
+#   MACOS_CERT_P12        base64 of the code signing certificate and key (.p12)
+#   MACOS_CERT_PASSWORD   password of the .p12
+#   TANGO_SIGN_IDENTITY   codesign identity, e.g. "Apple Development: … (TEAMID)"
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  TAN_VERSION: v0.2.1 # github.com/tangoui/tango/cmd/tan
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - id: v
+        name: Tag must match tan.json
+        run: |
+          version=$(jq -r .version tan.json)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match tan.json version $version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  macos:
+    needs: version
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Install tan
+        run: go install github.com/tangoui/tango/cmd/tan@$TAN_VERSION
+      - name: Import the signing certificate
+        env:
+          P12: ${{ secrets.MACOS_CERT_P12 }}
+          P12_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          kc="$RUNNER_TEMP/signing.keychain-db"
+          kcpw=$(openssl rand -hex 16)
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$kcpw" "$kc"
+          security set-keychain-settings -lut 21600 "$kc"
+          security unlock-keychain -p "$kcpw" "$kc"
+          security import "$RUNNER_TEMP/cert.p12" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$kc"
+          security set-key-partition-list -S apple-tool:,apple: -k "$kcpw" "$kc" >/dev/null
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/cert.p12"
+      - name: Build and sign
+        env:
+          TANGO_SIGN_IDENTITY: ${{ secrets.TANGO_SIGN_IDENTITY }}
+        run: |
+          tan build -platform darwin/arm64,darwin/amd64 -o build
+          for app in build/darwin-*/kkdesk.app; do tan sign "$app"; done
+          tar -czf macos-build.tar.gz build # keeps the bundles' permissions
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: build-macos
+          path: macos-build.tar.gz
+
+  windows:
+    needs: version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Install mingw-w64 and tan
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix
+          go install github.com/tangoui/tango/cmd/tan@$TAN_VERSION
+      - name: Build
+        env:
+          CC: x86_64-w64-mingw32-gcc-posix
+          CXX: x86_64-w64-mingw32-g++-posix
+        run: |
+          tan build -platform windows/amd64 -o build
+          tar -czf windows-build.tar.gz build
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: build-windows
+          path: windows-build.tar.gz
+
+  linux:
+    needs: version
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Install tan
+        run: go install github.com/tangoui/tango/cmd/tan@$TAN_VERSION
+      - name: Build kkdesk and kkdesk-server
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          tan build -platform linux/${{ matrix.arch }} -o build
+          mkdir -p server
+          CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o server/kkdesk-server ./cmd/kkdesk-server
+          tar -czf "server/kkdesk-server-$VERSION-linux-${{ matrix.arch }}.tar.gz" -C server kkdesk-server
+          rm server/kkdesk-server
+          tar -czf linux-build.tar.gz build server
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: build-linux-${{ matrix.arch }}
+          path: linux-build.tar.gz
+
+  publish:
+    needs: [version, macos, windows, linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Install tan
+        run: go install github.com/tangoui/tango/cmd/tan@$TAN_VERSION
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          path: artifacts
+      - name: Unpack the builds
+        run: for f in artifacts/*/*.tar.gz; do tar -xzf "$f"; done
+      - name: Previous release (for binary patches)
+        run: |
+          prev=$(gh release view --json tagName -q .tagName 2>/dev/null || true)
+          if [ -n "$prev" ] && [ "$prev" != "$GITHUB_REF_NAME" ]; then
+            gh release download "$prev" -D prev
+            echo "PREV_ARGS=-prev prev" >> "$GITHUB_ENV"
+            echo "patches from $prev"
+          fi
+      - name: Sign the update manifest
+        env:
+          TANGO_UPDATE_KEY: ${{ secrets.TANGO_UPDATE_KEY }}
+        run: |
+          notes=()
+          [ -f "docs/releases/$VERSION.md" ] && notes=(-notes "@docs/releases/$VERSION.md")
+          tan release-manifest -build build -o release $PREV_ARGS \
+            -url "https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/" "${notes[@]}"
+          cp server/*.tar.gz release/
+          (cd release && sha256sum * > SHA256SUMS)
+          ls -la release
+      - name: Publish the release
+        run: |
+          notes="docs/releases/$VERSION.md"
+          [ -f "$notes" ] || { echo "kkdesk $VERSION" > "$RUNNER_TEMP/notes.md"; notes="$RUNNER_TEMP/notes.md"; }
+          gh release create "$GITHUB_REF_NAME" release/* --title "kkdesk $VERSION" --notes-file "$notes" --verify-tag

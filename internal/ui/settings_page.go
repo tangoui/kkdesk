@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/tangoui/tango/service/updater/updateui"
 	"github.com/tangoui/tango/sys/shell"
 	"github.com/tangoui/tango/ui"
 	"github.com/tangoui/tango/ui/layout"
@@ -319,7 +320,11 @@ func (m *Main) generalSettings(c *ui.Context, f *ui.FormW) {
 		formTheme := c.ThemeFor(theme.CompForm).Components.Form
 		ui.Row(c, func() {
 			ui.Text(c, "kkdesk "+app.Version).Size(formTheme.LabelFontSize)
-		}, layout.H(formTheme.LabelHeight), layout.Middle())
+			if u := m.o.Updater; u != nil && ui.Button(c, "检查更新").Small().Clicked() {
+				a := m.o.App
+				a.Post(func() { updateui.CheckNow(a, u, updateui.Options{}) })
+			}
+		}, layout.H(formTheme.LabelHeight), layout.Middle(), layout.Gap(12))
 	})
 	reveal := "在访达中显示"
 	if runtime.GOOS == "windows" {

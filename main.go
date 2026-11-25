@@ -10,6 +10,8 @@ package main
 
 import (
 	"context"
+	_ "embed"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -22,12 +24,15 @@ import (
 	"time"
 
 	"github.com/tangoui/tango"
+	"github.com/tangoui/tango/service/updater"
+	"github.com/tangoui/tango/service/updater/updateui"
 	"github.com/tangoui/tango/uihost"
 
 	"github.com/tangoui/kkdesk/internal/app"
 	"github.com/tangoui/kkdesk/internal/config"
 	"github.com/tangoui/kkdesk/internal/rendezvous"
 	appui "github.com/tangoui/kkdesk/internal/ui"
+	"github.com/tangoui/kkdesk/internal/update"
 )
 
 // State is what survives a hot reload under tan dev: exported,
@@ -38,11 +43,35 @@ type State struct {
 
 var st State
 
-// version is set at build time: -ldflags "-X main.version=$(git describe --tags --always --dirty)".
-var version = "dev"
+// version overrides the version of tan.json, e.g. -ldflags
+// "-X main.version=$(git describe --tags --always --dirty)" for test builds
+// (which then do not update themselves: see internal/update).
+var version = ""
+
+// tanJSON is the project file; its "version" is the release version (tan
+// build and tan release-manifest read the same field).
+//
+//go:embed tan.json
+var tanJSON []byte
+
+// appVersion is this build's version: the -ldflags override, else the
+// version of tan.json, with "-dev" under tan dev.
+func appVersion() string {
+	if version != "" {
+		return version
+	}
+	var t struct{ Version string }
+	if err := json.Unmarshal(tanJSON, &t); err != nil || t.Version == "" {
+		return "dev"
+	}
+	if os.Getenv("TANGO_DEV_ROLE") != "" {
+		return t.Version + "-dev"
+	}
+	return t.Version
+}
 
 func main() {
-	app.Version = version
+	app.Version = appVersion()
 	app.PrepareProcess() // Windows: per-monitor DPI awareness, before any window or display query
 	o, fs, err := parseFlags(os.Args[1:])
 	if errors.Is(err, flag.ErrHelp) {
@@ -146,10 +175,17 @@ func run(o options) error {
 	a := tango.New(tango.Options{Name: "kkdesk", ID: "com.kkdesk.desktop", QuitOnLastClose: &quit})
 	board.SetApp(a)
 
+	// Self-update: builds made by tan build, started normally (not the
+	// measurement modes -host and -connect).
+	var upd *updater.Updater
+	if releaseBuild && !o.host && o.connect == "" {
+		upd = update.New(app.Version, os.Getenv)
+	}
+
 	var viewer *app.Viewer
 	openMain := func(hidden bool, errMsg string) {
 		m, err := appui.OpenMain(appui.MainOptions{
-			App: a, Host: host, Store: store, Form: &st.Form, ViewerLog: logw, Clipboard: board,
+			App: a, Host: host, Store: store, Form: &st.Form, ViewerLog: logw, Clipboard: board, Updater: upd,
 			ViewOnly: o.viewOnly, Hidden: hidden, Error: errMsg,
 		})
 		if err != nil {
@@ -160,6 +196,13 @@ func run(o options) error {
 	a.OnReady(func() {
 		if o.connect == "" {
 			openMain(false, "")
+			if upd != nil {
+				// Confirms a just-installed version (otherwise it is rolled
+				// back), then checks once a day in the background.
+				if _, err := updateui.Start(a, upd, updateui.Options{}); err != nil {
+					log.Printf("kkdesk: update: %v", err)
+				}
+			}
 			return
 		}
 		settings := store.Settings()
