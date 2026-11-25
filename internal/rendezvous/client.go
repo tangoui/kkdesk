@@ -190,7 +190,11 @@ func ReadOffer(ctx context.Context, conn *websocket.Conn) (Offer, error) {
 }
 
 func Reply(ctx context.Context, conn *websocket.Conn, id string, answer *webrtc.SessionDescription, reason string) error {
-	return write(ctx, conn, message{Type: "answer", ID: id, SDP: answer, Error: reason})
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// The desktop reuses this socket for subsequent offers.
+	return writeWithTimeout(context.WithoutCancel(ctx), conn, message{Type: "answer", ID: id, SDP: answer, Error: reason})
 }
 
 type Guest struct {

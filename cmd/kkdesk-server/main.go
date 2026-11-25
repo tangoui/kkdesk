@@ -72,27 +72,15 @@ func run(args []string) error {
 	if cfg.TURNTLSListen != "" && (tlsConfig == nil || cfg.TURNHost == "") {
 		return errors.New("TURN TLS requires -tls-cert, -tls-key and -turn-host")
 	}
-	relay, err := rendezvous.StartRelay(rendezvous.RelayConfig{
-		UDPAddr: cfg.TURNListen, TLSAddr: cfg.TURNTLSListen, TLS: tlsConfig,
-		BindIP: cfg.RelayBind, PublicIP: ip, MinPort: uint16(cfg.MinPort), MaxPort: uint16(cfg.MaxPort), Secret: secret,
-	})
+	relay, err := startRelay(cfg, ip, tlsConfig, secret)
 	if err != nil {
 		return fmt.Errorf("start TURN: %w", err)
 	}
 	defer relay.Close()
-	udp := net.JoinHostPort(ip.String(), strconv.Itoa(relay.UDPAddr.(*net.UDPAddr).Port))
-	urls := []string{"stun:" + udp, "turn:" + udp + "?transport=udp"}
-	if relay.TLSAddr != nil {
-		tcp := net.JoinHostPort(cfg.TURNHost, strconv.Itoa(relay.TLSAddr.(*net.TCPAddr).Port))
-		urls = append(urls, "turns:"+tcp+"?transport=tcp")
-	}
-	broker, err := rendezvous.NewServerWithOptions(token, secret, urls, rendezvous.ServerOptions{
-		MaxConnections: cfg.MaxConnections, CredentialTTL: time.Duration(cfg.CredentialTTL),
-	})
+	broker, err := newBroker(cfg, ip, relay, token, secret)
 	if err != nil {
 		return err
 	}
-	broker.RelayOnly = cfg.RelayOnly
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	server := &http.Server{
@@ -106,6 +94,9 @@ func run(args []string) error {
 		_ = server.Shutdown(shutdown)
 	}()
 	log.Printf("kkdesk signaling on %s, TURN UDP on %s, relay range %d–%d", cfg.Listen, relay.UDPAddr, cfg.MinPort, cfg.MaxPort)
+	if relay.TCPAddr != nil {
+		log.Printf("kkdesk mobile TURN TCP on %s", relay.TCPAddr)
+	}
 	if tlsConfig != nil {
 		err = server.ListenAndServeTLS("", "")
 	} else {
@@ -115,4 +106,61 @@ func run(args []string) error {
 		return nil
 	}
 	return err
+}
+
+func startRelay(cfg serverConfig, ip net.IP, tlsConfig *tls.Config, secret string) (*rendezvous.Relay, error) {
+	if cfg.TURNListen == "" {
+		cfg.TURNListen = ":0"
+	}
+	tcpListen := cfg.TURNTCPListen
+	if cfg.Identity != "" && tcpListen == "" {
+		tcpListen = defaultMobileTURNTCPListen(cfg)
+	}
+	return rendezvous.StartRelay(rendezvous.RelayConfig{
+		UDPAddr: cfg.TURNListen, TCPAddr: tcpListen, TLSAddr: cfg.TURNTLSListen, TLS: tlsConfig,
+		BindIP: cfg.RelayBind, PublicIP: ip, MinPort: uint16(cfg.MinPort), MaxPort: uint16(cfg.MaxPort), Secret: secret,
+	})
+}
+
+func defaultMobileTURNTCPListen(cfg serverConfig) string {
+	host, port, _ := net.SplitHostPort(cfg.TURNListen)
+	udpPort, _ := net.LookupPort("udp", port)
+	signalingPort := tcpListenerPort(cfg.Listen)
+	tlsPort := tcpListenerPort(cfg.TURNTLSListen)
+	if udpPort == 0 || (udpPort != signalingPort && udpPort != tlsPort) {
+		return cfg.TURNListen
+	}
+	// Keep the existing signaling and TURN TLS ports when they share the UDP port number.
+	fallback := 3479
+	for fallback == signalingPort || fallback == tlsPort {
+		fallback++
+	}
+	return net.JoinHostPort(host, strconv.Itoa(fallback))
+}
+
+func tcpListenerPort(address string) int {
+	_, port, _ := net.SplitHostPort(address)
+	n, _ := net.LookupPort("tcp", port)
+	return n
+}
+
+func newBroker(cfg serverConfig, ip net.IP, relay *rendezvous.Relay, token, secret string) (*rendezvous.Server, error) {
+	udp := net.JoinHostPort(ip.String(), strconv.Itoa(relay.UDPAddr.(*net.UDPAddr).Port))
+	turnUDP := "turn:" + udp + "?transport=udp"
+	urls := []string{"stun:" + udp, turnUDP}
+	if relay.TLSAddr != nil {
+		tlsAddr := net.JoinHostPort(cfg.TURNHost, strconv.Itoa(relay.TLSAddr.(*net.TCPAddr).Port))
+		urls = append(urls, "turns:"+tlsAddr+"?transport=tcp")
+	}
+	opts := rendezvous.ServerOptions{MaxConnections: cfg.MaxConnections, CredentialTTL: time.Duration(cfg.CredentialTTL)}
+	if relay.TCPAddr != nil {
+		tcp := net.JoinHostPort(ip.String(), strconv.Itoa(relay.TCPAddr.(*net.TCPAddr).Port))
+		opts.MobileGuestTURNURLs = []string{turnUDP, "turn:" + tcp + "?transport=tcp"}
+	}
+	broker, err := rendezvous.NewServerWithOptions(token, secret, urls, opts)
+	if err != nil {
+		return nil, err
+	}
+	broker.RelayOnly = cfg.RelayOnly
+	return broker, nil
 }

@@ -2,6 +2,7 @@ package rendezvous
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -121,6 +122,11 @@ func TestPairingRequiresAccessAndForwardsOnlyMatchedSignaling(t *testing.T) {
 		t.Fatalf("host did not receive the offer: %+v, %v", offer, err)
 	}
 	answer := &webrtc.SessionDescription{Type: webrtc.SDPTypeAnswer, SDP: "answer"}
+	cancelled, stopReply := context.WithCancel(ctx)
+	stopReply()
+	if err := Reply(cancelled, host, offer.ID, nil, "late reply"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("reply after cancellation returned %v", err)
+	}
 	if err := Reply(ctx, host, "unmatched", answer, ""); err != nil {
 		t.Fatal(err)
 	}

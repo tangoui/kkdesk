@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -17,13 +18,14 @@ import (
 )
 
 type Server struct {
-	RelayOnly     bool // configure before serving
-	token         [32]byte
-	turnSecret    string
-	credentialTTL time.Duration
-	stunURLs      []string
-	turnURLs      []string
-	slots         chan struct{}
+	RelayOnly           bool // configure before serving
+	token               [32]byte
+	turnSecret          string
+	credentialTTL       time.Duration
+	stunURLs            []string
+	turnURLs            []string
+	mobileGuestTURNURLs []string
+	slots               chan struct{}
 
 	mu      sync.Mutex
 	devices map[string]*registration
@@ -32,6 +34,7 @@ type Server struct {
 
 type registration struct {
 	conn    *websocket.Conn
+	ctx     context.Context
 	ready   chan struct{}
 	done    chan struct{}
 	pending *pendingPair // guarded by Server.mu
@@ -43,8 +46,9 @@ type pendingPair struct {
 }
 
 type ServerOptions struct {
-	MaxConnections int
-	CredentialTTL  time.Duration
+	MaxConnections      int
+	CredentialTTL       time.Duration
+	MobileGuestTURNURLs []string // when set, replaces the mobile guest ICE list
 }
 
 func DefaultServerOptions() ServerOptions {
@@ -78,6 +82,12 @@ func NewServerWithOptions(token, turnSecret string, iceURLs []string, opts Serve
 	if len(s.turnURLs) == 0 {
 		return nil, errors.New("at least one TURN URL is required")
 	}
+	for _, u := range opts.MobileGuestTURNURLs {
+		if !strings.HasPrefix(u, "turn:") {
+			return nil, errors.New("mobile guest TURN URLs must use the turn scheme")
+		}
+	}
+	s.mobileGuestTURNURLs = slices.Clone(opts.MobileGuestTURNURLs)
 	return s, nil
 }
 
@@ -146,7 +156,9 @@ func sendError(ctx context.Context, conn *websocket.Conn, reason string) {
 }
 
 func (s *Server) register(ctx context.Context, conn *websocket.Conn, code string) {
-	h := &registration{conn: conn, ready: make(chan struct{}), done: make(chan struct{})}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	h := &registration{conn: conn, ctx: ctx, ready: make(chan struct{}), done: make(chan struct{})}
 	s.mu.Lock()
 	if s.devices[code] != nil {
 		s.mu.Unlock()
@@ -162,15 +174,10 @@ func (s *Server) register(ctx context.Context, conn *websocket.Conn, code string
 		s.mu.Unlock()
 	}()
 
-	writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	err := write(writeCtx, conn, message{Type: "registered"})
-	cancel()
-	if err != nil {
+	if err := writeWithTimeout(ctx, conn, message{Type: "registered"}); err != nil {
 		return
 	}
 	close(h.ready)
-	ctx, cancel = context.WithCancel(ctx)
-	defer cancel()
 	go heartbeat(ctx, conn)
 	for {
 		msg, err := read(ctx, conn)
@@ -266,7 +273,10 @@ func (s *Server) join(ctx context.Context, conn *websocket.Conn, code string) {
 		return
 	}
 	forward := message{Type: "offer", ID: pair.id, Mode: offer.Mode, SDP: offer.SDP, ICE: hostICE, RelayOnly: s.RelayOnly}
-	if err := write(guestCtx, h.conn, forward); err != nil {
+	if guestCtx.Err() != nil {
+		return
+	}
+	if err := writeWithTimeout(h.ctx, h.conn, forward); err != nil {
 		sendError(ctx, conn, "被控设备已离线")
 		return
 	}
@@ -286,13 +296,24 @@ func (s *Server) join(ctx context.Context, conn *websocket.Conn, code string) {
 }
 
 func (s *Server) ice(id string) ([]webrtc.ICEServer, error) {
+	return s.issueICE(id, s.stunURLs, s.turnURLs)
+}
+
+func (s *Server) mobileGuestICE(id string) ([]webrtc.ICEServer, error) {
+	if len(s.mobileGuestTURNURLs) == 0 {
+		return s.ice(id)
+	}
+	return s.issueICE(id, nil, s.mobileGuestTURNURLs)
+}
+
+func (s *Server) issueICE(id string, stunURLs, turnURLs []string) ([]webrtc.ICEServer, error) {
 	user, credential, err := turn.GenerateLongTermTURNRESTCredentials(s.turnSecret, id, s.credentialTTL)
 	if err != nil {
 		return nil, err
 	}
 	var servers []webrtc.ICEServer
-	if len(s.stunURLs) != 0 {
-		servers = append(servers, webrtc.ICEServer{URLs: s.stunURLs})
+	if len(stunURLs) != 0 {
+		servers = append(servers, webrtc.ICEServer{URLs: stunURLs})
 	}
-	return append(servers, webrtc.ICEServer{URLs: s.turnURLs, Username: user, Credential: credential}), nil
+	return append(servers, webrtc.ICEServer{URLs: turnURLs, Username: user, Credential: credential}), nil
 }

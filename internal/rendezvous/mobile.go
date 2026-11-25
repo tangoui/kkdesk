@@ -124,6 +124,7 @@ func (h *MobileHost) Close() { _ = h.conn.CloseNow() }
 
 type HostMobileExchange struct {
 	conn      *websocket.Conn
+	connCtx   context.Context
 	id        string
 	input     chan pairing.Message
 	ICE       []webrtc.ICEServer
@@ -131,7 +132,11 @@ type HostMobileExchange struct {
 }
 
 func (e *HostMobileExchange) Send(ctx context.Context, msg pairing.Message) error {
-	return writeMobile(ctx, e.conn, message{Type: "mobile_data", ID: e.id, Mobile: &msg})
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// A canceled write can close the socket shared by all requests.
+	return writeWithTimeout(e.connCtx, e.conn, message{Type: "mobile_data", ID: e.id, Mobile: &msg})
 }
 
 func (e *HostMobileExchange) Receive(ctx context.Context) (pairing.Message, error) {
@@ -139,7 +144,14 @@ func (e *HostMobileExchange) Receive(ctx context.Context) (pairing.Message, erro
 	case msg := <-e.input:
 		return msg, nil
 	case <-ctx.Done():
-		return pairing.Message{}, ctx.Err()
+		// The relay sends mobile_end after forwarding all data. Preserve any
+		// receipt already queued before that notification was handled.
+		select {
+		case msg := <-e.input:
+			return msg, nil
+		default:
+			return pairing.Message{}, ctx.Err()
+		}
 	}
 }
 
@@ -166,14 +178,14 @@ func (h *MobileHost) Serve(ctx context.Context, handle func(context.Context, Mob
 		switch msg.Type {
 		case "mobile_begin":
 			if !exists && msg.ID != "" && len(requests) < mobileSlots {
-				e := &HostMobileExchange{conn: h.conn, id: msg.ID, input: make(chan pairing.Message, 4),
+				e := &HostMobileExchange{conn: h.conn, connCtx: ctx, id: msg.ID, input: make(chan pairing.Message, 4),
 					ICE: msg.ICE, RelayOnly: msg.RelayOnly}
 				call, stop := context.WithTimeout(ctx, mobileTimeout)
 				requests[msg.ID] = request{exchange: e, cancel: stop}
 				wg.Go(func() {
 					defer stop()
 					handle(call, e)
-					_ = writeMobile(ctx, h.conn, message{Type: "mobile_end", ID: e.id})
+					_ = writeWithTimeout(ctx, h.conn, message{Type: "mobile_end", ID: e.id})
 					mu.Lock()
 					delete(requests, e.id)
 					mu.Unlock()
@@ -198,6 +210,7 @@ func (h *MobileHost) Serve(ctx context.Context, handle func(context.Context, Mob
 
 type mobileRegistration struct {
 	conn     *websocket.Conn
+	ctx      context.Context
 	done     chan struct{}
 	requests map[string]chan message // guarded by Server.mu
 }
@@ -224,7 +237,7 @@ func (s *Server) handleMobile(ctx context.Context, conn *websocket.Conn, msg mes
 		s.mu.Lock()
 		online := s.mobile[msg.Device] != nil
 		s.mu.Unlock()
-		_ = writeMobile(ctx, conn, message{Type: "mobile_status", Online: online})
+		_ = writeWithTimeout(ctx, conn, message{Type: "mobile_status", Online: online})
 	default:
 		s.forwardMobile(ctx, conn, msg.Device, msg.Type == "mobile_connect")
 	}
@@ -233,7 +246,7 @@ func (s *Server) handleMobile(ctx context.Context, conn *websocket.Conn, msg mes
 
 func (s *Server) registerMobile(ctx context.Context, conn *websocket.Conn, device string) {
 	nonce := pairing.Random()
-	if err := writeMobile(ctx, conn, message{Type: "mobile_challenge", Mobile: &pairing.Message{Type: "challenge", Nonce: nonce}}); err != nil {
+	if err := writeWithTimeout(ctx, conn, message{Type: "mobile_challenge", Mobile: &pairing.Message{Type: "challenge", Nonce: nonce}}); err != nil {
 		return
 	}
 	authCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -249,7 +262,9 @@ func (s *Server) registerMobile(ctx context.Context, conn *websocket.Conn, devic
 		sendError(ctx, conn, "电脑身份校验失败")
 		return
 	}
-	h := &mobileRegistration{conn: conn, done: make(chan struct{}), requests: make(map[string]chan message)}
+	ctx, stop := context.WithCancel(ctx)
+	defer stop()
+	h := &mobileRegistration{conn: conn, ctx: ctx, done: make(chan struct{}), requests: make(map[string]chan message)}
 	s.mu.Lock()
 	if s.mobile[device] != nil {
 		s.mu.Unlock()
@@ -257,7 +272,7 @@ func (s *Server) registerMobile(ctx context.Context, conn *websocket.Conn, devic
 		return
 	}
 	// Hold the lock until the registration acknowledgement is on the wire.
-	err = writeMobile(ctx, conn, message{Type: "mobile_registered"})
+	err = writeWithTimeout(ctx, conn, message{Type: "mobile_registered"})
 	if err == nil {
 		s.mobile[device] = h
 	}
@@ -271,8 +286,6 @@ func (s *Server) registerMobile(ctx context.Context, conn *websocket.Conn, devic
 		close(h.done)
 		s.mu.Unlock()
 	}()
-	ctx, stop := context.WithCancel(ctx)
-	defer stop()
 	go heartbeat(ctx, conn)
 	for {
 		msg, err := read(ctx, conn)
@@ -321,7 +334,7 @@ func (s *Server) forwardMobile(ctx context.Context, conn *websocket.Conn, device
 		var err error
 		begin.ICE, err = s.ice(id + "-host")
 		if err == nil {
-			ready.ICE, err = s.ice(id + "-guest")
+			ready.ICE, err = s.mobileGuestICE(id + "-guest")
 		}
 		if err != nil {
 			sendError(ctx, conn, "无法签发中继凭据")
@@ -329,14 +342,14 @@ func (s *Server) forwardMobile(ctx context.Context, conn *websocket.Conn, device
 		}
 		begin.RelayOnly, ready.RelayOnly = s.RelayOnly, s.RelayOnly
 	}
-	// A guest's cancellation must not close the multiplexed host socket.
-	hostCtx := context.WithoutCancel(ctx)
-	if err := writeMobile(hostCtx, h.conn, begin); err != nil {
+	// All writes to the multiplexed host socket use its registration context.
+	if err := writeWithTimeout(h.ctx, h.conn, begin); err != nil {
 		sendError(ctx, conn, "被控设备已离线")
 		return
 	}
-	if err := writeMobile(ctx, conn, ready); err != nil {
-		_ = writeMobile(hostCtx, h.conn, message{Type: "mobile_end", ID: id})
+	end := message{Type: "mobile_end", ID: id}
+	if err := writeWithTimeout(ctx, conn, ready); err != nil {
+		_ = writeWithTimeout(h.ctx, h.conn, end)
 		return
 	}
 	inputDone := make(chan struct{})
@@ -344,10 +357,10 @@ func (s *Server) forwardMobile(ctx context.Context, conn *websocket.Conn, device
 		defer close(inputDone)
 		for {
 			msg, err := read(ctx, conn)
-			if err != nil || msg.Type != "mobile_data" || msg.Mobile == nil {
+			if err != nil || ctx.Err() != nil || msg.Type != "mobile_data" || msg.Mobile == nil {
 				return
 			}
-			if err := writeMobile(hostCtx, h.conn, message{Type: "mobile_data", ID: id, Mobile: msg.Mobile}); err != nil {
+			if err := writeWithTimeout(h.ctx, h.conn, message{Type: "mobile_data", ID: id, Mobile: msg.Mobile}); err != nil {
 				return
 			}
 		}
@@ -355,14 +368,12 @@ func (s *Server) forwardMobile(ctx context.Context, conn *websocket.Conn, device
 	defer func() {
 		cancel()
 		<-inputDone
-		cleanup, stop := context.WithTimeout(context.Background(), time.Second)
-		defer stop()
-		_ = write(cleanup, h.conn, message{Type: "mobile_end", ID: id})
+		_ = writeWithTimeout(h.ctx, h.conn, end)
 	}()
 	for {
 		select {
 		case msg := <-out:
-			if msg.Type == "mobile_end" || writeMobile(ctx, conn, message{Type: "mobile_data", Mobile: msg.Mobile}) != nil {
+			if msg.Type == "mobile_end" || writeWithTimeout(ctx, conn, message{Type: "mobile_data", Mobile: msg.Mobile}) != nil {
 				return
 			}
 		case <-inputDone:
@@ -376,7 +387,7 @@ func (s *Server) forwardMobile(ctx context.Context, conn *websocket.Conn, device
 	}
 }
 
-func writeMobile(ctx context.Context, conn *websocket.Conn, msg message) error {
+func writeWithTimeout(ctx context.Context, conn *websocket.Conn, msg message) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	return write(ctx, conn, msg)
