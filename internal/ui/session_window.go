@@ -36,6 +36,23 @@ var (
 	frameRates = []int{30, 60, 90, 144}
 )
 
+// sessionWins holds the open session window of each viewer (远程会话 ›
+// 切到窗口).
+var sessionWins sync.Map // *app.Viewer → *sessionWin
+
+// showSession brings the window of v to the front. Main thread.
+func showSession(v *app.Viewer) bool {
+	w, ok := sessionWins.Load(v)
+	if !ok {
+		return false
+	}
+	if s := w.(*sessionWin).surface.Load(); s != nil {
+		s.Show()
+		s.Focus()
+	}
+	return true
+}
+
 // sessionWin is one session window: a tab strip and the remote screen.
 type sessionWin struct {
 	app     *tango.App
@@ -68,6 +85,7 @@ func OpenSession(a *tango.App, v *app.Viewer, onEnd func(msg string)) error {
 	}
 	w.runner.Store(r)
 	w.surface.Store(s)
+	sessionWins.Store(v, w)
 	v.AddNotify(r.Invalidate)
 	var once sync.Once
 	finish := func() {
@@ -78,6 +96,7 @@ func OpenSession(a *tango.App, v *app.Viewer, onEnd func(msg string)) error {
 		})
 	}
 	s.OnClosed(func() {
+		sessionWins.Delete(v)
 		v.Close()
 		v.OnEnd(func() { a.Post(finish) })
 	})

@@ -1,8 +1,9 @@
 // Package appui is kkdesk's interface (directory internal/ui): the main
 // window (sidebar navigation; the 连接 page with this machine's address
 // and password, the form to control another machine and the recent
-// connections; the incoming-connection confirmation and the
-// controlled-side panel) and the session window (tab strip with stats and
+// connections; 我的设备, 远程会话, 文件传输 and 设置; the
+// incoming-connection confirmation and the controlled-side panel) and the
+// session window (tab strip with stats and
 // 控制中心, the remote screen as a native video view). Layout and wording
 // follow the prototype outputs/remote-desktop-ui/index.html.
 package appui
@@ -22,10 +23,10 @@ import (
 	"github.com/tangoui/tango/ui/icon/antd"
 	"github.com/tangoui/tango/ui/layout"
 	"github.com/tangoui/tango/ui/text"
-	"github.com/tangoui/tango/ui/theme"
 	"github.com/tangoui/tango/uihost"
 
 	"github.com/tangoui/kkdesk/internal/app"
+	"github.com/tangoui/kkdesk/internal/config"
 )
 
 // Connection modes of the 控制其他电脑 form.
@@ -61,11 +62,12 @@ const maxRecent = 8
 type MainOptions struct {
 	App       *tango.App
 	Host      *app.Host
-	Form      *Form     // persisted across hot reloads
-	ViewerLog io.Writer // stats of viewer sessions started from the form
-	ViewOnly  bool      // force view-only for those sessions
-	Hidden    bool      // create the window hidden (-connect)
-	Error     string    // initial error shown on the form
+	Store     *config.Store // settings and 我的设备
+	Form      *Form         // persisted across hot reloads
+	ViewerLog io.Writer     // stats of viewer sessions started from the form
+	ViewOnly  bool          // force view-only for those sessions
+	Hidden    bool          // create the window hidden (-connect)
+	Error     string        // initial error shown on the form
 }
 
 // Main is the main window.
@@ -74,16 +76,22 @@ type Main struct {
 	runner  atomic.Pointer[ui.Runner]
 	surface atomic.Pointer[tango.Surface]
 
+	prober *app.Prober // online state of 我的设备
+
 	// UI thread
 	allow    bool
 	nav      string // selected sidebar item
 	showPW   bool
-	rotate   string // 临时密码 rotation (display only for now)
+	rotate   string // 临时密码 rotation (config.Rotate*), bound to the setting
 	hostname string
+	dev      devicesState
+	xfer     filesPageState
+	set      settingsState
 
 	mu         sync.Mutex
 	connecting bool
 	connErr    string
+	connFrom   string // page that started the connection
 }
 
 // Sidebar items.
@@ -98,12 +106,15 @@ var navItems = []ui.MenuItem{
 // OpenMain opens the main window. Call on the main thread.
 func OpenMain(o MainOptions) (*Main, error) {
 	host, _ := os.Hostname()
-	m := &Main{o: o, allow: o.Host.State().Phase != app.HostOff, connErr: o.Error,
-		nav: "connect", rotate: "每次连接后更换", hostname: host}
+	st := o.Store.Settings()
+	m := &Main{o: o, allow: o.Host.State().Phase != app.HostOff, connErr: o.Error, connFrom: "connect",
+		nav: "connect", rotate: o.Host.State().Rotate, hostname: host}
+	m.set.init(st)
 	if o.Form.Mode == "" {
 		o.Form.Mode = modeControl
 	}
-	r, s, err := uihost.Open(o.App, uihost.Options{Surface: tango.SurfaceOptions{
+	setThemeSetting(st.Theme)
+	r, s, err := uihost.Open(o.App, uihost.Options{Theme: themeMode(), Surface: tango.SurfaceOptions{
 		Title:     "kkdesk",
 		Width:     1080,
 		Height:    720,
@@ -112,12 +123,16 @@ func OpenMain(o MainOptions) (*Main, error) {
 		Resizable: true,
 		Centered:  true,
 		Hidden:    o.Hidden,
-	}}, m.page, ui.RunnerOptions{Theme: theme.AntDesign()})
+	}}, m.page, ui.RunnerOptions{})
 	if err != nil {
 		return nil, err
 	}
 	m.runner.Store(r)
 	m.surface.Store(s)
+	m.prober = app.NewProber(app.ProberConfig{}, m.Invalidate)
+	m.syncProbeTargets()
+	app.Watch(m.Invalidate)
+	s.OnClosed(func() { go m.prober.Close() }) // probing stops with the window
 	return m, nil
 }
 
@@ -147,11 +162,20 @@ func (m *Main) page(c *ui.Context) {
 		ui.Column(c, func() {
 			ui.Scroll(c, func() {
 				ui.Column(c, func() {
+					if msg := m.o.Store.Err(); msg != "" {
+						ui.Alert(c, "warning", msg).ShowIcon(true).Show()
+					}
 					switch m.nav {
-					case "connect":
-						m.connectPage(c, hs)
+					case "devices":
+						m.devicesPage(c)
+					case "sessions":
+						m.sessionsPage(c, hs)
+					case "transfer":
+						m.filesPage(c)
+					case "settings":
+						m.settingsPage(c, hs)
 					default:
-						m.comingSoon(c)
+						m.connectPage(c, hs)
 					}
 				}, layout.Gap(16), layout.Padding(insets(20, 24, 24, 24)))
 			}, layout.Grow(1))
@@ -209,35 +233,18 @@ func (m *Main) sidebar(c *ui.Context, hs app.HostState) {
 	}, layout.W(200), layout.Padding(insets(12, 0, 0, 0))).Bg(th.BgContainer).Paint(endLine(th.Split))
 }
 
-// comingSoon is the placeholder of pages that are not built yet.
-func (m *Main) comingSoon(c *ui.Context) {
-	title := ""
-	for _, it := range navItems {
-		if it.Key == m.nav {
-			title = it.Label
-		}
-	}
-	ui.Title(c, title, 4)
-	panel(c, func() {
-		ui.Empty(c).Title("即将推出").Description("这个功能还在开发中，当前版本先使用「连接」。")
-		ui.Row(c, func() {
-			if ui.Button(c, "返回连接").Primary().Clicked() {
-				m.nav = "connect"
-				c.Invalidate()
-			}
-		}, layout.JustifyContent(layout.JustifyCenter))
-	}, layout.Pad(48), layout.Gap(16))
-}
-
 // connect dials in the background and opens the session window, or only
-// the file window in 传文件 mode.
+// the file window in 传文件 mode. A successful connection adds the address
+// to 我的设备 (or updates its 最近连接).
 func (m *Main) connect(addr, pw, mode string) {
 	m.mu.Lock()
-	m.connecting, m.connErr = true, ""
+	m.connecting, m.connErr, m.connFrom = true, "", m.nav
 	m.mu.Unlock()
 	viewOnly := mode == modeView || m.o.ViewOnly
 	filesOnly := mode == modeTransfer
-	v := app.NewViewer(app.ViewerConfig{Addr: addr, Password: pw, ViewOnly: viewOnly, FilesOnly: filesOnly, Log: m.o.ViewerLog}, nil)
+	st := m.o.Store.Settings()
+	v := app.NewViewer(app.ViewerConfig{Addr: addr, Password: pw, ViewOnly: viewOnly, FilesOnly: filesOnly, Log: m.o.ViewerLog,
+		FPS: st.FPS, BitrateBps: st.BitrateMbps * 1_000_000}, nil)
 	go func() {
 		err := v.Connect(context.Background())
 		m.mu.Lock()
@@ -250,6 +257,10 @@ func (m *Main) connect(addr, pw, mode string) {
 		if err != nil {
 			return
 		}
+		if _, err := m.o.Store.Connected(v.Addr(), time.Now()); err != nil {
+			log.Printf("kkdesk: address book: %v", err)
+		}
+		m.syncProbeTargets()
 		m.o.App.Post(func() {
 			m.addRecent(Recent{Addr: addr, At: time.Now(), ViewOnly: viewOnly && !filesOnly, Files: filesOnly})
 			onEnd := func(msg string) {

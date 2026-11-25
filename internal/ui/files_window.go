@@ -19,7 +19,6 @@ import (
 	tin "github.com/tangoui/tango/ui/input"
 	"github.com/tangoui/tango/ui/layout"
 	"github.com/tangoui/tango/ui/text"
-	"github.com/tangoui/tango/ui/theme"
 	"github.com/tangoui/tango/uihost"
 
 	"github.com/tangoui/kkdesk/internal/app"
@@ -104,7 +103,7 @@ func OpenFiles(a *tango.App, v *app.Viewer, own bool, onEnd func(msg string)) er
 		local:  &filePane{title: "本机", sep: string(filepath.Separator), anchor: -1, sel: map[string]bool{}},
 		remote: &filePane{remote: true, title: peerName(v.Addr()), sep: "/", anchor: -1, sel: map[string]bool{}}}
 	w.active = w.local
-	r, s, err := uihost.Open(a, uihost.Options{Surface: tango.SurfaceOptions{
+	r, s, err := uihost.Open(a, uihost.Options{Theme: themeMode(), Surface: tango.SurfaceOptions{
 		Title:     "文件传输 - " + v.Addr(),
 		Width:     1120,
 		Height:    780,
@@ -112,7 +111,7 @@ func OpenFiles(a *tango.App, v *app.Viewer, own bool, onEnd func(msg string)) er
 		MinHeight: 520,
 		Resizable: true,
 		Centered:  true,
-	}}, w.page, ui.RunnerOptions{Theme: theme.AntDesign()})
+	}}, w.page, ui.RunnerOptions{})
 	if err != nil {
 		cancel()
 		return err

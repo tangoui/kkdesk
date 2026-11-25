@@ -15,8 +15,7 @@ import (
 )
 
 var (
-	rotateOpts = ui.Opts("每次连接后更换", "每 12 小时更换", "每 24 小时更换", "不自动更换")
-	modeOpts   = []ui.Option{
+	modeOpts = []ui.Option{
 		{Label: "远程控制", Value: modeControl},
 		{Label: "仅查看", Value: modeView},
 		{Label: "传文件", Value: modeTransfer},
@@ -80,7 +79,10 @@ func (m *Main) hostCard(c *ui.Context, hs app.HostState) {
 			ui.Row(c, func() {
 				ui.Text(c, "临时密码").Size(12).Tertiary()
 				ui.Spacer(c)
-				ui.Select(c, &m.rotate, rotateOpts).Size(ui.Small).Width(140).A11yLabel("密码更换频率")
+				m.rotate = hs.Rotate
+				if ui.Select(c, &m.rotate, rotateOpts).Size(ui.Small).Width(140).A11yLabel("密码更换频率").Changed() {
+					m.setRotate(c, m.rotate)
+				}
 			}, layout.Middle())
 			ui.Row(c, func() {
 				pw := strings.Repeat("•", len(hs.Password))
@@ -170,6 +172,9 @@ func shareText(hs app.HostState) string {
 func (m *Main) connectCard(c *ui.Context) {
 	m.mu.Lock()
 	connecting, errMsg := m.connecting, m.connErr
+	if m.connFrom != "connect" {
+		errMsg = "" // shown on the page that started it
+	}
 	m.mu.Unlock()
 	st := m.o.Form
 	panel(c, func() {

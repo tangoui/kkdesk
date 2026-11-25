@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/tangoui/tango/ui"
+	"github.com/tangoui/tango/ui/a11y"
 	"github.com/tangoui/tango/ui/geom"
 	"github.com/tangoui/tango/ui/layout"
 	"github.com/tangoui/tango/ui/paint"
@@ -22,7 +23,7 @@ func mono(c *ui.Context, s string, size float32, weight text.Weight, col theme.C
 	b := ui.Custom(c, func(_, _ float32) geom.Size { return sz }, func(l *paint.List, r geom.Rect) {
 		l.Glyphs(geom.Pt(r.X, r.Y+(r.H-lay.Height)/2), lay.Glyphs, col)
 	}, opts...)
-	b.Label(s)
+	b.Label(s).Semantics(a11y.RoleText, s) // screen readers and automation read it
 	return b
 }
 

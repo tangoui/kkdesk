@@ -25,6 +25,7 @@ import (
 	"github.com/tangoui/tango/uihost"
 
 	"github.com/tangoui/kkdesk/internal/app"
+	"github.com/tangoui/kkdesk/internal/config"
 	appui "github.com/tangoui/kkdesk/internal/ui"
 )
 
@@ -102,19 +103,8 @@ func run(o options) error {
 			m.Invalidate()
 		}
 	}
-	hostPW := ""
-	if o.connect == "" {
-		hostPW = o.password
-	}
-	host := app.NewHost(app.HostConfig{
-		Addr:        o.listen,
-		Password:    hostPW,
-		FPS:         o.fps,
-		MaxWidth:    o.maxWidth,
-		BitrateMbps: o.bitrate,
-		Log:         logw,
-		AutoAccept:  o.autoAccept,
-	}, func() { invalidate() })
+	store := openStore()
+	host := app.NewHost(hostConfig(o, store, logw), func() { invalidate() })
 
 	// Never prompt for permissions here (measurement runs); explain instead.
 	if o.host {
@@ -129,7 +119,7 @@ func run(o options) error {
 			log.Printf("kkdesk: %s", lim)
 		}
 	}
-	if o.connect == "" {
+	if o.connect == "" && (o.host || store.Settings().AllowRemote) {
 		if err := host.SetEnabled(true); err != nil && o.host {
 			log.Printf("kkdesk: %v", err)
 			return err
@@ -152,7 +142,7 @@ func run(o options) error {
 	var viewer *app.Viewer
 	openMain := func(hidden bool, errMsg string) {
 		m, err := appui.OpenMain(appui.MainOptions{
-			App: a, Host: host, Form: &st.Form, ViewerLog: logw,
+			App: a, Host: host, Store: store, Form: &st.Form, ViewerLog: logw,
 			ViewOnly: o.viewOnly, Hidden: hidden, Error: errMsg,
 		})
 		if err != nil {
@@ -222,4 +212,68 @@ func run(o options) error {
 		}
 	}
 	return err
+}
+
+// openStore loads the configuration (设置, 我的设备). A problem is logged
+// and shown in the main window; the program runs on with the defaults.
+func openStore() *config.Store {
+	dir, err := config.Dir()
+	if err != nil {
+		log.Printf("kkdesk: configuration directory: %v", err)
+		dir = "."
+	}
+	store, err := config.Open(dir)
+	if err != nil {
+		log.Printf("kkdesk: configuration: %v", err)
+	}
+	return store
+}
+
+// hostConfig combines the flags and the settings; a flag given on the
+// command line wins. With -password (or -host, which prints the password
+// once) the temporary password stays for the run: measurement scripts
+// connect again with it.
+func hostConfig(o options, store *config.Store, logw io.Writer) app.HostConfig {
+	st := store.Settings()
+	cfg := app.HostConfig{
+		Addr:        o.listen,
+		Fixed:       st.FixedPassword,
+		Rotate:      st.Rotate,
+		FPS:         st.FPS,
+		MaxWidth:    o.maxWidth,
+		BitrateMbps: st.BitrateMbps,
+		Log:         logw,
+		AutoAccept:  o.autoAccept || !st.Confirm,
+	}
+	if cfg.Addr == "" {
+		cfg.Addr = fmt.Sprintf(":%d", st.Port)
+	}
+	if o.set["fps"] {
+		cfg.FPS = o.fps
+	}
+	if o.set["bitrate"] {
+		cfg.BitrateMbps = o.bitrate
+	}
+	fixedPW := o.connect == "" && o.password != ""
+	if o.host {
+		cfg.Rotate = config.RotateNever // -host prints the password once
+	}
+	switch {
+	case fixedPW:
+		cfg.Password, cfg.Rotate = o.password, config.RotateNever
+	case !o.host && st.Rotate != config.RotateAfterSession:
+		// Timed or never: keep the saved password (NewHost rotates it at
+		// once when it is due).
+		if t := store.TempPassword(); t.Password != "" {
+			cfg.Password, cfg.PasswordSince = t.Password, t.Since
+		}
+	}
+	if !fixedPW {
+		cfg.OnPassword = func(t config.TempPassword) {
+			if err := store.SetTempPassword(t); err != nil {
+				log.Printf("kkdesk: save temporary password: %v", err)
+			}
+		}
+	}
+	return cfg
 }

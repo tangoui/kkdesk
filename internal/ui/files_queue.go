@@ -10,6 +10,7 @@ import (
 	"github.com/tangoui/tango/ui/icon"
 	"github.com/tangoui/tango/ui/layout"
 
+	"github.com/tangoui/kkdesk/internal/app"
 	"github.com/tangoui/kkdesk/internal/files"
 )
 
@@ -154,7 +155,15 @@ func (w *filesWin) work() {
 			}
 			w.loadLocked(dst, dst.path)
 		}
+		rec := app.TransferRecord{Peer: w.v.Addr(), Name: j.name, Upload: j.upload, Bytes: res.Bytes, Files: res.Files, Elapsed: res.Elapsed, Err: j.err}
+		switch j.state {
+		case jobFailed:
+			rec.Result = app.TransferFailed
+		case jobCanceled:
+			rec.Result = app.TransferCanceled
+		}
 		w.mu.Unlock()
+		app.RecordTransfer(rec) // 文件传输 page history
 		w.invalidate()
 	}
 }
