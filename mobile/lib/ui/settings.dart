@@ -126,6 +126,7 @@ class SettingsPage extends StatelessWidget {
                   context,
                   builder: (context) => KDialog(
                     title: 'kkdesk',
+                    leading: const BrandMark(size: 54),
                     content: const Text('版本 1.0.0'),
                     actions: [
                       KButton(label: '完成', onTap: () => Navigator.pop(context)),

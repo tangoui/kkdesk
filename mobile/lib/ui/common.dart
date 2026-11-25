@@ -1,10 +1,25 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 import '../mobile_services.dart';
 
 import 'kit/kit.dart';
 export 'kit/kit.dart';
+
+class BrandMark extends StatelessWidget {
+  const BrandMark({super.key, required this.size});
+
+  final double size;
+
+  @override
+  Widget build(BuildContext context) => Image.asset(
+    'assets/kkdesk_mark.png',
+    width: size,
+    height: size,
+    excludeFromSemantics: true,
+  );
+}
 
 class OSIcon extends StatelessWidget {
   const OSIcon(this.os, {super.key, this.dim = false, this.size = 46});
@@ -14,21 +29,21 @@ class OSIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final (icon, colors) = switch (os) {
+    final (asset, colors) = switch (os) {
       ComputerOS.mac => (
-        Icons.apple,
+        'apple.svg',
         const [Color(0xff5b6372), Color(0xff292d38)],
       ),
       ComputerOS.windows => (
-        Icons.window_outlined,
+        'windows.svg',
         const [Color(0xff428fff), Color(0xff135bd2)],
       ),
       ComputerOS.linux => (
-        CupertinoIcons.chevron_left_slash_chevron_right,
+        'linux.svg',
         const [Color(0xff56646e), Color(0xff232b36)],
       ),
       ComputerOS.unknown => (
-        CupertinoIcons.desktopcomputer,
+        null,
         const [Color(0xff6b778a), Color(0xff465364)],
       ),
     };
@@ -43,7 +58,23 @@ class OSIcon extends StatelessWidget {
           colors: dim ? const [Color(0xff9d9da2), Color(0xff77777e)] : colors,
         ),
       ),
-      child: Icon(icon, color: Colors.white, size: size * .53),
+      child: Center(
+        child: asset == null
+            ? Icon(
+                CupertinoIcons.desktopcomputer,
+                color: Colors.white,
+                size: size * .53,
+              )
+            : SvgPicture.asset(
+                'assets/os/$asset',
+                width: size * .53,
+                height: size * .53,
+                colorFilter: const ColorFilter.mode(
+                  Colors.white,
+                  BlendMode.srcIn,
+                ),
+              ),
+      ),
     );
   }
 }

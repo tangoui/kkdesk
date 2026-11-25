@@ -57,6 +57,8 @@ class _DevicesPageState extends State<DevicesPage> {
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
+                const BrandMark(size: 27),
+                const Spacer(),
                 KIconButton(
                   key: const ValueKey('scan'),
                   tooltip: '扫码配对',

@@ -6,18 +6,11 @@ import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'activity_history.dart';
+import 'computer_os.dart';
 import 'lan_remote_session.dart';
 import 'touch_controller.dart';
 
-enum ComputerOS {
-  mac('macOS 15'),
-  windows('Windows 11'),
-  linux('Linux'),
-  unknown('局域网电脑');
-
-  const ComputerOS(this.label);
-  final String label;
-}
+export 'computer_os.dart';
 
 enum ConnectionPath {
   direct('直连'),
@@ -70,7 +63,7 @@ class Computer {
   factory Computer.fromJson(Map<String, dynamic> json) => Computer(
     id: json['id'] as String,
     name: json['name'] as String,
-    os: ComputerOS.values.byName(json['os'] as String),
+    os: ComputerOS.fromName(json['os']),
     path: ConnectionPath.values.byName(json['path'] as String),
     latency: json['latency'] as int?,
     lastSeen: json['lastSeen'] as String?,

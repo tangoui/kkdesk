@@ -513,10 +513,27 @@ class PairVerification extends StatelessWidget {
       final success = status == PairStatus.success;
       return Column(
         children: [
-          if (waiting)
-            OSIcon(request.computer.os, size: 68)
-          else
-            Icon(icon, color: color, size: 68),
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              OSIcon(request.computer.os, size: 68),
+              if (icon != null)
+                Positioned(
+                  right: -5,
+                  bottom: -5,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: context.card,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(2),
+                      child: Icon(icon, color: color, size: 23),
+                    ),
+                  ),
+                ),
+            ],
+          ),
           const SizedBox(height: 12),
           Text(
             title,

@@ -3,13 +3,23 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'computer_os.dart';
+
 typedef ConnectionEntry = ({
   String computer,
+  String? deviceId,
+  ComputerOS os,
   DateTime start,
   Duration duration,
   String path,
 });
-typedef ClipboardEntry = ({String computer, DateTime time, String text});
+typedef ClipboardEntry = ({
+  String computer,
+  String deviceId,
+  ComputerOS os,
+  DateTime time,
+  String text,
+});
 
 class ActivityHistory extends ChangeNotifier {
   ActivityHistory([this._preferences]) {
@@ -17,12 +27,18 @@ class ActivityHistory extends ChangeNotifier {
         in _preferences?.getStringList('connections') ?? const <String>[]) {
       try {
         final data = jsonDecode(saved) as List<dynamic>;
-        if (data.length != 4) continue;
+        if (data.length < 4) continue;
         _connections.add((
           computer: data[0] as String,
           start: DateTime.parse(data[1] as String),
           duration: Duration(milliseconds: data[2] as int),
           path: data[3] as String,
+          os: data.length > 4
+              ? ComputerOS.fromName(data[4])
+              : ComputerOS.unknown,
+          deviceId: data.length > 5 && data[5] is String
+              ? data[5] as String
+              : null,
         ));
       } on FormatException {
         continue;
@@ -49,6 +65,8 @@ class ActivityHistory extends ChangeNotifier {
           item.start.toIso8601String(),
           item.duration.inMilliseconds,
           item.path,
+          item.os.name,
+          item.deviceId,
         ]),
     ]);
   }
