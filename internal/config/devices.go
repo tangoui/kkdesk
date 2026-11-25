@@ -18,6 +18,7 @@ var (
 	ErrDuplicate   = errors.New("config: already exists")
 	ErrNotFound    = errors.New("config: no such device")
 	ErrInvalidAddr = errors.New("config: invalid address")
+	ErrEmptyName   = errors.New("config: empty name")
 )
 
 // Device is one entry of 我的设备.
@@ -115,7 +116,7 @@ func (s *Store) Groups() []string {
 func (s *Store) AddGroup(name string) error {
 	name = cleanName(name)
 	if name == "" {
-		return errors.New("分组名称不能为空")
+		return ErrEmptyName
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()

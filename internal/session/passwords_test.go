@@ -13,19 +13,26 @@ func tryDial(t *testing.T, h *Host, pw string) (dialErr, acceptErr error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	acc := make(chan error, 1)
+	type res struct {
+		p   *Peer
+		err error
+	}
+	acc := make(chan res, 1)
 	go func() {
 		p, err := h.Accept(ctx)
-		if p != nil {
-			p.Close()
-		}
-		acc <- err
+		acc <- res{p, err}
 	}()
 	ctl, err := Dial(ctx, h.Addr().String(), pw)
+	r := <-acc
+	// Close only when both sides are done: closing one early fails the
+	// other's setup.
 	if ctl != nil {
 		ctl.Close()
 	}
-	return err, <-acc
+	if r.p != nil {
+		r.p.Close()
+	}
+	return err, r.err
 }
 
 func TestTemporaryAndFixedPasswords(t *testing.T) {

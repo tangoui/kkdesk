@@ -295,10 +295,23 @@ func (s *Store) saveLocked() error {
 	err := s.writeLocked()
 	if err != nil {
 		s.errMsg = errText(err)
-	} else {
-		s.errMsg = ""
+		return &SaveError{Err: err}
 	}
-	return err
+	s.errMsg = ""
+	return nil
+}
+
+// SaveError is a change that was made in memory but could not be written
+// to the file.
+type SaveError struct{ Err error }
+
+func (e *SaveError) Error() string { return e.Err.Error() }
+func (e *SaveError) Unwrap() error { return e.Err }
+
+// IsSaveError reports whether err is a SaveError.
+func IsSaveError(err error) bool {
+	var se *SaveError
+	return errors.As(err, &se)
 }
 
 func (s *Store) writeLocked() error {

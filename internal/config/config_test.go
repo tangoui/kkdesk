@@ -152,8 +152,8 @@ func TestUnwritableDirectory(t *testing.T) {
 	}
 	defer os.Chmod(dir, 0o700)
 	_, err := s.Connected("10.0.0.2", time.Now())
-	if err == nil {
-		t.Fatal("save into a read-only directory succeeded")
+	if !IsSaveError(err) {
+		t.Fatalf("save into a read-only directory: %v, want a SaveError", err)
 	}
 	if s.Err() == "" {
 		t.Fatal("Err() empty after a failed save")
@@ -295,7 +295,7 @@ func TestGroups(t *testing.T) {
 	if err := s.AddGroup(" 家人 "); !errors.Is(err, ErrDuplicate) {
 		t.Fatalf("duplicate group: %v", err)
 	}
-	if err := s.AddGroup(""); err == nil {
+	if err := s.AddGroup(""); !errors.Is(err, ErrEmptyName) {
 		t.Fatal("empty group accepted")
 	}
 	d, _ := s.AddDevice("妈妈", "10.0.0.9", "家人")
