@@ -35,13 +35,37 @@ curl -fsSL -o install-server.sh https://raw.githubusercontent.com/tangoui/kkdesk
 
 脚本会构建并启动服务，创建 `/etc/kkdesk-server/server.env` 和 `/etc/kkdesk-server/server.json`，并设置开机启动。重复执行会沿用这两个文件。手头已有支持 `-config` 的当前架构二进制时，可以在命令末尾加 `--binary ./kkdesk-server`。
 
-成功时会显示客户端的 HTTPS 地址。用下面的命令读取要填给客户端的服务密钥：
+安装成功后，在两台电脑的「设置 → 网络」填写相同的配置。**跨网服务**填安装时使用的域名，例如 `https://desk.example.com`。**服务密钥**填下面第二条命令输出的值。如果忘记了域名，第一条命令可以从一键安装生成的 systemd 服务中查到 HTTPS 地址。
 
 ```sh
+systemctl show -p ExecStart --value kkdesk-server.service |
+  sed -nE 's/.*-turn-host ([^[:space:];]+).*/https:\/\/\1/p'
 sudo sed -n 's/^KKDESK_SERVER_TOKEN=//p' /etc/kkdesk-server/server.env
 ```
 
-以下章节提供手动部署所需的构建命令和配置参数。
+填写后点「保存跨网配置」。已经以 root 登录时可以省略 `sudo`。服务端 JSON 配置在 `/etc/kkdesk-server/server.json`，TURN 密钥留在服务器上。
+
+### 下载缓慢或连接被重置
+
+如果下载脚本时出现 `curl: (35) ... Connection reset by peer`，可以通过 jsDelivr 下载同一个脚本。链接固定到发布安装脚本的 Git 提交。把示例域名和 IP 换成实际值。
+
+```sh
+curl -fsSL --connect-timeout 5 --max-time 20 -o install-server.sh \
+  https://cdn.jsdelivr.net/gh/tangoui/kkdesk@1acc6dfb8d5f63bbe432fe7294f5e5704b62a151/scripts/install-server.sh &&
+  sudo bash install-server.sh desk.example.com 203.0.113.10
+```
+
+如果是安装脚本下载 Go 或 Go 模块时太慢，可以在网络较快的电脑上准备好 Linux 二进制和安装脚本，再通过 SFTP 或云控制台上传到服务器。服务器上运行 `uname -m` 确认架构，`x86_64` 对应 `amd64`，`aarch64` 对应 `arm64`。
+
+有正式发布包时，从 GitHub Releases 下载对应架构的 `kkdesk-server-<版本>-linux-<架构>.tar.gz` 并解压出 `kkdesk-server`。也可以按下面的「构建」章节生成二进制，ARM64 服务器将 `GOARCH` 改为 `arm64`。[GitHub Releases](https://github.com/tangoui/kkdesk/releases)
+
+将 `install-server.sh` 和可执行文件 `kkdesk-server` 放到服务器的同一个目录，在该目录运行下面的命令。已经以 root 登录时可以省略 `sudo`。
+
+```sh
+sudo bash install-server.sh desk.example.com 203.0.113.10 --binary ./kkdesk-server
+```
+
+`--binary` 会跳过 Go 工具链下载、Go 模块下载和服务端编译。安装所需的系统软件包和证书仍由脚本准备。
 
 ## 构建
 

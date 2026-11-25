@@ -49,6 +49,8 @@ curl -fsSL -o install-server.sh https://raw.githubusercontent.com/tangoui/kkdesk
   sudo bash install-server.sh desk.example.com 203.0.113.10
 ```
 
+如果 GitHub Raw 连接被重置，或安装时下载 Go 和依赖太慢，可以从 CDN 下载脚本，或上传预编译的 Linux 二进制安装。[下载故障与加速](https://tangoui.github.io/kkdesk/deploy/server.html#下载缓慢或连接被重置)
+
 ### 手动部署
 
 ```sh
