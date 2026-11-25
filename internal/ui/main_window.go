@@ -214,10 +214,12 @@ func (m *Main) sidebar(c *ui.Context, hs app.HostState) {
 			ui.Row(c, func() {
 				col, msg, sub := th.Success.Base, "服务正常", "端口 "+itoa(hs.Port)
 				switch {
-				case hs.Phase == app.HostOff:
-					col, msg, sub = th.TextQuaternary, "未开启被控", ""
 				case hs.Err != "":
-					col, msg, sub = th.Warning.Base, "需要处理", ""
+					// Wanted on but not listening (a refused or busy port):
+					// not "off", something needs attention.
+					col, msg, sub = th.Warning.Base, "需要处理", "见连接页"
+				case !hs.Enabled && hs.Phase != app.HostActive:
+					col, msg, sub = th.TextQuaternary, "未开启被控", ""
 				case hs.Phase == app.HostActive && hs.FilesOnly:
 					col, msg, sub = th.Error.Base, "正在传输文件", ""
 				case hs.Phase == app.HostActive:

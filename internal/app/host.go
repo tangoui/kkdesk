@@ -15,6 +15,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -371,6 +372,11 @@ func (h *Host) State() HostState {
 	if tcp, err := net.ResolveTCPAddr("tcp", h.cfg.Addr); err == nil && tcp.Port != 0 {
 		s.Port = tcp.Port
 	}
+	if h.ln != nil {
+		if tcp, ok := h.ln.Addr().(*net.TCPAddr); ok && tcp.Port != 0 {
+			s.Port = tcp.Port // the port actually in use (it can differ, see startLocked)
+		}
+	}
 	if h.peer != nil {
 		s.Peer = h.peer.RemoteAddr()
 		s.Since = h.since
@@ -406,8 +412,37 @@ func (h *Host) SetEnabled(on bool) error {
 // tests).
 var listenRetryEvery = time.Second
 
+// listen opens the signaling listener (a variable for tests).
+var listen = session.Listen
+
+// altPorts is how many ports after the configured one are tried when the
+// system refuses it.
+const altPorts = 20
+
 func (h *Host) startLocked() error {
-	ln, err := session.Listen(h.cfg.Addr, h.password, h.cfg.Fixed)
+	ln, err := listen(h.cfg.Addr, h.password, h.cfg.Fixed)
+	if err != nil && addrDenied(err) {
+		// Windows reserves port ranges for Hyper-V, WSL and Docker
+		// (netsh interface ipv4 show excludedportrange protocol=tcp);
+		// binding inside one fails with WSAEACCES. Use the next free port.
+		host, port := splitPort(h.cfg.Addr)
+		for i := 1; i <= altPorts && port > 0 && port+i <= 65535; i++ {
+			alt := net.JoinHostPort(host, strconv.Itoa(port+i))
+			l2, err2 := listen(alt, h.password, h.cfg.Fixed)
+			if err2 == nil {
+				ln, err = l2, nil
+				h.notice = fmt.Sprintf("端口 %d 被系统保留（常见于 Hyper-V、WSL、Docker），已改用 %d", port, port+i)
+				break
+			}
+			if !addrDenied(err2) && !addrInUse(err2) {
+				break
+			}
+		}
+		if err != nil {
+			h.errMsg = fmt.Sprintf("端口 %d 及之后 %d 个端口都被系统保留或占用，请在「设置 › 网络」里换一个端口", port, altPorts)
+			return err
+		}
+	}
 	if err != nil {
 		if addrInUse(err) {
 			// The port is often held by a process that is exiting (a hot
@@ -451,6 +486,27 @@ func addrInUse(err error) bool {
 	}
 	var errno syscall.Errno
 	return errors.As(err, &errno) && errno == 10048 // WSAEADDRINUSE
+}
+
+// addrDenied reports a listen error caused by the system refusing the port
+// (Windows WSAEACCES 10013 inside a reserved range; EACCES elsewhere).
+func addrDenied(err error) bool {
+	if errors.Is(err, syscall.EACCES) {
+		return true
+	}
+	var errno syscall.Errno
+	return errors.As(err, &errno) && errno == 10013 // WSAEACCES
+}
+
+// splitPort splits a listen address such as ":21118"; port is 0 when it
+// cannot be parsed.
+func splitPort(addr string) (host string, port int) {
+	h, p, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", 0
+	}
+	n, _ := strconv.Atoi(p)
+	return h, n
 }
 
 // portOf returns the port of a listen address such as ":21118".

@@ -102,7 +102,7 @@ func (m *Main) settingsPage(c *ui.Context, hs app.HostState) {
 			ui.Menu(c, settingsNav, &s.tab).Show()
 		}, layout.W(160), layout.Padding(insets(4, 0, 4, 0)))
 		panel(c, func() {
-			f := ui.Form(c).LabelWidth(140)
+			f := ui.Form(c).LabelWidth(140).Layout(layout.Gap(20)) // room between items, as Ant forms have
 			f.Body(func() {
 				switch s.tab {
 				case "quality":
@@ -115,7 +115,7 @@ func (m *Main) settingsPage(c *ui.Context, hs app.HostState) {
 					m.securitySettings(c, f, hs)
 				}
 			})
-		}, layout.Grow(1), layout.MinW(0), layout.Padding(insets(24, 24, 4, 24)))
+		}, layout.Grow(1), layout.MinW(0), layout.Padding(insets(24, 24, 24, 24)))
 	}, layout.Gap(16), layout.AlignItems(layout.AlignStart))
 }
 
