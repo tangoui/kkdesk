@@ -83,9 +83,7 @@ func TestReceiveDoesNotEcho(t *testing.T) {
 	s := Start(Options{Local: b, Send: out.send, Interval: tick})
 	defer s.Stop()
 	s.Receive("from the other side")
-	if got, _ := b.ReadText(); got != "from the other side" {
-		t.Fatalf("clipboard %q", got)
-	}
+	waitFor(t, "the received text", func() bool { got, _ := b.ReadText(); return got == "from the other side" })
 	time.Sleep(5 * tick)
 	if got := out.list(); len(got) != 0 {
 		t.Fatalf("echoed %q", got)
@@ -101,6 +99,7 @@ func TestNotAllowed(t *testing.T) {
 	s := Start(Options{Local: b, Send: out.send, Interval: tick, Allowed: allowed.Load})
 	defer s.Stop()
 	s.Receive("blocked")
+	time.Sleep(5 * tick)
 	if got, _ := b.ReadText(); got != "" {
 		t.Fatalf("applied %q while not allowed", got)
 	}
@@ -152,4 +151,52 @@ func TestStop(t *testing.T) {
 	if got, _ := b.ReadText(); got != "after" || len(out.list()) != 0 {
 		t.Fatalf("clipboard %q, sent %q after Stop", got, out.list())
 	}
+}
+
+// An image or a file list reads as "": it is not sent (it would empty the
+// other clipboard).
+func TestEmptyNotSent(t *testing.T) {
+	b := &fakeBoard{text: "text"}
+	var out sent
+	s := Start(Options{Local: b, Send: out.send, Interval: tick})
+	defer s.Stop()
+	b.set("")
+	time.Sleep(5 * tick)
+	if got := out.list(); len(got) != 0 {
+		t.Fatalf("sent %q", got)
+	}
+}
+
+// slowBoard blocks writes until released.
+type slowBoard struct {
+	fakeBoard
+	release chan struct{}
+}
+
+func (b *slowBoard) WriteText(s string) error {
+	<-b.release
+	return b.fakeBoard.WriteText(s)
+}
+
+// Receive returns at once even while the clipboard is slow (it runs on the
+// session's meta channel, which also carries the clock sync), and the
+// newest text wins.
+func TestReceiveDoesNotBlock(t *testing.T) {
+	b := &slowBoard{release: make(chan struct{})}
+	s := Start(Options{Local: b, Send: func(string) error { return nil }, Interval: tick})
+	defer s.Stop()
+	done := make(chan struct{})
+	go func() {
+		for _, x := range []string{"1", "2", "3", "4"} {
+			s.Receive(x)
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Receive blocked on a slow clipboard")
+	}
+	close(b.release)
+	waitFor(t, "the newest text", func() bool { got, _ := b.ReadText(); return got == "4" })
 }

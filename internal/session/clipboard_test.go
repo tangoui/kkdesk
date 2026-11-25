@@ -79,3 +79,21 @@ func TestClipAssembler(t *testing.T) {
 		t.Fatal("malformed chunk delivered")
 	}
 }
+
+// A text over MaxClipboard is dropped whole: its remaining chunks are not
+// taken for a new text (a peer that ignores the limit).
+func TestClipAssemblerOverLimit(t *testing.T) {
+	var a clipAssembler
+	big := make([]byte, clipChunkSize)
+	for i := 0; i*clipChunkSize <= MaxClipboard; i++ {
+		if _, ok := a.add(clipChunk(7, false, big)); ok {
+			t.Fatal("delivered while over the limit")
+		}
+	}
+	if s, ok := a.add(clipChunk(7, true, []byte("tail"))); ok {
+		t.Fatalf("delivered %d bytes of a dropped text", len(s))
+	}
+	if s, ok := a.add(clipChunk(8, true, []byte("next"))); !ok || s != "next" {
+		t.Fatalf("next text: %q %v", s, ok)
+	}
+}

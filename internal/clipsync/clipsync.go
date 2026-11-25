@@ -38,6 +38,7 @@ type Sync struct {
 	stop chan struct{}
 	done chan struct{}
 	once sync.Once
+	recv chan string // received text, applied by loop (the latest wins)
 
 	// mu is held across a read and the comparison (poll) and across a
 	// write (Receive): otherwise a read from before a received text could
@@ -55,7 +56,7 @@ func Start(o Options) *Sync {
 	if o.Interval <= 0 {
 		o.Interval = 500 * time.Millisecond
 	}
-	s := &Sync{o: o, stop: make(chan struct{}), done: make(chan struct{})}
+	s := &Sync{o: o, stop: make(chan struct{}), done: make(chan struct{}), recv: make(chan string, 1)}
 	s.mu.Lock()
 	if t, err := o.Local.ReadText(); err == nil {
 		s.last, s.known = t, true
@@ -76,9 +77,31 @@ func (s *Sync) Stop() {
 	})
 }
 
-// Receive writes text from the other side to the local clipboard, if
-// allowed.
+// Receive queues text from the other side for the local clipboard, if
+// allowed. It does not wait for the clipboard: the caller is the session's
+// meta channel, which also carries the clock sync. A text not yet written
+// is replaced by a newer one.
 func (s *Sync) Receive(text string) {
+	if !s.allowed() {
+		return
+	}
+	for {
+		select {
+		case <-s.stop:
+			return
+		case s.recv <- text:
+			return
+		default:
+			select { // drop the older queued text
+			case <-s.recv:
+			default:
+			}
+		}
+	}
+}
+
+// apply writes received text to the local clipboard (loop goroutine).
+func (s *Sync) apply(text string) {
 	if !s.allowed() {
 		return
 	}
@@ -104,6 +127,8 @@ func (s *Sync) loop() {
 		select {
 		case <-s.stop:
 			return
+		case text := <-s.recv:
+			s.apply(text)
 		case <-t.C:
 			if text, ok := s.poll(); ok {
 				if err := s.o.Send(text); err != nil {
@@ -125,11 +150,14 @@ func (s *Sync) poll() (string, bool) {
 		s.logLocked("read clipboard: %v", err)
 		return "", false
 	}
+	s.errLast = ""                       // log the next failure again
 	changed := s.known && text != s.last // the first read is the baseline
 	s.last, s.known = text, true
 	// A change made while not allowed is taken as seen: turning the
 	// permission on later does not send it.
-	if !changed || !s.allowed() || (s.o.MaxLen > 0 && len(text) > s.o.MaxLen) {
+	// "" is also what an image or a file list reads as: sending it would
+	// empty the other clipboard.
+	if !changed || text == "" || !s.allowed() || (s.o.MaxLen > 0 && len(text) > s.o.MaxLen) {
 		return "", false
 	}
 	return text, true

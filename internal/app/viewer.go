@@ -224,8 +224,6 @@ func (v *Viewer) Connect(ctx context.Context) error {
 	fps, bps := v.fps, v.bitrate
 	v.mu.Unlock()
 	p.OnVideo(v.video)
-	stopClip := v.syncClipboard(p)
-	go func() { <-p.Done(); stopClip() }()
 	go v.watch(p)
 	addSession(v)
 	if !v.cfg.FilesOnly && (v.cfg.FPS > 0 || v.cfg.BitrateBps > 0) {
@@ -449,6 +447,17 @@ func (v *Viewer) video(frame []byte, captureAt time.Time) {
 		}
 		v.dec = d
 		go func() { <-v.peerDone(); d.Close() }()
+		// The first frame means the host accepted and streams: start the
+		// clipboard sync now, so a copy made while it was still confirming
+		// is not lost (the host drops clipboard text until it accepts).
+		go func() {
+			v.mu.Lock()
+			p := v.peer
+			v.mu.Unlock()
+			stop := v.syncClipboard(p)
+			<-p.Done()
+			stop()
+		}()
 	}
 	if err := v.dec.Decode(frame, captureAt); err != nil {
 		if time.Since(v.lastPLI) > 500*time.Millisecond {

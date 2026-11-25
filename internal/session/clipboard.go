@@ -73,9 +73,10 @@ func clipChunk(id uint32, last bool, payload []byte) []byte {
 // clipAssembler joins the chunks of one text. Messages of the meta channel
 // arrive in order, one at a time.
 type clipAssembler struct {
-	id   uint32
-	open bool
-	buf  []byte
+	id      uint32
+	open    bool
+	buf     []byte
+	dropped bool // the text id went over MaxClipboard: skip it to its last chunk
 }
 
 // add takes one metaClip message and returns the text once it is complete.
@@ -84,11 +85,17 @@ func (a *clipAssembler) add(m []byte) (string, bool) {
 		return "", false
 	}
 	id, last := binary.BigEndian.Uint32(m[1:]), m[5] == 1
+	if a.dropped && id == a.id {
+		if last {
+			a.dropped = false
+		}
+		return "", false
+	}
 	if !a.open || id != a.id {
-		a.id, a.open, a.buf = id, true, a.buf[:0] // a new text drops an unfinished one
+		a.id, a.open, a.dropped, a.buf = id, true, false, a.buf[:0] // a new text drops an unfinished one
 	}
 	if len(a.buf)+len(m)-6 > MaxClipboard {
-		a.open, a.buf = false, nil
+		a.open, a.buf, a.dropped = false, nil, !last
 		return "", false
 	}
 	a.buf = append(a.buf, m[6:]...)
