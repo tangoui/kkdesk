@@ -6,3 +6,8 @@ zz_tan_*.syso
 .DS_Store
 go.work
 go.work.sum
+
+# VitePress documentation site (docs/)
+docs/node_modules/
+docs/.vitepress/cache/
+docs/.vitepress/dist/
