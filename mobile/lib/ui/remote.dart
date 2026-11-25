@@ -12,6 +12,8 @@ import '../activity_history.dart';
 import '../mobile_services.dart';
 import '../touch_controller.dart';
 import 'common.dart';
+import 'files/file_browser.dart';
+import 'files/transfer_center.dart';
 import 'remote_keyboard.dart';
 
 class RemotePage extends StatefulWidget {
@@ -21,6 +23,8 @@ class RemotePage extends StatefulWidget {
     required this.session,
     required this.settings,
     required this.history,
+    required this.fileCenter,
+    this.connectFiles,
     this.viewOnly = false,
   });
 
@@ -29,6 +33,8 @@ class RemotePage extends StatefulWidget {
   final MobileSettings settings;
   final ActivityHistory history;
   final bool viewOnly;
+  final TransferCenter fileCenter;
+  final Future<TransferConnection> Function()? connectFiles;
 
   @override
   State<RemotePage> createState() => _RemotePageState();
@@ -483,7 +489,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
       final menuHeight = switch (_panel!) {
         _Panel.menu => 288.0,
         _Panel.touch => 166.0,
-        _Panel.more => 218.0,
+        _Panel.more => 257.0,
         _Panel.screens => 41.0 * (widget.session.screens.length + 1) + 12.0,
         _Panel.quality => 176.0,
       };
@@ -727,6 +733,12 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
             CupertinoIcons.doc_on_clipboard,
             onTap: touchAllowed && session.canUseClipboard ? _clipboard : null,
           ),
+          _row(
+            '传文件',
+            CupertinoIcons.folder,
+            key: 'remote-files',
+            onTap: widget.connectFiles == null ? null : _openFiles,
+          ),
           _row('隐私屏', CupertinoIcons.eye_slash),
         ];
     }
@@ -780,6 +792,28 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
       ),
     ),
   );
+
+  Future<void> _openFiles() async {
+    final connect = widget.connectFiles;
+    if (connect == null) return;
+    setState(() => _panel = null);
+    _touch.cancel();
+    _keys.release();
+    await _setImmersive(false);
+    await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+    if (!mounted) return;
+    try {
+      await Navigator.push<void>(
+        context,
+        MaterialPageRoute(
+          builder: (_) =>
+              FileBrowser(connect: connect, center: widget.fileCenter),
+        ),
+      );
+    } finally {
+      if (mounted) await _enter();
+    }
+  }
 
   Future<void> _clipboard() async {
     setState(() => _panel = null);

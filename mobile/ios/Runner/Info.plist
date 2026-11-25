@@ -32,6 +32,10 @@
 	<string>使用面容 ID 解锁 kkdesk 并确认免确认连接。</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>连接到同一局域网中运行 kkdesk 的电脑。</string>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIApplicationSceneManifest</key>

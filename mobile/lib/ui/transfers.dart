@@ -5,19 +5,25 @@ import 'package:flutter/services.dart';
 import '../activity_history.dart';
 import '../mobile_services.dart';
 import 'common.dart';
+import 'files/transfer_center.dart';
+import 'files/transfer_rows.dart';
 
 class TransfersPage extends StatelessWidget {
   const TransfersPage({
     super.key,
     required this.history,
     required this.devices,
+    this.files,
+    this.browse,
   });
   final ActivityHistory history;
   final DeviceRepository devices;
+  final TransferCenter? files;
+  final VoidCallback? browse;
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-    listenable: Listenable.merge([history, devices]),
+    listenable: Listenable.merge([history, devices, files]),
     builder: (context, _) => ListView(
       padding: EdgeInsets.fromLTRB(
         20,
@@ -30,34 +36,21 @@ class TransfersPage extends StatelessWidget {
         const SizedBox(height: 23),
         GroupCard(
           children: [
-            Semantics(
-              enabled: false,
-              button: true,
-              child: KRow(
-                title: '文件传输',
-                subtitle: '在手机和电脑之间发送文件',
-                dimmed: true,
-                leading: _icon(context, CupertinoIcons.folder, disabled: true),
-                trailing: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: context.recessed,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 9,
-                      vertical: 5,
-                    ),
-                    child: Text(
-                      '第 2 期',
-                      style: TextStyle(color: context.muted, fontSize: 12),
-                    ),
-                  ),
-                ),
-              ),
+            KRow(
+              title: '文件传输',
+              subtitle: '在手机和电脑之间传输文件',
+              leading: _icon(context, CupertinoIcons.folder),
+              chevron: true,
+              onTap: browse,
             ),
           ],
         ),
+        if (files case final files?) ...[
+          const SizedBox(height: 22),
+          ActiveTransferGroup(center: files),
+          const SizedBox(height: 22),
+          TransferHistoryGroup(center: files),
+        ],
         const SizedBox(height: 22),
         GroupCard(
           title: '最近连接',

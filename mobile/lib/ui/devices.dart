@@ -12,12 +12,14 @@ class DevicesPage extends StatefulWidget {
     required this.scan,
     required this.add,
     required this.connect,
+    required this.transfer,
   });
 
   final DeviceRepository devices;
   final VoidCallback scan;
   final VoidCallback add;
   final void Function(Computer computer, {bool viewOnly}) connect;
+  final ValueChanged<Computer> transfer;
 
   @override
   State<DevicesPage> createState() => _DevicesPageState();
@@ -116,6 +118,7 @@ class _DevicesPageState extends State<DevicesPage> {
           computer: computer,
           connect: () => widget.connect(computer),
           view: () => widget.connect(computer, viewOnly: true),
+          transfer: () => widget.transfer(computer),
           rename: () => renameComputer(context, widget.devices, computer),
         ),
     ],
@@ -129,12 +132,14 @@ class _DeviceRow extends StatelessWidget {
     required this.connect,
     required this.view,
     required this.rename,
+    required this.transfer,
   });
 
   final Computer computer;
   final VoidCallback connect;
   final VoidCallback view;
   final VoidCallback rename;
+  final VoidCallback transfer;
 
   @override
   Widget build(BuildContext context) {
@@ -159,10 +164,11 @@ class _DeviceRow extends StatelessWidget {
             color: blue,
             onTap: online ? view : null,
           ),
-          const _SwipeAction(
+          _SwipeAction(
             label: '传文件',
             icon: CupertinoIcons.folder,
-            color: Color(0xff666670),
+            color: const Color(0xff26756a),
+            onTap: online ? transfer : null,
           ),
           _SwipeAction(
             label: '改名',
@@ -292,7 +298,8 @@ class _SwipeAction extends StatelessWidget {
 }
 
 class LanSignIn extends StatefulWidget {
-  const LanSignIn({super.key});
+  const LanSignIn({super.key, this.files = false});
+  final bool files;
 
   @override
   State<LanSignIn> createState() => _LanSignInState();
@@ -339,7 +346,7 @@ class _LanSignInState extends State<LanSignIn> {
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       Text(
-        '局域网连接',
+        widget.files ? '仅传文件' : '局域网连接',
         textAlign: TextAlign.center,
         style: Theme.of(context).textTheme.titleLarge,
       ),
@@ -352,6 +359,7 @@ class _LanSignInState extends State<LanSignIn> {
       const SizedBox(height: 20),
       KInput(
         controller: _address,
+        key: const ValueKey('lan-address'),
         label: '电脑地址',
         hint: '192.168.1.10:21118',
         error: _addressError,
@@ -365,6 +373,7 @@ class _LanSignInState extends State<LanSignIn> {
       const SizedBox(height: 12),
       KInput(
         controller: _password,
+        key: const ValueKey('lan-password'),
         focusNode: _passwordFocus,
         label: '连接密码',
         error: _passwordError,
@@ -381,7 +390,7 @@ class _LanSignInState extends State<LanSignIn> {
         ),
       ),
       const SizedBox(height: 16),
-      KButton(label: '连接', onTap: _submit),
+      KButton(label: widget.files ? '浏览电脑文件' : '连接', onTap: _submit),
       KButton(
         label: '取消',
         variant: KButtonVariant.text,
