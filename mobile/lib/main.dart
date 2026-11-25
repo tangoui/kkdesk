@@ -2,11 +2,14 @@ import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'mobile_services.dart';
+import 'pairing/services.dart';
+import 'pairing/transport.dart';
 import 'ui/common.dart';
 import 'ui/devices.dart';
 import 'ui/files/file_browser.dart';
@@ -21,14 +24,13 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   final preferences = await SharedPreferences.getInstance();
+  const demo = kDebugMode && bool.fromEnvironment('KKDESK_DEMO');
   runApp(
     KkdeskApp(
       filePreferences: SharedPreferencesAsync(),
-      services: MobileServices.demo(
-        preferences: preferences,
-        camera: true,
-        biometrics: DeviceBiometrics(),
-      ),
+      services: demo
+          ? MobileServices.demo(preferences: preferences, camera: true)
+          : await realMobileServices(preferences),
     ),
   );
 }
@@ -223,6 +225,20 @@ class _HomeState extends State<_Home> {
     _connecting = true;
     try {
       FocusScope.of(context).unfocus();
+      if (computer != null && _services.sessions is PairedRemoteSessions) {
+        if (_services.settings.locked && !await _authorize('验证身份以传输文件')) return;
+        if (!mounted) return;
+        await Navigator.push<void>(
+          context,
+          MaterialPageRoute(
+            builder: (_) => FileBrowser(
+              center: _transfers,
+              connect: () => _reopenPairedFiles(computer)!(),
+            ),
+          ),
+        );
+        return;
+      }
       final target = await appSheet<({String address, String password})>(
         context,
         (_) => const LanSignIn(files: true),
@@ -272,8 +288,11 @@ class _HomeState extends State<_Home> {
     final input = await Navigator.push<String>(
       context,
       MaterialPageRoute(
-        builder: (_) =>
-            ScanPage(camera: _services.camera, preview: _services.preview),
+        builder: (_) => ScanPage(
+          camera: _services.camera,
+          preview: _services.preview,
+          manualCode: _services.pairing is DemoPairingService,
+        ),
       ),
     );
     if (input == null || !mounted) return;
@@ -312,6 +331,14 @@ class _HomeState extends State<_Home> {
     } on FormatException catch (error) {
       if (mounted) {
         KNotice.show(context, error.message, kind: KNoticeKind.error);
+      }
+    } on Exception catch (error) {
+      if (mounted) {
+        KNotice.show(
+          context,
+          error is PairFailure ? error.message : '无法请求配对，请检查电脑是否在线',
+          kind: KNoticeKind.error,
+        );
       }
     }
   }
@@ -369,7 +396,8 @@ class _HomeState extends State<_Home> {
     _connecting = true;
     FocusScope.of(context).unfocus();
     try {
-      if (!computer.confirmOnHost || _services.settings.locked) {
+      if (_services.settings.locked ||
+          _services.sessions is DemoRemoteSessions && !computer.confirmOnHost) {
         if (!await _authorize('验证身份以连接「${computer.name}」')) return;
       }
       if (!mounted) return;
@@ -377,10 +405,21 @@ class _HomeState extends State<_Home> {
         computer,
         _services.sessions.paired(computer),
         viewOnly: viewOnly,
+        reopenFiles: _reopenPairedFiles(computer),
       );
     } finally {
       _connecting = false;
     }
+  }
+
+  Future<TransferConnection> Function()? _reopenPairedFiles(Computer computer) {
+    final sessions = _services.sessions;
+    if (sessions is! PairedRemoteSessions) return null;
+    return () => _transfers.connectPaired(
+      computer.id,
+      computer.name,
+      sessions.connection(computer),
+    );
   }
 
   Future<void> _showRemote(

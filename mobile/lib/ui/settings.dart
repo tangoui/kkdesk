@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../mobile_services.dart';
+import '../pairing/transport.dart';
 import 'common.dart';
 
 class SettingsPage extends StatelessWidget {
@@ -210,7 +211,18 @@ class _PairedDevices extends StatelessWidget {
       confirm: '解除配对',
       danger: true,
     );
-    if (confirmed == true) await devices.remove(computer.id);
+    if (confirmed != true || !context.mounted) return;
+    try {
+      await devices.remove(computer.id);
+    } on Exception catch (error) {
+      if (context.mounted) {
+        KNotice.show(
+          context,
+          error is PairFailure ? error.message : '无法解除配对，请检查电脑是否在线',
+          kind: KNoticeKind.error,
+        );
+      }
+    }
   }
 
   @override
@@ -244,7 +256,9 @@ class _PairedDevices extends StatelessWidget {
                         KRow(
                           leading: OSIcon(item.os, size: 40, dim: !item.online),
                           title: item.name,
-                          subtitle: item.confirmOnHost
+                          subtitle: item.lastSeen == '已解除配对'
+                              ? '已解除配对'
+                              : item.confirmOnHost
                               ? '每次需电脑确认'
                               : '电脑端已设为免确认',
                         ),

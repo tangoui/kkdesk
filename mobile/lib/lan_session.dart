@@ -9,12 +9,17 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'files/file_transfer_service.dart';
 import 'files/lan_file_transfer_service.dart';
 import 'lan_protocol.dart';
+import 'pairing/transport.dart';
 
 part 'lan_session_mobile_controls.dart';
 
 const _exchangeTimeout = Duration(seconds: 12);
 const _measure = bool.fromEnvironment('KKDESK_SPIKE_METRICS');
 const _probeChannel = MethodChannel('kkdesk/spike');
+
+typedef PairedConnection = Future<void> Function(
+  Future<void> Function(AuthenticatedPair pair) negotiate,
+);
 
 enum LanSessionMode { desktop, files }
 
@@ -34,6 +39,9 @@ class LanSession {
   Timer? _stats;
   bool _closed = false;
   bool _frameProbe = false;
+  PairTransport? _pairTransport;
+  Completer<bool>? _negotiated;
+  bool relay = false;
 
   bool get inputReady =>
       _input?.state == RTCDataChannelState.RTCDataChannelOpen;
@@ -112,8 +120,73 @@ class LanSession {
     }
   }
 
-  Future<RTCPeerConnection> _offer(LanSessionMode mode, String address) async {
-    final peer = await createPeerConnection({'iceServers': <Object>[]});
+  Future<void> connectPaired(
+    String name,
+    PairedConnection connect, {
+    LanSessionMode mode = LanSessionMode.desktop,
+  }) async {
+    await connect((pair) async {
+      if (_closed) throw const PairFailure('连接已取消');
+      final transport = pair.transport;
+      _pairTransport = transport;
+      relay = transport.relay;
+      final ready = Completer<bool>();
+      _negotiated = ready;
+      try {
+        final peer = await _offer(mode, name, {
+          'iceServers': transport.ice,
+          if (transport.relayOnly) 'iceTransportPolicy': 'relay',
+        });
+        final local = await peer.getLocalDescription();
+        await pair.send({
+          'type': 'offer',
+          'mode': mode.name,
+          'sdp': local!.sdp!,
+        });
+        final reply = await pair.receive(const Duration(seconds: 20));
+        if (reply['type'] != 'answer' || reply['sdp'] is! String) {
+          throw PairFailure(
+            reply['status'] == 'busy' ? '电脑正在处理其他连接' : '电脑无法建立远程连接',
+          );
+        }
+        await peer.setRemoteDescription(
+          RTCSessionDescription(reply['sdp'] as String, 'answer'),
+        );
+        if (!await ready.future.timeout(const Duration(seconds: 10))) {
+          throw const SocketException('无法建立 WebRTC 连接');
+        }
+        if (mode == LanSessionMode.files) await files;
+      } catch (_) {
+        await _resetPeer();
+        rethrow;
+      } finally {
+        _pairTransport = null;
+        _negotiated = null;
+      }
+    });
+  }
+
+  Future<void> _resetPeer() async {
+    _ping?.cancel();
+    _move = _input = null;
+    final files = _files;
+    final peer = _peer;
+    _files = null;
+    _peer = null;
+    if (peer != null) {
+      peer.onConnectionState = null;
+      peer.onTrack = null;
+    }
+    await files?.close();
+    await peer?.dispose();
+  }
+
+  Future<RTCPeerConnection> _offer(
+    LanSessionMode mode,
+    String address, [
+    Map<String, dynamic> configuration = const {'iceServers': <Object>[]},
+  ]) async {
+    final peer = await createPeerConnection(configuration);
     if (_closed) {
       await peer.dispose();
       throw StateError('连接已取消');
@@ -129,9 +202,15 @@ class LanSession {
     };
     peer.onConnectionState = (state) {
       switch (state) {
+        case RTCPeerConnectionState.RTCPeerConnectionStateConnected:
+          if (_negotiated case final pending? when !pending.isCompleted) {
+            pending.complete(true);
+          }
         case RTCPeerConnectionState.RTCPeerConnectionStateFailed:
         case RTCPeerConnectionState.RTCPeerConnectionStateClosed:
-          if (!_closed) {
+          if (_negotiated case final pending? when !pending.isCompleted) {
+            pending.complete(false);
+          } else if (!_closed) {
             unawaited(_files?.close());
             onEnded('远程连接已断开');
           }
@@ -326,11 +405,14 @@ class LanSession {
     if (_closed) return;
     _closed = true;
     _socket?.destroy();
+    if (_negotiated case final pending? when !pending.isCompleted) {
+      pending.complete(false);
+    }
+    await _pairTransport?.close();
     _ping?.cancel();
     _stats?.cancel();
-    await _files?.close();
+    await _resetPeer();
     if (_frameProbe) await _probeChannel.invokeMethod<void>('stopFrameProbe');
-    await _peer?.dispose();
   }
 }
 

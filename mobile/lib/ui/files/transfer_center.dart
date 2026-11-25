@@ -165,16 +165,36 @@ class TransferCenter extends ChangeNotifier {
       ..createSync(recursive: true);
   }
 
-  Future<TransferConnection> connect(String address, String password) {
+  Future<TransferConnection> connect(String address, String password) =>
+      _connect(
+        address,
+        (session) =>
+            session.connect(address, password, mode: LanSessionMode.files),
+      );
+
+  Future<TransferConnection> connectPaired(
+    String id,
+    String name,
+    PairedConnection connect,
+  ) => _connect(
+    id,
+    (session) =>
+        session.connectPaired(name, connect, mode: LanSessionMode.files),
+  );
+
+  Future<TransferConnection> _connect(
+    String address,
+    Future<void> Function(LanSession) dial,
+  ) {
     return _standalone.putIfAbsent(address, () async {
       final session = LanSession(onStream: (_) {}, onEnded: (_) {});
       try {
-        await session.connect(address, password, mode: LanSessionMode.files);
+        await dial(session);
         final connection = TransferConnection(
           address: address,
           service: await session.files,
           onClose: session.close,
-          reopen: () => connect(address, password),
+          reopen: () => _connect(address, dial),
         );
         if (_disposed) throw const FileTransferError('closed');
         attach(connection);

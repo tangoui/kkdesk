@@ -11,9 +11,15 @@ import '../mobile_services.dart';
 import 'common.dart';
 
 class ScanPage extends StatefulWidget {
-  const ScanPage({super.key, required this.camera, this.preview = false});
+  const ScanPage({
+    super.key,
+    required this.camera,
+    this.preview = false,
+    this.manualCode = false,
+  });
   final bool camera;
   final bool preview;
+  final bool manualCode;
 
   @override
   State<ScanPage> createState() => _ScanPageState();
@@ -245,15 +251,19 @@ class _ScanPageState extends State<ScanPage> {
                       const Spacer(),
                       Row(
                         children: [
-                          Expanded(
-                            child: _ScanAction(
-                              label: '输入配对码',
-                              icon: CupertinoIcons.keyboard,
-                              onTap: _busy ? null : _code,
-                              wide: true,
+                          if (widget.manualCode)
+                            Expanded(
+                              child: _ScanAction(
+                                label: '输入配对码',
+                                icon: CupertinoIcons.keyboard,
+                                onTap: _busy ? null : _code,
+                                wide: true,
+                              ),
                             ),
-                          ),
-                          const SizedBox(width: 12),
+                          if (widget.manualCode)
+                            const SizedBox(width: 12)
+                          else
+                            const Spacer(),
                           _ScanAction(
                             label: '从相册识别',
                             icon: CupertinoIcons.photo,
