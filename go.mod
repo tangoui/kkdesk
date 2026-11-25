@@ -19,7 +19,6 @@ require (
 	github.com/wlynxg/anet v0.0.5 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/image v0.47.0 // indirect
-	golang.org/x/net v0.59.0 // indirect
 	golang.org/x/time v0.10.0 // indirect
 )
 
@@ -32,5 +31,6 @@ require (
 	github.com/pion/turn/v4 v4.1.4
 	github.com/pion/webrtc/v4 v4.2.11
 	github.com/tangoui/tango v0.2.2-0.20261124110843-ed116886df41
+	golang.org/x/net v0.59.0
 	golang.org/x/sys v0.49.0
 )

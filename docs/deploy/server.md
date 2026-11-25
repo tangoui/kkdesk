@@ -22,6 +22,18 @@
 
 服务器在 NAT 后面时，要把这些端口映射进来，并且路由器要支持对公布的公网地址做回环转发。
 
+## 公网 IP 与服务器公钥
+
+用公网 IPv4 安装时，服务端会生成并保存 Ed25519 密钥。客户端用服务器公钥验证信令和 TURN TLS 的服务器身份。
+
+```sh
+sudo bash install-server.sh --ip 203.0.113.10 --binary ./kkdesk-server
+```
+
+将示例 IP 换成实际公网 IP。可用 `--binary` 指定支持 `-tls-identity` 的服务端二进制，也可以省略它，让脚本构建服务器。默认放行 **TCP 8443、5349** 和 **UDP 3478、49160–49259**。通过 `--listen-port` 可修改信令端口。
+
+安装成功后，在两台电脑的「设置 → 网络」填写脚本显示的地址（例如 `https://203.0.113.10:8443`）、**服务器公钥**和**服务密钥**。服务密钥的读取命令见下文。服务器启动日志也会记录公钥。私钥保存在 `/var/lib/kkdesk-server/tls-identity.pem`，重装时保留这个文件即可继续使用同一个公钥。
+
 ## 一键安装
 
 支持运行 systemd 的 **Debian／Ubuntu**，架构为 x86_64 或 arm64。先把域名的 A 记录指向实际公网 IPv4。安装脚本会复用已有的 Let's Encrypt 证书，或通过 Certbot 申请证书。申请和续期时，公网需要能访问服务器的 TCP 80，且该端口可由 Certbot 使用。一键安装也会启用 TCP 5349 上的 TURN TLS。
@@ -100,6 +112,7 @@ export KKDESK_TURN_SECRET="$(openssl rand -hex 32)"    # 只留在服务器上
 | `-listen` | `127.0.0.1:8080` | 信令监听地址。对外服务一般用 `:443`。 |
 | `-tls-cert` | | TLS 证书（含证书链）的 PEM 文件。 |
 | `-tls-key` | | TLS 私钥的 PEM 文件。 |
+| `-tls-identity` | | 公网 IP 模式的 Ed25519 私钥文件。服务首次启动时创建，后续启动复用。 |
 | `-turn-listen` | `0.0.0.0:3478` | TURN UDP 监听地址。 |
 | `-turn-tls-listen` | | 可选的 TURN over TLS 监听地址，例如 `:5349`。 |
 | `-turn-host` | | TURN TLS 使用的公网域名。 |

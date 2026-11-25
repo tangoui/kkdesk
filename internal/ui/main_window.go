@@ -276,7 +276,8 @@ func (m *Main) connect(addr, pw, mode string) {
 	st := m.o.Store.Settings()
 	v := app.NewViewer(app.ViewerConfig{Addr: addr, Password: pw, ViewOnly: viewOnly, FilesOnly: filesOnly, Log: m.o.ViewerLog,
 		Clipboard: m.clipboard(),
-		FPS:       st.FPS, BitrateBps: st.BitrateMbps * 1_000_000, Remote: rendezvous.Config{URL: st.RemoteURL, Token: st.RemoteToken}}, nil)
+		FPS:       st.FPS, BitrateBps: st.BitrateMbps * 1_000_000,
+		Remote: rendezvous.Config{URL: st.RemoteURL, Token: st.RemoteToken, PublicKey: st.RemotePublicKey}}, nil)
 	go func() {
 		err := v.Connect(context.Background())
 		m.mu.Lock()

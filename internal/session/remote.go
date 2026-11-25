@@ -14,7 +14,7 @@ func DialRemote(ctx context.Context, cfg rendezvous.Config, code string, mode Mo
 		return nil, err
 	}
 	defer guest.Close()
-	p, err := newConfiguredPeer(false, false, mode, remoteICE(guest.ICE, guest.RelayOnly))
+	p, err := newRemotePeer(cfg, false, mode, guest.ICE, guest.RelayOnly)
 	if err != nil {
 		return nil, err
 	}
@@ -37,8 +37,8 @@ func DialRemote(ctx context.Context, cfg rendezvous.Config, code string, mode Mo
 	return p, nil
 }
 
-func AnswerRemote(req rendezvous.Offer) (*Peer, *webrtc.SessionDescription, error) {
-	p, err := newConfiguredPeer(true, false, Mode(req.Mode), remoteICE(req.ICE, req.RelayOnly))
+func AnswerRemote(cfg rendezvous.Config, req rendezvous.Offer) (*Peer, *webrtc.SessionDescription, error) {
+	p, err := newRemotePeer(cfg, true, Mode(req.Mode), req.ICE, req.RelayOnly)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -53,12 +53,16 @@ func AnswerRemote(req rendezvous.Offer) (*Peer, *webrtc.SessionDescription, erro
 
 func (p *Peer) WaitReady(ctx context.Context) error { return p.waitReady(ctx) }
 
-func remoteICE(servers []webrtc.ICEServer, relayOnly bool) webrtc.Configuration {
+func newRemotePeer(cfg rendezvous.Config, isHost bool, mode Mode, servers []webrtc.ICEServer, relayOnly bool) (*Peer, error) {
 	policy := webrtc.ICETransportPolicyAll
 	if relayOnly {
 		policy = webrtc.ICETransportPolicyRelay
 	}
-	return webrtc.Configuration{ICEServers: servers, ICETransportPolicy: policy}
+	dialer, err := cfg.TURNProxy()
+	if err != nil {
+		return nil, err
+	}
+	return newConfiguredPeer(isHost, false, mode, webrtc.Configuration{ICEServers: servers, ICETransportPolicy: policy}, dialer)
 }
 
 // Relayed reports whether the nominated ICE pair uses a relay candidate.

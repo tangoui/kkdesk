@@ -75,6 +75,7 @@ type Settings struct {
 	Theme                 string `json:"theme"`
 	RemoteURL             string `json:"remoteURL,omitempty"`
 	RemoteToken           string `json:"remoteToken,omitempty"`
+	RemotePublicKey       string `json:"remotePublicKey,omitempty"`
 	DefaultConnectionMode string `json:"defaultConnectionMode"`
 	AllowSessionClipboard bool   `json:"allowSessionClipboard"`
 	AllowSessionFiles     bool   `json:"allowSessionFiles"`

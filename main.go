@@ -207,7 +207,7 @@ func run(o options) error {
 		}
 		settings := store.Settings()
 		viewer = app.NewViewer(app.ViewerConfig{Addr: o.connect, Password: o.password, ViewOnly: o.viewOnly, FilesOnly: o.files, Log: logw,
-			Remote: rendezvous.Config{URL: settings.RemoteURL, Token: settings.RemoteToken}, Clipboard: board}, nil)
+			Remote: rendezvous.Config{URL: settings.RemoteURL, Token: settings.RemoteToken, PublicKey: settings.RemotePublicKey}, Clipboard: board}, nil)
 		go func() {
 			if err := viewer.Connect(context.Background()); err != nil {
 				fmt.Fprintln(os.Stderr, "kkdesk:", err)
@@ -296,7 +296,7 @@ func hostConfig(o options, store *config.Store, logw io.Writer) app.HostConfig {
 		BitrateMbps:             st.BitrateMbps,
 		Log:                     logw,
 		AutoAccept:              o.autoAccept || !st.Confirm,
-		Remote:                  rendezvous.Config{URL: st.RemoteURL, Token: st.RemoteToken},
+		Remote:                  rendezvous.Config{URL: st.RemoteURL, Token: st.RemoteToken, PublicKey: st.RemotePublicKey},
 		DisableSessionClipboard: !st.AllowSessionClipboard,
 		DisableSessionFiles:     !st.AllowSessionFiles,
 	}

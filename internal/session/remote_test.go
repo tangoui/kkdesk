@@ -2,8 +2,10 @@ package session
 
 import (
 	"context"
+	"crypto/tls"
 	"net"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -13,24 +15,51 @@ import (
 )
 
 func TestRemoteVideoAndInputThroughTURN(t *testing.T) {
+	t.Run("UDP", func(t *testing.T) { testRemoteVideoAndInputThroughTURN(t, false) })
+	t.Run("pinned TLS", func(t *testing.T) { testRemoteVideoAndInputThroughTURN(t, true) })
+}
+
+func testRemoteVideoAndInputThroughTURN(t *testing.T, pinned bool) {
+	t.Helper()
 	const token = "test-access-token-of-sufficient-length"
 	const secret = "test-turn-secret-of-sufficient-length"
-	relay, err := rendezvous.StartRelay(rendezvous.RelayConfig{
+	cfg := rendezvous.Config{Token: token}
+	relayConfig := rendezvous.RelayConfig{
 		UDPAddr: "127.0.0.1:0", BindIP: "127.0.0.1", PublicIP: net.IPv4(127, 0, 0, 1),
 		MinPort: 49360, MaxPort: 49459, Secret: secret,
-	})
+	}
+	var serverTLS *tls.Config
+	if pinned {
+		var err error
+		serverTLS, cfg.PublicKey, err = rendezvous.LoadOrCreateIdentity(filepath.Join(t.TempDir(), "identity.pem"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		relayConfig.TLSAddr, relayConfig.TLS = "127.0.0.1:0", serverTLS.Clone()
+	}
+	relay, err := rendezvous.StartRelay(relayConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer relay.Close()
-	broker, err := rendezvous.NewServer(token, secret, []string{"turn:" + relay.UDPAddr.String()})
+	relayURL := "turn:" + relay.UDPAddr.String()
+	if pinned {
+		relayURL = "turns:" + relay.TLSAddr.String() + "?transport=tcp"
+	}
+	broker, err := rendezvous.NewServer(token, secret, []string{relayURL})
 	if err != nil {
 		t.Fatal(err)
 	}
 	broker.RelayOnly = true
-	server := httptest.NewServer(broker)
+	server := httptest.NewUnstartedServer(broker)
+	if pinned {
+		server.TLS = serverTLS
+		server.StartTLS()
+	} else {
+		server.Start()
+	}
 	defer server.Close()
-	cfg := rendezvous.Config{URL: server.URL, Token: token}
+	cfg.URL = server.URL
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	code := rendezvous.NewCode()
@@ -48,7 +77,7 @@ func TestRemoteVideoAndInputThroughTURN(t *testing.T) {
 		offer, err := rendezvous.ReadOffer(ctx, host)
 		var p *Peer
 		if err == nil {
-			p, err = acceptRemoteForTest(ctx, host, offer)
+			p, err = acceptRemoteForTest(ctx, cfg, host, offer)
 		}
 		select {
 		case answered <- result{p, err}:
@@ -78,8 +107,8 @@ func TestRemoteVideoAndInputThroughTURN(t *testing.T) {
 	}
 }
 
-func acceptRemoteForTest(ctx context.Context, host *websocket.Conn, offer rendezvous.Offer) (*Peer, error) {
-	p, answer, err := AnswerRemote(offer)
+func acceptRemoteForTest(ctx context.Context, cfg rendezvous.Config, host *websocket.Conn, offer rendezvous.Offer) (*Peer, error) {
+	p, answer, err := AnswerRemote(cfg, offer)
 	if err != nil {
 		return nil, err
 	}

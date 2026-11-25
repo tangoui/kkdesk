@@ -40,14 +40,20 @@ func (m *Main) remoteSettings(c *ui.Context, f *ui.FormW) {
 		addr.Error(s.remoteErr)
 	}
 	addr.Body(func() {
-		ui.Input(c, &s.remoteURL).Placeholder("https://desk.example.com").A11yLabel("跨网服务地址")
+		ui.Input(c, &s.remoteURL).Placeholder("https://desk.example.com 或 IP:端口").A11yLabel("跨网服务地址")
+	})
+	f.Item("服务器公钥").Body(func() {
+		ui.Input(c, &s.remotePublicKey).Placeholder("IP 模式填服务端输出的公钥").A11yLabel("跨网服务器公钥")
 	})
 	f.Item("服务密钥").Body(func() {
 		ui.Row(c, func() {
 			field := ui.Input(c, &s.remoteToken).Password().A11yLabel("跨网服务密钥")
 			field.Layout(layout.Grow(1), layout.MinW(0))
 			if ui.Button(c, "保存跨网配置").Clicked() || field.Submitted() {
-				cfg := rendezvous.Config{URL: strings.TrimSpace(s.remoteURL), Token: strings.TrimSpace(s.remoteToken)}
+				cfg := rendezvous.Config{
+					URL: strings.TrimSpace(s.remoteURL), Token: strings.TrimSpace(s.remoteToken),
+					PublicKey: strings.TrimSpace(s.remotePublicKey),
+				}
 				if err := cfg.Validate(); err != nil {
 					s.remoteErr = err.Error()
 					c.Invalidate()
@@ -56,6 +62,7 @@ func (m *Main) remoteSettings(c *ui.Context, f *ui.FormW) {
 				s.remoteErr = ""
 				err := m.o.Store.UpdateSettings(func(st *config.Settings) {
 					st.RemoteURL, st.RemoteToken = cfg.URL, cfg.Token
+					st.RemotePublicKey = cfg.PublicKey
 				})
 				m.o.Host.SetRemote(cfg)
 				if err != nil {

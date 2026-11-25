@@ -17,6 +17,7 @@ import (
 	"github.com/pion/rtp"
 	"github.com/pion/rtp/codecs"
 	"github.com/pion/webrtc/v4"
+	"golang.org/x/net/proxy"
 
 	"github.com/tangoui/kkdesk/internal/input"
 )
@@ -124,10 +125,10 @@ type videoEvent struct {
 }
 
 func newPeer(isHost, loopback bool, mode Mode) (*Peer, error) {
-	return newConfiguredPeer(isHost, loopback, mode, webrtc.Configuration{})
+	return newConfiguredPeer(isHost, loopback, mode, webrtc.Configuration{}, nil)
 }
 
-func newConfiguredPeer(isHost, loopback bool, mode Mode, config webrtc.Configuration) (*Peer, error) {
+func newConfiguredPeer(isHost, loopback bool, mode Mode, config webrtc.Configuration, turnDialer proxy.Dialer) (*Peer, error) {
 	m := &webrtc.MediaEngine{}
 	fb := []webrtc.RTCPFeedback{{Type: "goog-remb"}, {Type: "ccm", Parameter: "fir"}, {Type: "nack"}, {Type: "nack", Parameter: "pli"}}
 	if err := m.RegisterCodec(webrtc.RTPCodecParameters{
@@ -156,7 +157,14 @@ func newConfiguredPeer(isHost, loopback bool, mode Mode, config webrtc.Configura
 	}
 
 	se := webrtc.SettingEngine{}
-	se.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4})
+	networkTypes := []webrtc.NetworkType{webrtc.NetworkTypeUDP4}
+	if len(config.ICEServers) != 0 {
+		networkTypes = append(networkTypes, webrtc.NetworkTypeTCP4)
+	}
+	se.SetNetworkTypes(networkTypes)
+	if turnDialer != nil {
+		se.SetICEProxyDialer(turnDialer)
+	}
 	se.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled)
 	se.SetIncludeLoopbackCandidate(len(config.ICEServers) == 0)
 	if loopback {

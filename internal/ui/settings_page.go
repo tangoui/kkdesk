@@ -28,6 +28,7 @@ type settingsState struct {
 	portErr                           string
 	saved                             int // st.Port the draft was taken from
 	remoteURL, remoteToken, remoteErr string
+	remotePublicKey                   string
 
 	// bound controls, refreshed from the store every frame
 	rotate, fps, bitrate, theme    string
@@ -41,6 +42,7 @@ func (s *settingsState) init(st config.Settings) {
 	s.tab = "security"
 	s.port, s.saved = float64(st.Port), st.Port
 	s.remoteURL, s.remoteToken = st.RemoteURL, st.RemoteToken
+	s.remotePublicKey = st.RemotePublicKey
 }
 
 var settingsNav = []ui.MenuItem{

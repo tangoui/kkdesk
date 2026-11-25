@@ -24,12 +24,17 @@ const (
 )
 
 type Config struct {
-	URL   string
-	Token string
+	URL       string
+	Token     string
+	PublicKey string
 }
 
 func (c Config) endpoint() (string, error) {
-	u, err := url.Parse(strings.TrimSpace(c.URL))
+	raw := strings.TrimSpace(c.URL)
+	if strings.TrimSpace(c.PublicKey) != "" && !strings.Contains(raw, "://") {
+		raw = "https://" + raw
+	}
+	u, err := url.Parse(raw)
 	if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return "", errors.New("请输入有效的跨网服务地址")
 	}
@@ -52,10 +57,14 @@ func (c Config) endpoint() (string, error) {
 }
 
 func (c Config) Validate() error {
-	if c.URL == "" && c.Token == "" {
+	if c.URL == "" && c.Token == "" && c.PublicKey == "" {
 		return nil
 	}
-	if _, err := c.endpoint(); err != nil {
+	endpoint, err := c.endpoint()
+	if err != nil {
+		return err
+	}
+	if _, err := c.pinnedTLS(endpoint); err != nil {
 		return err
 	}
 	if len(c.Token) < 32 || len(c.Token) > 256 || strings.ContainsAny(c.Token, " \t\r\n") {
@@ -107,6 +116,16 @@ func (c Config) dial(ctx context.Context) (*websocket.Conn, error) {
 	header.Set("Authorization", "Bearer "+c.Token)
 	// Disable redirects so an enrollment key goes only to the configured endpoint.
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	pinned, err := c.pinnedTLS(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	if pinned != nil {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.TLSClientConfig = pinned
+		client.Transport = transport
+		defer transport.CloseIdleConnections()
+	}
 	conn, res, err := websocket.Dial(ctx, endpoint, &websocket.DialOptions{HTTPClient: client, HTTPHeader: header})
 	if err != nil {
 		if res != nil && res.StatusCode == http.StatusUnauthorized {

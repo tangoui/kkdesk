@@ -16,6 +16,7 @@ type serverConfig struct {
 	Listen         string         `json:"listen"`
 	Cert           string         `json:"tls-cert"`
 	Key            string         `json:"tls-key"`
+	Identity       string         `json:"tls-identity"`
 	TURNListen     string         `json:"turn-listen"`
 	TURNTLSListen  string         `json:"turn-tls-listen"`
 	TURNHost       string         `json:"turn-host"`
@@ -37,6 +38,7 @@ func parseConfig(args []string) (serverConfig, error) {
 	flags.StringVar(&cfg.Listen, "listen", "127.0.0.1:8080", "signaling listen address")
 	flags.StringVar(&cfg.Cert, "tls-cert", "", "TLS certificate PEM including chain")
 	flags.StringVar(&cfg.Key, "tls-key", "", "TLS private key PEM")
+	flags.StringVar(&cfg.Identity, "tls-identity", "", "persistent private key PEM for IP and public-key TLS")
 	flags.StringVar(&cfg.TURNListen, "turn-listen", "0.0.0.0:3478", "TURN UDP listen address")
 	flags.StringVar(&cfg.TURNTLSListen, "turn-tls-listen", "", "optional TURN TLS listen address")
 	flags.StringVar(&cfg.TURNHost, "turn-host", "", "public DNS name used by TURN TLS")

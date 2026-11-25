@@ -40,13 +40,30 @@ func run(args []string) error {
 		return errors.New("provide -turn-public-ip and a valid UDP relay port range")
 	}
 	var tlsConfig *tls.Config
-	if cfg.Cert != "" || cfg.Key != "" {
+	switch {
+	case cfg.Identity != "":
+		if cfg.Cert != "" || cfg.Key != "" {
+			return errors.New("tls-identity cannot be combined with tls-cert or tls-key")
+		}
+		if cfg.TURNHost == "" {
+			cfg.TURNHost = ip.String()
+		}
+		if !ip.Equal(net.ParseIP(cfg.TURNHost)) {
+			return errors.New("TURN TLS must use the public IP with tls-identity")
+		}
+		var publicKey string
+		tlsConfig, publicKey, err = rendezvous.LoadOrCreateIdentity(cfg.Identity)
+		if err != nil {
+			return fmt.Errorf("load TLS identity: %w", err)
+		}
+		log.Printf("kkdesk server public key: %s", publicKey)
+	case cfg.Cert != "" || cfg.Key != "":
 		pair, err := tls.LoadX509KeyPair(cfg.Cert, cfg.Key)
 		if err != nil {
 			return err
 		}
 		tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{pair}}
-	} else {
+	default:
 		host, _, err := net.SplitHostPort(cfg.Listen)
 		if err != nil || (host != "localhost" && !net.ParseIP(host).IsLoopback()) {
 			return errors.New("signaling without TLS must listen on loopback for local testing or a TLS reverse proxy")
