@@ -149,7 +149,7 @@ class _AppLockState extends State<_AppLock> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Image.asset('assets/kkdesk_mark.png', width: 72, height: 72),
+            const BrandMark(size: 72),
             const SizedBox(height: 16),
             const PageTitle('kkdesk 已锁定'),
             const SizedBox(height: 10),
@@ -375,7 +375,10 @@ class _HomeState extends State<_Home> {
               add: _add,
               connect: _connect,
             ),
-            TransfersPage(history: _services.history),
+            TransfersPage(
+              history: _services.history,
+              devices: _services.devices,
+            ),
             SettingsPage(services: _services, authenticate: _authorize),
           ],
         ),

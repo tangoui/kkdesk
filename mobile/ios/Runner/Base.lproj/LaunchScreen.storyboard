@@ -16,11 +16,16 @@
                     <view key="view" contentMode="scaleToFill" id="Ze5-6b-2t3">
                         <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                         <subviews>
+                            <imageView opaque="YES" clipsSubviews="YES" contentMode="scaleAspectFill" image="LaunchGradient" translatesAutoresizingMaskIntoConstraints="NO" id="BKG-KK-DSK"/>
                             <imageView opaque="NO" clipsSubviews="YES" multipleTouchEnabled="YES" contentMode="center" image="LaunchImage" translatesAutoresizingMaskIntoConstraints="NO" id="YRO-k0-Ey4">
                             </imageView>
                         </subviews>
-                        <color key="backgroundColor" red="1" green="1" blue="1" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                        <color key="backgroundColor" red="0.208" green="0.373" blue="0.890" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
                         <constraints>
+                            <constraint firstItem="BKG-KK-DSK" firstAttribute="leading" secondItem="Ze5-6b-2t3" secondAttribute="leading" id="bg1-kk-dsk"/>
+                            <constraint firstItem="BKG-KK-DSK" firstAttribute="trailing" secondItem="Ze5-6b-2t3" secondAttribute="trailing" id="bg2-kk-dsk"/>
+                            <constraint firstItem="BKG-KK-DSK" firstAttribute="top" secondItem="Ze5-6b-2t3" secondAttribute="top" id="bg3-kk-dsk"/>
+                            <constraint firstItem="BKG-KK-DSK" firstAttribute="bottom" secondItem="Ze5-6b-2t3" secondAttribute="bottom" id="bg4-kk-dsk"/>
                             <constraint firstItem="YRO-k0-Ey4" firstAttribute="centerX" secondItem="Ze5-6b-2t3" secondAttribute="centerX" id="1a2-6s-vTC"/>
                             <constraint firstItem="YRO-k0-Ey4" firstAttribute="centerY" secondItem="Ze5-6b-2t3" secondAttribute="centerY" id="4X2-HB-R7a"/>
                         </constraints>
@@ -32,6 +37,7 @@
         </scene>
     </scenes>
     <resources>
-        <image name="LaunchImage" width="168" height="185"/>
+        <image name="LaunchGradient" width="420" height="900"/>
+        <image name="LaunchImage" width="104" height="104"/>
     </resources>
 </document>

@@ -145,6 +145,8 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     _connectedClock.stop();
     final entry = (
       computer: widget.computer.name,
+      deviceId: widget.computer.id,
+      os: widget.computer.os,
       start: start,
       duration: _connectedClock.elapsed,
       path: path.label,
@@ -548,11 +550,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                 ),
               ],
             ),
-            child: const Icon(
-              CupertinoIcons.device_desktop,
-              color: Colors.white,
-              size: 22,
-            ),
+            child: const Center(child: BrandMark(size: 27)),
           ),
         ),
       ),
@@ -812,6 +810,8 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
       if (!mounted) return;
       widget.history.recordClipboard((
         computer: widget.computer.name,
+        deviceId: widget.computer.id,
+        os: widget.computer.os,
         time: DateTime.now(),
         text: text,
       ));

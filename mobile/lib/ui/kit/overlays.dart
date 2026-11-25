@@ -38,11 +38,13 @@ class KDialog extends StatelessWidget {
     super.key,
     required this.title,
     this.content,
+    this.leading,
     required this.actions,
     this.stacked = false,
   });
   final String title;
   final Widget? content;
+  final Widget? leading;
   final List<Widget> actions;
   final bool stacked;
 
@@ -70,6 +72,10 @@ class KDialog extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                if (leading != null) ...[
+                  Center(child: leading),
+                  const SizedBox(height: 10),
+                ],
                 Text(
                   title,
                   textAlign: TextAlign.center,

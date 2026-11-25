@@ -3,15 +3,21 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../activity_history.dart';
+import '../mobile_services.dart';
 import 'common.dart';
 
 class TransfersPage extends StatelessWidget {
-  const TransfersPage({super.key, required this.history});
+  const TransfersPage({
+    super.key,
+    required this.history,
+    required this.devices,
+  });
   final ActivityHistory history;
+  final DeviceRepository devices;
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-    listenable: history,
+    listenable: Listenable.merge([history, devices]),
     builder: (context, _) => ListView(
       padding: EdgeInsets.fromLTRB(
         20,
@@ -61,7 +67,7 @@ class TransfersPage extends StatelessWidget {
             else
               for (final item in history.connections)
                 KRow(
-                  leading: _icon(context, CupertinoIcons.desktopcomputer),
+                  leading: _computerIcon(item.deviceId, item.computer, item.os),
                   title: item.computer,
                   subtitle:
                       '${_time(context, item.start)} · ${_duration(item.duration)}',
@@ -87,7 +93,7 @@ class TransfersPage extends StatelessWidget {
                 KRow(
                   title: item.text.replaceAll(RegExp(r'\s+'), ' '),
                   subtitle: '${item.computer} · ${_time(context, item.time)}',
-                  leading: _icon(context, CupertinoIcons.doc_on_clipboard),
+                  leading: _computerIcon(item.deviceId, item.computer, item.os),
                   trailing: Icon(
                     CupertinoIcons.doc_on_doc,
                     color: context.action,
@@ -111,6 +117,18 @@ class TransfersPage extends StatelessWidget {
       ],
     ),
   );
+
+  Widget _computerIcon(String? id, String name, ComputerOS recordedOS) {
+    final matches = devices.computers.where(
+      (computer) => id == null ? computer.name == name : computer.id == id,
+    );
+    final computer = matches.length == 1 ? matches.single : null;
+    return OSIcon(
+      computer?.os ?? recordedOS,
+      size: 38,
+      dim: computer?.online == false,
+    );
+  }
 
   Widget _icon(BuildContext context, IconData icon, {bool disabled = false}) =>
       Container(

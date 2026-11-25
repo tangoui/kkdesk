@@ -35,3 +35,7 @@ flutter run -d <模拟器ID>
 ## 接入范围
 
 跨网与配对协议、电脑确认、在线状态、设备凭据均由演示服务提供。接入真实配对后，设备密钥与凭据需要使用系统安全存储。当前真实局域网会话支持画面、鼠标和 USB HID 键盘，画质、屏幕切换及剪贴板保留演示入口。文件传输和隐私屏的操作置灰。
+
+## 电脑系统图标
+
+Apple、Windows 四窗格和 Linux Tux 的单色 SVG 来自 Simple Icons 10.0.0，素材以 CC0 1.0 发布。应用用 `flutter_svg` 将标志绘为白色。品牌标志归各自权利人所有。[素材](https://github.com/simple-icons/simple-icons/tree/10.0.0/icons) · [CC0 许可](https://github.com/simple-icons/simple-icons/blob/10.0.0/LICENSE.md)
