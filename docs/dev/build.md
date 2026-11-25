@@ -69,3 +69,5 @@ pnpm build     # 输出到 docs/.vitepress/dist
 ```
 
 `docs/superpowers/`、`docs/design/` 和 `docs/spike-report.md` 是内部的设计记录，不进文档站。
+
+文档站发布在 <https://tangoui.github.io/kkdesk/>。main 分支上 `docs/` 有改动时，GitHub Actions（`.github/workflows/docs-pages.yml`）会自动构建并发布。

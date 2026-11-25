@@ -6,10 +6,12 @@ export default defineConfig({
   lang: 'zh-CN',
   title: 'kkdesk',
   description: '用 Tango 写的远程桌面：局域网直连与自托管跨网连接',
+  // Published on GitHub Pages at https://tangoui.github.io/kkdesk/.
+  base: '/kkdesk/',
   cleanUrls: true,
   lastUpdated: true,
   srcExclude: ['superpowers/**', 'design/**', 'spike-report.md', 'README.md'],
-  head: [['link', { rel: 'icon', type: 'image/svg+xml', href: '/logo.svg' }]],
+  head: [['link', { rel: 'icon', type: 'image/svg+xml', href: '/kkdesk/logo.svg' }]],
   themeConfig: {
     logo: { light: '/logo.svg', dark: '/logo-dark.svg' },
     nav: [
