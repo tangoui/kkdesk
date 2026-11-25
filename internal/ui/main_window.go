@@ -34,9 +34,9 @@ import (
 
 // Connection modes of the 控制其他电脑 form.
 const (
-	modeControl  = "control"
-	modeView     = "view"
-	modeTransfer = "transfer" // 传文件: only the file window
+	modeControl  = config.ConnectionControl
+	modeView     = config.ConnectionView
+	modeTransfer = config.ConnectionTransfer
 )
 
 // ModeTransfer is the 传文件 connection mode (Form.Mode).
@@ -118,7 +118,7 @@ func OpenMain(o MainOptions) (*Main, error) {
 		nav: "connect", rotate: o.Host.State().Rotate, hostname: host}
 	m.set.init(st)
 	if o.Form.Mode == "" {
-		o.Form.Mode = modeControl
+		o.Form.Mode = st.DefaultConnectionMode
 	}
 	setThemeSetting(st.Theme)
 	r, s, err := uihost.Open(o.App, uihost.Options{Theme: themeMode(), Surface: tango.SurfaceOptions{
@@ -141,6 +141,7 @@ func OpenMain(o MainOptions) (*Main, error) {
 	app.Watch(m.Invalidate)
 	s.OnFocused(func() {
 		r.Post(func() {
+			m.set.loginItem.loaded = false
 			if m.screenRecording.enabled {
 				m.screenRecording.refresh(screenRecordingMissing())
 			}

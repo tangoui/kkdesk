@@ -62,6 +62,47 @@ func TestHostFixedPassword(t *testing.T) {
 	}
 }
 
+func TestHostSessionPermissionsResetToDefaults(t *testing.T) {
+	h := NewHost(HostConfig{Addr: "127.0.0.1:0", Password: "123456",
+		DisableSessionClipboard: true, DisableSessionFiles: true}, nil)
+	defer h.Close()
+	if err := h.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	v, err := dialFiles(t, h.ListenAddr(), "123456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer v.Close()
+	waitFor(t, "first confirmation", func() bool { return h.State().Phase == HostPending })
+	if s := h.State(); s.ClipboardAccess || s.FileAccess {
+		t.Fatalf("first session permissions: %+v", s)
+	}
+	h.SetClipboardAccess(true)
+	h.SetFileAccess(true)
+	h.Accept()
+	waitFor(t, "active session", func() bool { return h.State().Phase == HostActive })
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := v.Files().Home(ctx); err != nil {
+		t.Fatal(err)
+	}
+	h.SetSessionDefaults(true, false)
+	if s := h.State(); !s.ClipboardAccess || !s.FileAccess {
+		t.Fatalf("changing defaults affected the current session: %+v", s)
+	}
+	closeAndWait(t, h, v)
+	next, err := dialFiles(t, h.ListenAddr(), "123456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer next.Close()
+	waitFor(t, "next confirmation", func() bool { return h.State().Phase == HostPending })
+	if s := h.State(); !s.ClipboardAccess || s.FileAccess {
+		t.Fatalf("next session permissions: %+v", s)
+	}
+}
+
 func TestHostRotatesAfterSession(t *testing.T) {
 	var mu sync.Mutex
 	var saved []string

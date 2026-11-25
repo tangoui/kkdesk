@@ -51,6 +51,7 @@ export KKDESK_TURN_SECRET="$(openssl rand -hex 32)"    # 只留在服务器上
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
+| `-config` | | 从 JSON 文件读取部署参数。 |
 | `-listen` | `127.0.0.1:8080` | 信令监听地址。对外服务一般用 `:443`。 |
 | `-tls-cert` | | TLS 证书（含证书链）的 PEM 文件。 |
 | `-tls-key` | | TLS 私钥的 PEM 文件。 |
@@ -62,11 +63,15 @@ export KKDESK_TURN_SECRET="$(openssl rand -hex 32)"    # 只留在服务器上
 | `-relay-min` | `49160` | 中继 UDP 端口范围的起点。 |
 | `-relay-max` | `49259` | 中继 UDP 端口范围的终点。 |
 | `-relay-only` | `false` | 强制所有媒体走中继，用来验证中继是否可用。 |
+| `-max-signaling-connections` | `2048` | 同时开放的信令连接上限，包含在线设备和正在配对的控制端。 |
+| `-turn-credential-ttl` | `8h` | TURN 凭据有效期。缩短有效期会影响长时间中继会话的续期。 |
 
 | 环境变量 | 说明 |
 |---|---|
 | `KKDESK_SERVER_TOKEN` | 服务密钥。客户端在「设置 › 网络 › 服务密钥」里填它。 |
 | `KKDESK_TURN_SECRET` | 签发 TURN 临时凭据的密钥，只留在服务器上。 |
+
+可用 `./kkdesk-server -config server.json` 启动。JSON 键名与命令行参数相同，去掉开头的 `-`。命令行上显式提供的参数优先。两个密钥通过环境变量设置。[完整配置示例](https://github.com/tangoui/kkdesk#服务端配置文件)
 
 ## 用 systemd 常驻
 
@@ -103,6 +108,8 @@ sudo systemctl enable --now kkdesk-server
 ```
 
 ## 客户端配置与验证
+
+访问 `https://desk.example.com/healthz`。返回 `ok` 表示 HTTPS 信令服务正在响应。中继连通性可通过强制中继验证。
 
 1. 两台电脑在「设置 › 网络」填同一个 **跨网服务** 地址（`https://desk.example.com`）和 **服务密钥**，点「保存跨网配置」。
 2. 被控端开启「允许被远程控制」，连接页出现 `KD-` 开头的设备码，说明已经在服务上线。

@@ -20,52 +20,44 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
+	if err := run(os.Args[1:]); err != nil && !errors.Is(err, flag.ErrHelp) {
 		log.Fatal(err)
 	}
 }
 
-func run() error {
-	signalAddr := flag.String("listen", "127.0.0.1:8080", "signaling listen address")
-	cert := flag.String("tls-cert", "", "TLS certificate PEM including chain")
-	key := flag.String("tls-key", "", "TLS private key PEM")
-	turnAddr := flag.String("turn-listen", "0.0.0.0:3478", "TURN UDP listen address")
-	turnTLS := flag.String("turn-tls-listen", "", "optional TURN TLS listen address")
-	turnHost := flag.String("turn-host", "", "public DNS name used by TURN TLS")
-	publicIP := flag.String("turn-public-ip", "", "public IPv4 advertised for TURN allocations")
-	relayBind := flag.String("relay-bind", "0.0.0.0", "local IPv4 to bind relay allocations")
-	minPort := flag.Int("relay-min", 49160, "first UDP relay port")
-	maxPort := flag.Int("relay-max", 49259, "last UDP relay port")
-	relayOnly := flag.Bool("relay-only", false, "require media to use the relay")
-	flag.Parse()
+func run(args []string) error {
+	cfg, err := parseConfig(args)
+	if err != nil {
+		return err
+	}
 
 	token, secret := os.Getenv("KKDESK_SERVER_TOKEN"), os.Getenv("KKDESK_TURN_SECRET")
 	if len(token) < 32 || len(secret) < 32 || token == secret {
 		return errors.New("set distinct KKDESK_SERVER_TOKEN and KKDESK_TURN_SECRET values of at least 32 characters")
 	}
-	ip := net.ParseIP(*publicIP).To4()
-	if ip == nil || *minPort < 1024 || *maxPort < *minPort || *maxPort > 65535 {
+	ip := net.ParseIP(cfg.PublicIP).To4()
+	if ip == nil || cfg.MinPort < 1024 || cfg.MaxPort < cfg.MinPort || cfg.MaxPort > 65535 {
 		return errors.New("provide -turn-public-ip and a valid UDP relay port range")
 	}
 	var tlsConfig *tls.Config
-	if *cert != "" || *key != "" {
-		pair, err := tls.LoadX509KeyPair(*cert, *key)
+	if cfg.Cert != "" || cfg.Key != "" {
+		pair, err := tls.LoadX509KeyPair(cfg.Cert, cfg.Key)
 		if err != nil {
 			return err
 		}
 		tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{pair}}
 	} else {
-		host, _, err := net.SplitHostPort(*signalAddr)
+		host, _, err := net.SplitHostPort(cfg.Listen)
 		if err != nil || (host != "localhost" && !net.ParseIP(host).IsLoopback()) {
 			return errors.New("signaling without TLS must listen on loopback for local testing or a TLS reverse proxy")
 		}
 	}
-	if *turnTLS != "" && (tlsConfig == nil || *turnHost == "") {
+	if cfg.TURNTLSListen != "" && (tlsConfig == nil || cfg.TURNHost == "") {
 		return errors.New("TURN TLS requires -tls-cert, -tls-key and -turn-host")
 	}
 	relay, err := rendezvous.StartRelay(rendezvous.RelayConfig{
-		UDPAddr: *turnAddr, TLSAddr: *turnTLS, TLS: tlsConfig,
-		BindIP: *relayBind, PublicIP: ip, MinPort: uint16(*minPort), MaxPort: uint16(*maxPort), Secret: secret,
+		UDPAddr: cfg.TURNListen, TLSAddr: cfg.TURNTLSListen, TLS: tlsConfig,
+		BindIP: cfg.RelayBind, PublicIP: ip, MinPort: uint16(cfg.MinPort), MaxPort: uint16(cfg.MaxPort), Secret: secret,
 	})
 	if err != nil {
 		return fmt.Errorf("start TURN: %w", err)
@@ -74,18 +66,20 @@ func run() error {
 	udp := net.JoinHostPort(ip.String(), strconv.Itoa(relay.UDPAddr.(*net.UDPAddr).Port))
 	urls := []string{"stun:" + udp, "turn:" + udp + "?transport=udp"}
 	if relay.TLSAddr != nil {
-		tcp := net.JoinHostPort(*turnHost, strconv.Itoa(relay.TLSAddr.(*net.TCPAddr).Port))
+		tcp := net.JoinHostPort(cfg.TURNHost, strconv.Itoa(relay.TLSAddr.(*net.TCPAddr).Port))
 		urls = append(urls, "turns:"+tcp+"?transport=tcp")
 	}
-	broker, err := rendezvous.NewServer(token, secret, urls)
+	broker, err := rendezvous.NewServerWithOptions(token, secret, urls, rendezvous.ServerOptions{
+		MaxConnections: cfg.MaxConnections, CredentialTTL: time.Duration(cfg.CredentialTTL),
+	})
 	if err != nil {
 		return err
 	}
-	broker.RelayOnly = *relayOnly
+	broker.RelayOnly = cfg.RelayOnly
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	server := &http.Server{
-		Addr: *signalAddr, Handler: broker, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second,
+		Addr: cfg.Listen, Handler: broker, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second,
 		TLSConfig: tlsConfig, BaseContext: func(net.Listener) context.Context { return ctx },
 	}
 	go func() {
@@ -94,7 +88,7 @@ func run() error {
 		defer cancel()
 		_ = server.Shutdown(shutdown)
 	}()
-	log.Printf("kkdesk signaling on %s, TURN UDP on %s, relay range %d–%d", *signalAddr, relay.UDPAddr, *minPort, *maxPort)
+	log.Printf("kkdesk signaling on %s, TURN UDP on %s, relay range %d–%d", cfg.Listen, relay.UDPAddr, cfg.MinPort, cfg.MaxPort)
 	if tlsConfig != nil {
 		err = server.ListenAndServeTLS("", "")
 	} else {

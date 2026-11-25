@@ -28,8 +28,11 @@ type settingsState struct {
 	remoteURL, remoteToken, remoteErr string
 
 	// bound controls, refreshed from the store every frame
-	rotate, fps, bitrate, theme string
-	confirm, allow              bool
+	rotate, fps, bitrate, theme    string
+	confirm, allow                 bool
+	sessionClipboard, sessionFiles bool
+	connectionMode                 string
+	loginItem                      loginItemSetting
 }
 
 func (s *settingsState) init(st config.Settings) {
@@ -100,6 +103,8 @@ func (m *Main) settingsPage(c *ui.Context, hs app.HostState) {
 	st := m.o.Store.Settings()
 	s.rotate, s.confirm, s.allow = hs.Rotate, st.Confirm, st.AllowRemote
 	s.fps, s.bitrate, s.theme = itoa(st.FPS), itoa(st.BitrateMbps), st.Theme
+	s.sessionClipboard, s.sessionFiles = st.AllowSessionClipboard, st.AllowSessionFiles
+	s.connectionMode = st.DefaultConnectionMode
 	if st.Port != s.saved { // changed elsewhere (the host moved off a reserved port)
 		s.port, s.saved = float64(st.Port), st.Port
 	}
@@ -183,6 +188,20 @@ func (m *Main) securitySettings(c *ui.Context, f *ui.FormW, hs app.HostState) {
 		switchRow(c, &s.allow, "启动后允许其他电脑连接本机", func(on bool) {
 			m.update(c, func(st *config.Settings) { st.AllowRemote = on })
 			_ = m.o.Host.SetEnabled(on)
+		})
+	})
+	helpGap(c)
+	f.Item("剪贴板同步").Help("同步纯文本。可以在连接确认或会话中为本次连接单独调整。").Body(func() {
+		switchRow(c, &s.sessionClipboard, "新会话默认允许剪贴板同步", func(on bool) {
+			m.update(c, func(st *config.Settings) { st.AllowSessionClipboard = on })
+			m.o.Host.SetSessionDefaults(on, s.sessionFiles)
+		})
+	})
+	helpGap(c)
+	f.Item("文件传输").Help("允许对方浏览和传输本机文件。新会话开始时应用。").Body(func() {
+		switchRow(c, &s.sessionFiles, "新会话默认允许文件传输", func(on bool) {
+			m.update(c, func(st *config.Settings) { st.AllowSessionFiles = on })
+			m.o.Host.SetSessionDefaults(s.sessionClipboard, on)
 		})
 	})
 }
@@ -287,6 +306,15 @@ func (m *Main) generalSettings(c *ui.Context, f *ui.FormW) {
 			switchTheme(m.o.App, m.runner.Load(), th)
 		}
 	})
+	f.Item("默认连接方式").Body(func() {
+		if ui.Segmented(c, &s.connectionMode, modeOpts).A11yLabel("默认连接方式").Changed() {
+			mode := s.connectionMode
+			m.update(c, func(st *config.Settings) { st.DefaultConnectionMode = mode })
+			m.o.Form.Mode = mode
+		}
+	})
+	m.loginItemSettings(c, f)
+	helpGap(c)
 	f.Item("版本").Body(func() {
 		formTheme := c.ThemeFor(theme.CompForm).Components.Form
 		ui.Row(c, func() {

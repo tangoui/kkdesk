@@ -4,8 +4,20 @@ import (
 	"io"
 	"testing"
 
+	"github.com/tangoui/tango/sys/autostart"
+
 	"github.com/tangoui/kkdesk/internal/config"
 )
+
+func TestLoginItemArgumentsOpenNormalWindow(t *testing.T) {
+	o, _, err := parseFlags([]string{autostart.LoginArg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.host || o.connect != "" || o.selftest {
+		t.Fatal("login item should start the normal desktop session")
+	}
+}
 
 // Flags given on the command line win over the settings file.
 func TestFlagsOverrideConfig(t *testing.T) {

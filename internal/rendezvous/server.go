@@ -17,12 +17,13 @@ import (
 )
 
 type Server struct {
-	RelayOnly  bool // configure before serving
-	token      [32]byte
-	turnSecret string
-	stunURLs   []string
-	turnURLs   []string
-	slots      chan struct{}
+	RelayOnly     bool // configure before serving
+	token         [32]byte
+	turnSecret    string
+	credentialTTL time.Duration
+	stunURLs      []string
+	turnURLs      []string
+	slots         chan struct{}
 
 	mu      sync.Mutex
 	devices map[string]*registration
@@ -40,12 +41,29 @@ type pendingPair struct {
 	answer chan message
 }
 
+type ServerOptions struct {
+	MaxConnections int
+	CredentialTTL  time.Duration
+}
+
+func DefaultServerOptions() ServerOptions {
+	return ServerOptions{MaxConnections: 2048, CredentialTTL: 8 * time.Hour}
+}
+
 func NewServer(token, turnSecret string, iceURLs []string) (*Server, error) {
+	return NewServerWithOptions(token, turnSecret, iceURLs, DefaultServerOptions())
+}
+
+func NewServerWithOptions(token, turnSecret string, iceURLs []string, opts ServerOptions) (*Server, error) {
 	if len(token) < 32 || len(token) > 256 || strings.ContainsAny(token, " \t\r\n") || len(turnSecret) < 32 {
 		return nil, errors.New("signal and TURN secrets must use at least 32 characters")
 	}
+	if opts.MaxConnections < 1 || opts.CredentialTTL < time.Second {
+		return nil, errors.New("invalid signaling connection limit or TURN credential lifetime")
+	}
 	s := &Server{token: sha256.Sum256([]byte("Bearer " + token)), turnSecret: turnSecret,
-		slots: make(chan struct{}, 2048), devices: make(map[string]*registration)}
+		credentialTTL: opts.CredentialTTL, slots: make(chan struct{}, opts.MaxConnections),
+		devices: make(map[string]*registration)}
 	for _, u := range iceURLs {
 		switch {
 		case strings.HasPrefix(u, "stun:"):
@@ -63,6 +81,17 @@ func NewServer(token, turnSecret string, iceURLs []string) (*Server, error) {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/healthz" {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte("ok\n"))
+		return
+	}
 	if r.URL.Path != path {
 		http.NotFound(w, r)
 		return
@@ -253,7 +282,7 @@ func (s *Server) join(ctx context.Context, conn *websocket.Conn, code string) {
 }
 
 func (s *Server) ice(id string) ([]webrtc.ICEServer, error) {
-	user, credential, err := turn.GenerateLongTermTURNRESTCredentials(s.turnSecret, id, 8*time.Hour)
+	user, credential, err := turn.GenerateLongTermTURNRESTCredentials(s.turnSecret, id, s.credentialTTL)
 	if err != nil {
 		return nil, err
 	}

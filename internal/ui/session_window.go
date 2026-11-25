@@ -26,6 +26,7 @@ import (
 // closeDelay keeps the session window up briefly after the session ends so
 // that "连接已断开" can be read.
 const closeDelay = 1500 * time.Millisecond
+const sessionStripHeight = 38
 
 // Quality levels of the 控制中心 menu (bps, 0 = auto) and frame rates.
 var (
@@ -61,9 +62,11 @@ type sessionWin struct {
 	surface atomic.Pointer[tango.Surface]
 
 	// UI thread
-	focused  bool
-	pressed  [8]bool // buttons pressed inside the video, released remotely
-	menuOpen atomic.Bool
+	focused    bool
+	pressed    [8]bool // buttons pressed inside the video, released remotely
+	viewport   sessionViewport
+	menuOpen   atomic.Bool
+	fullscreen atomic.Bool
 }
 
 // OpenSession opens the session window for a connected viewer. onEnd gets
@@ -85,6 +88,9 @@ func OpenSession(a *tango.App, v *app.Viewer, onEnd func(msg string)) error {
 	}
 	w.runner.Store(r)
 	w.surface.Store(s)
+	s.OnStateChanged(func(state tango.WindowState) {
+		w.fullscreen.Store(state == tango.StateFullscreen)
+	})
 	sessionWins.Store(v, w)
 	v.AddNotify(r.Invalidate)
 	var once sync.Once
@@ -117,7 +123,12 @@ func (w *sessionWin) page(c *ui.Context) {
 	st := w.v.State()
 	ui.Column(c, func() {
 		w.strip(c, st)
-		w.screen(c, st)
+		fw, fh := w.v.FrameSize()
+		space := c.Size()
+		space.H -= sessionStripHeight
+		w.viewport.render(c, space, fw, fh, func(viewport ui.ID, opts ...layout.Option) {
+			w.screen(c, st, viewport, fw, fh, opts...)
+		})
 	}, layout.Grow(1)).Bg(theme.Hex("#000000"))
 }
 
@@ -149,7 +160,7 @@ func (w *sessionWin) strip(c *ui.Context, st app.ViewerState) {
 				}
 			}
 		}, layout.Gap(8), layout.Middle(), layout.Self(layout.AlignCenter), layout.Padding(insets(0, 0, 4, 0)))
-	}, layout.Gap(8), layout.Padding(insets(6, 8, 0, 8)), layout.H(38), layout.AlignItems(layout.AlignEnd)).Bg(th.BgElevated)
+	}, layout.Gap(8), layout.Padding(insets(6, 8, 0, 8)), layout.H(sessionStripHeight), layout.Shrink(0), layout.AlignItems(layout.AlignEnd)).Bg(th.BgElevated)
 }
 
 // phaseTags shows the session state next to the tab.
@@ -206,6 +217,15 @@ func (w *sessionWin) popupMenu(x, y int, st app.ViewerState) {
 	v := w.v
 	m := menu.New()
 	addQualityMenus(m, v, st)
+	addWindowMenu(m, w.viewport.actual, w.fullscreen.Load(), func(actual bool) {
+		if r := w.runner.Load(); r != nil {
+			r.Post(func() {
+				if w.viewport.actual != actual {
+					w.viewport = sessionViewport{actual: actual, panX: 50, panY: 50}
+				}
+			})
+		}
+	}, w.toggleFullscreen)
 	m.Separator()
 	m.Check("真彩", false, nil).SetDisabled(true)
 	m.Check("HDR", false, nil).SetDisabled(true)
@@ -234,6 +254,22 @@ func (w *sessionWin) popupMenu(x, y int, st app.ViewerState) {
 	}()
 }
 
+func (w *sessionWin) toggleFullscreen() {
+	w.app.Post(func() {
+		s := w.surface.Load()
+		if s == nil {
+			return
+		}
+		next := tango.StateFullscreen
+		if s.State() == tango.StateFullscreen {
+			next = tango.StateNormal
+		}
+		if err := s.SetState(next); err != nil {
+			log.Printf("kkdesk viewer: toggle fullscreen: %v", err)
+		}
+	})
+}
+
 func addQualityMenus(m *menu.Menu, v *app.Viewer, st app.ViewerState) {
 	quality := m.Submenu("画质")
 	for _, b := range bitrates {
@@ -247,7 +283,7 @@ func addQualityMenus(m *menu.Menu, v *app.Viewer, st app.ViewerState) {
 
 // screen is the remote screen: a native video view over a box that reads
 // the pointer and keyboard and forwards them.
-func (w *sessionWin) screen(c *ui.Context, st app.ViewerState) {
+func (w *sessionWin) screen(c *ui.Context, st app.ViewerState, viewport ui.ID, fw, fh int, opts ...layout.Option) {
 	nh := uihost.NativeHost(c, "remote", uihost.NativeHostOptions{
 		Create: func() (uintptr, error) {
 			view, err := display.New()
@@ -266,7 +302,7 @@ func (w *sessionWin) screen(c *ui.Context, st app.ViewerState) {
 		},
 		PassInput: true,
 		Covered:   uihost.CoverIgnore,
-	}, layout.Grow(1))
+	}, opts...)
 	nh.Bg(theme.Hex("#000000"))
 	// PassInput takes the box out of the Tab order; the remote screen still
 	// needs keyboard focus to forward keys, so make it focusable again and
@@ -284,22 +320,22 @@ func (w *sessionWin) screen(c *ui.Context, st app.ViewerState) {
 		return
 	}
 	c.CaptureTab(id)
-	w.forwardInput(c, id)
+	w.forwardInput(c, id, viewport, fw, fh)
 }
 
 // forwardInput maps this frame's pointer, wheel and key events on the box
 // to remote input events.
-func (w *sessionWin) forwardInput(c *ui.Context, id ui.ID) {
+func (w *sessionWin) forwardInput(c *ui.Context, id, viewport ui.ID, fw, fh int) {
 	box, ok := c.RectOf(id)
+	visible, hasViewport := c.RectOf(viewport)
 	keys := c.EventsFor(id)
 	wdx, wdy, wheel := c.WheelFor(id)
-	if !ok || w.v.ViewOnly() {
+	if !ok || !hasViewport || w.v.ViewOnly() {
 		w.pressed = [8]bool{}
 		return
 	}
-	fw, fh := w.v.FrameSize()
 	norm := func(p tin.Pointer) (float32, float32, bool) {
-		return display.Normalize(p.Pos.X-box.X, p.Pos.Y-box.Y, box.W, box.H, fw, fh)
+		return videoPointer(p.Pos, box, visible, fw, fh)
 	}
 	for _, p := range c.PointerEvents() {
 		nx, ny, in := norm(p)
@@ -323,7 +359,7 @@ func (w *sessionWin) forwardInput(c *ui.Context, id ui.ID) {
 	}
 	if wheel {
 		if pt, inWin := c.Pointer(); inWin {
-			if _, _, in := display.Normalize(pt.X-box.X, pt.Y-box.Y, box.W, box.H, fw, fh); in {
+			if _, _, in := videoPointer(pt, box, visible, fw, fh); in {
 				// Tango: positive DY reveals content below; the wire uses the
 				// CGScrollWheel convention (positive scrolls up), so negate.
 				w.v.Send(input.Event{Kind: input.Wheel, DX: -wdx, DY: -wdy, Mods: uint8(c.PointerMods())})

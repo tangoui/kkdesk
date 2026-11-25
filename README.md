@@ -59,6 +59,27 @@ export KKDESK_TURN_SECRET="$(openssl rand -hex 32)"
 
 可以给服务器加 `-relay-only` 验证中继路径。首版使用单实例、共享服务密钥，设备上线与配对状态保存在内存中。
 
+### 服务端配置文件
+
+可以把部署参数放到 `server.json`，再运行 `./kkdesk-server -config server.json`。配置文件的键名与命令行参数相同，去掉开头的 `-`。未填写的参数使用默认值，启动时显式提供的命令行参数优先。完整参数可通过 `./kkdesk-server -help` 查看。
+
+```json
+{
+  "listen": ":443",
+  "tls-cert": "/etc/letsencrypt/live/desk.example.com/fullchain.pem",
+  "tls-key": "/etc/letsencrypt/live/desk.example.com/privkey.pem",
+  "turn-public-ip": "203.0.113.10",
+  "turn-host": "desk.example.com",
+  "turn-tls-listen": ":5349",
+  "max-signaling-connections": 2048,
+  "turn-credential-ttl": "8h"
+}
+```
+
+`KKDESK_SERVER_TOKEN` 和 `KKDESK_TURN_SECRET` 仍通过环境变量设置。信令连接数包含在线设备和正在配对的控制端。缩短 TURN 凭据有效期会影响长时间中继会话的续期。
+
+部署后可以运行 `curl -fsS https://desk.example.com/healthz`。返回 `ok` 表示 HTTPS 信令服务正在响应。中继端口是否可用，可以用 `-relay-only` 从两台客户端实际连接验证。
+
 ## 配置
 
 「设置」和「我的设备」保存在本机的 `kkdesk.json`：macOS `~/Library/Application Support/kkdesk/`，Windows `%APPDATA%\kkdesk\`。环境变量 `KKDESK_CONFIG_DIR` 指定另一个目录（例如在 `tan dev` 旁边再开一个测试实例）。命令行参数（`-listen`、`-password`、`-fps`、`-bitrate`、`-autoaccept`）优先于配置文件；给了 `-password` 或 `-host` 时临时密码在本次运行中不更换。文件损坏时会备份为 `kkdesk.json.bad` 并用默认设置启动。
@@ -69,3 +90,7 @@ export KKDESK_TURN_SECRET="$(openssl rand -hex 32)"
 
 - macOS：被控端需要「屏幕录制」权限，控制别人操作本机时需要「辅助功能」权限（系统设置 › 隐私与安全性）。
 - Windows：首次监听端口时请在防火墙提示里允许（专用网络）。以普通权限运行时，无法控制管理员窗口和 UAC 弹窗。
+
+## 许可证
+
+kkdesk 使用 [GNU AGPL-3.0](LICENSE) 授权。

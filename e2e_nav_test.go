@@ -16,10 +16,12 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
 	"github.com/tangoui/tango/automation"
+	"github.com/tangoui/tango/sys/autostart"
 	"github.com/tangoui/tango/ui/a11y"
 
 	"github.com/tangoui/kkdesk/internal/config"
@@ -55,7 +57,7 @@ func TestE2ENav(t *testing.T) {
 		t.Fatal(err)
 	}
 	app := automation.LaunchOptions(t, ".", automation.Options{
-		Args:    []string{"-listen", ":21918", "-applog", ""},
+		Args:    []string{autostart.LoginArg, "-listen", ":21918", "-applog", ""},
 		Env:     []string{"KKDESK_CONFIG_DIR=" + cfgDir, "TANGO_LAUNCH_BACKGROUND=1"},
 		Timeout: 20 * time.Second,
 	})
@@ -214,14 +216,28 @@ func TestE2ENav(t *testing.T) {
 	waitDial(t, "127.0.0.1:21918", false)
 
 	w.Find(a11y.RoleMenuItem, "安全").Click()
+	for _, label := range []string{"新会话默认允许剪贴板同步", "新会话默认允许文件传输"} {
+		setting := w.Find(a11y.RoleSwitch, label)
+		setting.WaitState(a11y.Checked)
+		setting.Click()
+		setting.WithoutState(a11y.Checked).Wait()
+	}
 	shot(w, "page-settings.png")
 
 	// Dark theme, saved.
 	w.Find(a11y.RoleMenuItem, "通用").Click()
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+		w.Find(a11y.RoleSwitch, "登录时自动启动").Wait()
+	}
+	w.Find(a11y.RoleRadio, "仅查看").Click()
+	w.Find(a11y.RoleRadio, "仅查看").WaitState(a11y.Checked)
 	w.Find(a11y.RoleRadio, "深色").Click()
 	shot(w, "page-settings-dark.png")
+	nav("连接")
+	w.Find(a11y.RoleRadio, "仅查看").WaitState(a11y.Checked)
 	store, _ = config.Open(cfgDir)
-	if st := store.Settings(); st.Theme != config.ThemeDark || st.Port != 21919 || st.FixedPassword != "fixed-e2e-1" {
+	if st := store.Settings(); st.Theme != config.ThemeDark || st.Port != 21919 || st.FixedPassword != "fixed-e2e-1" ||
+		st.DefaultConnectionMode != config.ConnectionView || st.AllowSessionClipboard || st.AllowSessionFiles {
 		t.Fatalf("settings on disk: %+v", st)
 	}
 }

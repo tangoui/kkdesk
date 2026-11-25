@@ -54,6 +54,9 @@ func TestRoundTrip(t *testing.T) {
 		st.BitrateMbps = 14
 		st.Port = 21919
 		st.Theme = ThemeDark
+		st.DefaultConnectionMode = ConnectionView
+		st.AllowSessionClipboard = false
+		st.AllowSessionFiles = false
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -92,6 +95,18 @@ func TestRoundTrip(t *testing.T) {
 		if fi.Mode().Perm() != 0o600 {
 			t.Fatalf("file mode %v, want 0600 (it holds the fixed password)", fi.Mode().Perm())
 		}
+	}
+}
+
+func TestLegacySessionDefaults(t *testing.T) {
+	dir := t.TempDir()
+	raw := `{"version":1,"settings":{"defaultConnectionMode":"invalid","theme":"dark"}}`
+	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	st := open(t, dir).Settings()
+	if st.DefaultConnectionMode != ConnectionControl || !st.AllowSessionClipboard || !st.AllowSessionFiles {
+		t.Fatalf("legacy session defaults: %+v", st)
 	}
 }
 

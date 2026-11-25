@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"path/filepath"
 	"runtime"
+	"strings"
+
+	"github.com/tangoui/tango/sys/autostart"
 
 	"github.com/tangoui/kkdesk/internal/app"
 	"github.com/tangoui/kkdesk/internal/config"
@@ -34,6 +37,7 @@ type options struct {
 func parseFlags(args []string) (options, *flag.FlagSet, error) {
 	var o options
 	fs := flag.NewFlagSet("kkdesk", flag.ContinueOnError)
+	fs.Bool(strings.TrimPrefix(autostart.LoginArg, "--"), false, "open from the system login item")
 	fs.BoolVar(&o.host, "host", false, "run as host: share this screen and accept connections")
 	fs.StringVar(&o.connect, "connect", "", "run as viewer: connect to the host at `addr`")
 	fs.StringVar(&o.password, "password", "", "temporary password of the host (viewer)")

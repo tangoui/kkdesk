@@ -67,13 +67,15 @@ type HostConfig struct {
 	// Clipboard is the local clipboard, synced with the controller's
 	// during remote control while the 剪贴板 permission is on; nil
 	// disables syncing.
-	Clipboard   clipsync.Clipboard
-	FPS         int // capture frame rate
-	MaxWidth    int // capture width limit; 0 = native
-	BitrateMbps int // 0 = auto
-	Log         io.Writer
-	AutoAccept  bool
-	Remote      rendezvous.Config
+	Clipboard               clipsync.Clipboard
+	DisableSessionClipboard bool
+	DisableSessionFiles     bool
+	FPS                     int // capture frame rate
+	MaxWidth                int // capture width limit; 0 = native
+	BitrateMbps             int // 0 = auto
+	Log                     io.Writer
+	AutoAccept              bool
+	Remote                  rendezvous.Config
 }
 
 // HostPhase is what the host is doing.
@@ -146,8 +148,8 @@ type Host struct {
 	closed     bool
 	remotePeer bool
 
-	fileAccess atomic.Bool // the 文件传输 permission; on by default
-	clipAccess atomic.Bool // the 剪贴板 permission; on by default
+	fileAccess atomic.Bool // current 文件传输 permission
+	clipAccess atomic.Bool // current 剪贴板 permission
 }
 
 // NewHost returns a host that is not listening yet (see SetEnabled). notify
@@ -172,8 +174,8 @@ func NewHost(cfg HostConfig, notify func()) *Host {
 	if cfg.Remote.URL != "" {
 		h.remote.code = rendezvous.NewCode()
 	}
-	h.fileAccess.Store(true)
-	h.clipAccess.Store(true)
+	h.fileAccess.Store(!cfg.DisableSessionFiles)
+	h.clipAccess.Store(!cfg.DisableSessionClipboard)
 	h.mu.Lock()
 	if cfg.Password == "" {
 		h.newPasswordLocked()
@@ -290,6 +292,14 @@ func (h *Host) SetAddr(addr string) error {
 	}
 	h.stopLocked()
 	return h.startLocked()
+}
+
+// SetSessionDefaults configures the permissions for future connections.
+func (h *Host) SetSessionDefaults(clipboard, files bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.cfg.DisableSessionClipboard = !clipboard
+	h.cfg.DisableSessionFiles = !files
 }
 
 // FileAccess reports whether the controller may browse and transfer files.
@@ -691,6 +701,8 @@ func (h *Host) handle(p *session.Peer, remoteCtx context.Context) {
 	h.busy = true
 	h.peer, h.since = p, time.Now()
 	h.remotePeer = remoteCtx != nil
+	h.fileAccess.Store(!h.cfg.DisableSessionFiles)
+	h.clipAccess.Store(!h.cfg.DisableSessionClipboard)
 	h.notice = ""
 	var ch chan bool
 	if remoteCtx != nil || !h.cfg.AutoAccept {

@@ -45,6 +45,12 @@ const (
 	ThemeDark   = "dark"
 )
 
+const (
+	ConnectionControl  = "control"
+	ConnectionView     = "view"
+	ConnectionTransfer = "transfer"
+)
+
 // Fixed password length limits.
 const (
 	FixedMin = 8
@@ -59,21 +65,28 @@ var (
 
 // Settings are the 设置 page. The zero value is not valid; see Defaults.
 type Settings struct {
-	Rotate        string `json:"rotate"`
-	FixedPassword string `json:"fixedPassword,omitempty"`
-	Confirm       bool   `json:"confirm"`     // ask before accepting a connection
-	AllowRemote   bool   `json:"allowRemote"` // listen at start
-	FPS           int    `json:"fps"`
-	BitrateMbps   int    `json:"bitrateMbps"` // 0 = automatic
-	Port          int    `json:"port"`
-	Theme         string `json:"theme"`
-	RemoteURL     string `json:"remoteURL,omitempty"`
-	RemoteToken   string `json:"remoteToken,omitempty"`
+	Rotate                string `json:"rotate"`
+	FixedPassword         string `json:"fixedPassword,omitempty"`
+	Confirm               bool   `json:"confirm"`     // ask before accepting a connection
+	AllowRemote           bool   `json:"allowRemote"` // listen at start
+	FPS                   int    `json:"fps"`
+	BitrateMbps           int    `json:"bitrateMbps"` // 0 = automatic
+	Port                  int    `json:"port"`
+	Theme                 string `json:"theme"`
+	RemoteURL             string `json:"remoteURL,omitempty"`
+	RemoteToken           string `json:"remoteToken,omitempty"`
+	DefaultConnectionMode string `json:"defaultConnectionMode"`
+	AllowSessionClipboard bool   `json:"allowSessionClipboard"`
+	AllowSessionFiles     bool   `json:"allowSessionFiles"`
 }
 
 // Defaults are the settings of a new installation.
 func Defaults() Settings {
-	return Settings{Rotate: RotateAfterSession, Confirm: true, AllowRemote: true, FPS: 60, Port: DefaultPort, Theme: ThemeSystem}
+	return Settings{
+		Rotate: RotateAfterSession, Confirm: true, AllowRemote: true,
+		FPS: 60, Port: DefaultPort, Theme: ThemeSystem, DefaultConnectionMode: ConnectionControl,
+		AllowSessionClipboard: true, AllowSessionFiles: true,
+	}
 }
 
 // RotateEvery is the rotation period of a timed policy, 0 otherwise.
@@ -122,6 +135,11 @@ func (s *Settings) repair() {
 	case ThemeSystem, ThemeLight, ThemeDark:
 	default:
 		s.Theme = d.Theme
+	}
+	switch s.DefaultConnectionMode {
+	case ConnectionControl, ConnectionView, ConnectionTransfer:
+	default:
+		s.DefaultConnectionMode = d.DefaultConnectionMode
 	}
 }
 

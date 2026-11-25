@@ -245,15 +245,17 @@ func openStore() *config.Store {
 func hostConfig(o options, store *config.Store, logw io.Writer) app.HostConfig {
 	st := store.Settings()
 	cfg := app.HostConfig{
-		Addr:        o.listen,
-		Fixed:       st.FixedPassword,
-		Rotate:      st.Rotate,
-		FPS:         st.FPS,
-		MaxWidth:    o.maxWidth,
-		BitrateMbps: st.BitrateMbps,
-		Log:         logw,
-		AutoAccept:  o.autoAccept || !st.Confirm,
-		Remote:      rendezvous.Config{URL: st.RemoteURL, Token: st.RemoteToken},
+		Addr:                    o.listen,
+		Fixed:                   st.FixedPassword,
+		Rotate:                  st.Rotate,
+		FPS:                     st.FPS,
+		MaxWidth:                o.maxWidth,
+		BitrateMbps:             st.BitrateMbps,
+		Log:                     logw,
+		AutoAccept:              o.autoAccept || !st.Confirm,
+		Remote:                  rendezvous.Config{URL: st.RemoteURL, Token: st.RemoteToken},
+		DisableSessionClipboard: !st.AllowSessionClipboard,
+		DisableSessionFiles:     !st.AllowSessionFiles,
 	}
 	if cfg.Addr == "" {
 		cfg.Addr = fmt.Sprintf(":%d", st.Port)
