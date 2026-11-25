@@ -6,6 +6,7 @@ import flutter_webrtc
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private var frameProbe: FrameProbe?
+  private let mediaUploadPicker = MediaUploadPicker()
 
   override func application(
     _ application: UIApplication,
@@ -16,6 +17,9 @@ import flutter_webrtc
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    if let mediaRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "KKDeskMediaUpload") {
+      mediaUploadPicker.register(with: mediaRegistrar.messenger())
+    }
     guard let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "KKDeskSpike") else {
       return
     }

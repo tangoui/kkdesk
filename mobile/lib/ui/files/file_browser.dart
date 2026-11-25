@@ -1,10 +1,10 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 
 import '../../files/file_transfer_service.dart';
 import '../common.dart';
+import 'media_upload.dart';
 import 'transfer_center.dart';
 import 'transfer_rows.dart';
 
@@ -189,24 +189,18 @@ class _FileBrowserState extends State<FileBrowser> {
     );
     if (photo == null || !mounted) return;
     await _submit(() async {
-      final files = photo
-          ? await ImagePicker().pickMultipleMedia()
+      final sources = photo
+          ? await pickMediaForUpload()
           : [
               for (final file in await FilePicker.pickFiles())
-                if (file.path != null) XFile(file.path!, name: file.name),
+                if (file.path != null)
+                  UploadSource.file(
+                    name: file.name,
+                    size: await file.xFile.length(),
+                    openRead: file.xFile.openRead,
+                  ),
             ];
-      if (!mounted || files.isEmpty) return;
-      final sources = <UploadSource>[];
-      for (final file in files) {
-        sources.add(
-          UploadSource.file(
-            name: file.name,
-            size: await file.length(),
-            openRead: file.openRead,
-          ),
-        );
-      }
-      if (!mounted) return;
+      if (!mounted || sources.isEmpty) return;
       for (final source in sources) {
         widget.center.upload(connection, source, directory);
       }
