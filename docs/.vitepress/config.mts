@@ -43,6 +43,7 @@ export default defineConfig({
             { text: '文件传输', link: '/guide/file-transfer' },
             { text: '我的设备与远程会话', link: '/guide/devices' },
             { text: '设置', link: '/guide/settings' },
+            { text: '自动更新', link: '/guide/update' },
           ],
         },
         {
@@ -67,6 +68,7 @@ export default defineConfig({
             { text: '命令行参数', link: '/dev/cli' },
             { text: '架构', link: '/dev/architecture' },
             { text: '测试与测量', link: '/dev/testing' },
+            { text: '发版', link: '/dev/release' },
           ],
         },
       ],

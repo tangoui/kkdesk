@@ -1,9 +1,22 @@
 # 安装与首次运行
 
-kkdesk 目前还没有正式安装包，需要[从源码构建](/dev/build)：
+正式版本发布在 [GitHub Releases](https://github.com/tangoui/kkdesk/releases)，装好后会[自动更新](./update)。第一个正式版本发布之前，请[从源码构建](/dev/build)。
+
+| 系统 | 下载 | 安装 |
+|---|---|---|
+| macOS（Apple 芯片） | `kkdesk-<版本>-darwin-arm64.app.tar.gz` | 双击解压，把 `kkdesk.app` 拖进「应用程序」。 |
+| macOS（Intel） | `kkdesk-<版本>-darwin-amd64.app.tar.gz` | 同上。 |
+| Windows（x64） | `kkdesk-<版本>-windows-amd64.exe` | 不需要安装，放进一个固定的文件夹双击运行。只依赖系统自带的 DLL。 |
+| Linux（x64、arm64） | `kkdesk-<版本>-linux-<架构>.tar.gz` | 解压到一个单独的文件夹运行。Linux 版目前**只能传文件**，不能共享屏幕或查看远端画面。 |
+
+::: tip macOS 第一次打开
+发布版还没有用开发者证书签名和公证。第一次打开时，macOS 会提示无法验证开发者：到「系统设置 › 隐私与安全性」，在下方找到 kkdesk，点 **仍要打开**（较早的 macOS 上也可以在「应用程序」里右键点 kkdesk › 打开）。之后正常双击即可；自动更新装上的新版本不会再出现这个提示，但要重新授权屏幕录制，见 [自动更新](./update)。
+:::
+
+从源码构建时：
 
 - **macOS**：在 Mac 上构建，开发时用 `tan dev` 直接运行。
-- **Windows**：在 Mac 上用 `scripts/build-windows.sh` 交叉编译，得到一个 `kkdesk.exe`。它不需要安装，也只依赖系统自带的 DLL，复制到 Windows 上双击就能运行。
+- **Windows**：在 Mac 上用 `scripts/build-windows.sh` 交叉编译，得到一个 `kkdesk.exe`。
 
 ## macOS
 

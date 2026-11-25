@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/tangoui/tango"
+	"github.com/tangoui/tango/service/updater"
 	"github.com/tangoui/tango/ui"
 	"github.com/tangoui/tango/ui/icon"
 	"github.com/tangoui/tango/ui/icon/antd"
@@ -66,13 +67,14 @@ const maxRecent = 8
 type MainOptions struct {
 	App       *tango.App
 	Host      *app.Host
-	Store     *config.Store // settings and 我的设备
-	Form      *Form         // persisted across hot reloads
-	ViewerLog io.Writer     // stats of viewer sessions started from the form
-	ViewOnly  bool          // force view-only for those sessions
-	Hidden    bool          // create the window hidden (-connect)
-	Error     string        // initial error shown on the form
-	Clipboard *Clipboard    // synced with the other side while controlling
+	Store     *config.Store    // settings and 我的设备
+	Form      *Form            // persisted across hot reloads
+	ViewerLog io.Writer        // stats of viewer sessions started from the form
+	ViewOnly  bool             // force view-only for those sessions
+	Hidden    bool             // create the window hidden (-connect)
+	Error     string           // initial error shown on the form
+	Clipboard *Clipboard       // synced with the other side while controlling
+	Updater   *updater.Updater // self-update (设置 › 通用 › 检查更新); nil in development builds
 }
 
 // Main is the main window.

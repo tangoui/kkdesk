@@ -42,6 +42,17 @@ scripts/build-windows.sh                  # 产出 kkdesk.exe 和说明
 
 `kkdesk-server` 提供设备码信令和 TURN 中继。客户端自动选择 WebRTC 直连或中继。服务端可以运行在有公网 IPv4 和 TLS 证书的 Linux 服务器上。
 
+Debian 或 Ubuntu 上可以单独下载安装脚本。先把域名解析到服务器，并按部署指南开放端口。运行以下命令，将域名和 IPv4 替换成实际值。脚本会准备证书、密钥和开机启动服务。[服务器部署指南](https://tangoui.github.io/kkdesk/deploy/server.html#一键安装)
+
+```sh
+curl -fsSL -o install-server.sh https://raw.githubusercontent.com/tangoui/kkdesk/main/scripts/install-server.sh &&
+  sudo bash install-server.sh desk.example.com 203.0.113.10
+```
+
+如果 GitHub Raw 连接被重置，或安装时下载 Go 和依赖太慢，可以从 CDN 下载脚本，或上传预编译的 Linux 二进制安装。[下载故障与加速](https://tangoui.github.io/kkdesk/deploy/server.html#下载缓慢或连接被重置)
+
+### 手动部署
+
 ```sh
 CGO_ENABLED=0 go build -o kkdesk-server ./cmd/kkdesk-server
 export KKDESK_SERVER_TOKEN="$(openssl rand -hex 32)"
