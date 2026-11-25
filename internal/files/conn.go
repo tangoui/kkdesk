@@ -7,6 +7,7 @@ import (
 	"io"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // Channel is the data channel the engine runs on: ordered, reliable and
@@ -127,10 +128,15 @@ func (e *endpoint) send(m msg) error {
 	e.textMu.Lock()
 	defer e.textMu.Unlock()
 	for len(b) > maxText {
-		part := make([]byte, headerLen+ChunkSize)
+		n := min(ChunkSize, len(b)-1)
+		// The remaining text frame must decode independently as UTF-8.
+		for !utf8.RuneStart(b[n]) {
+			n--
+		}
+		part := make([]byte, headerLen+n)
 		putHeader(part, kindJSON, 0, 0)
-		n := copy(part[headerLen:], b)
-		if err := e.ch.Send(part[:headerLen+n]); err != nil {
+		copy(part[headerLen:], b[:n])
+		if err := e.ch.Send(part); err != nil {
 			return e.sendErr(err)
 		}
 		b = b[n:]
