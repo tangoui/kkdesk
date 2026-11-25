@@ -203,6 +203,9 @@ class _HomeState extends State<_Home> {
   @override
   void initState() {
     super.initState();
+    if (_services.sessions case final PairedRemoteSessions sessions) {
+      sessions.notices.addListener(_biometricNotice);
+    }
     if (const bool.fromEnvironment('KKDESK_SPIKE_METRICS')) {
       const address = String.fromEnvironment('KKDESK_SPIKE_ADDRESS');
       const password = String.fromEnvironment('KKDESK_SPIKE_PASSWORD');
@@ -214,8 +217,21 @@ class _HomeState extends State<_Home> {
     }
   }
 
+  void _biometricNotice() {
+    final sessions = _services.sessions;
+    if (sessions is! PairedRemoteSessions || !mounted) return;
+    final message = sessions.notices.value;
+    if (message != null) {
+      sessions.notices.value = null;
+      KNotice.show(context, message);
+    }
+  }
+
   @override
   void dispose() {
+    if (_services.sessions case final PairedRemoteSessions sessions) {
+      sessions.notices.removeListener(_biometricNotice);
+    }
     _transfers.dispose();
     super.dispose();
   }
@@ -291,7 +307,7 @@ class _HomeState extends State<_Home> {
         builder: (_) => ScanPage(
           camera: _services.camera,
           preview: _services.preview,
-          manualCode: _services.pairing is DemoPairingService,
+          demoCode: _services.pairing is DemoPairingService,
         ),
       ),
     );

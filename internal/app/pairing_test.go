@@ -2,11 +2,16 @@ package app
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
 	"net"
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,7 +29,7 @@ func TestPhonePairingEndToEnd(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Second)
 			defer cancel()
 			cfg := rendezvous.Config{}
 			if route != "lan" {
@@ -114,12 +119,22 @@ func TestPhonePairingEndToEnd(t *testing.T) {
 				t.Fatalf("desktop verification dialog: %+v; wire: %+v", visible, pending)
 			}
 			host.DecidePairing(visible.ID, true, false)
-			if result := receive(ex, tx); result.Status != "ok" || result.Bypass {
+			approved := receive(ex, tx)
+			if approved.Status != "approved" || approved.Bypass || len(host.PairedPhones()) != 0 {
+				t.Fatalf("premature pairing persistence: %+v", approved)
+			}
+			send(ex, tx, pairing.Message{Type: "pair_ack", Nonce: approved.Nonce})
+			if result := receive(ex, tx); result.Status != "ok" || result.Nonce != approved.Nonce {
 				t.Fatalf("pair response: %+v", result)
 			}
+			send(ex, tx, pairing.Message{Type: "pair_received", Nonce: approved.Nonce})
+			if committed := receive(ex, tx); committed.Status != "committed" || committed.Nonce != approved.Nonce {
+				t.Fatalf("missing commit confirmation: %+v", committed)
+			}
+			waitPhoneTest(t, ctx, func() bool { return host.PairingRequest() == nil })
 			closeSignal()
 
-			dial := func(bypass bool) *webrtc.PeerConnection {
+			dial := func(bypass bool, biometric *ecdsa.PrivateKey) *webrtc.PeerConnection {
 				t.Helper()
 				ex, closeSignal, ice := open(true)
 				defer closeSignal()
@@ -150,7 +165,17 @@ func TestPhonePairingEndToEnd(t *testing.T) {
 				case <-ctx.Done():
 					t.Fatal("gathering mobile ICE timed out")
 				}
-				send(ex, tx, pairing.Message{Type: "offer", Mode: "files", SDP: pc.LocalDescription().SDP})
+				offerMessage := pairing.Message{Type: "offer", Mode: "files", SDP: pc.LocalDescription().SDP}
+				if biometric != nil {
+					offerMessage.BiometricKey = pairing.Encode(elliptic.Marshal(elliptic.P256(), biometric.X, biometric.Y))
+					hash := sha256.Sum256(tx.Bytes(offerMessage))
+					signature, err := ecdsa.SignASN1(rand.Reader, biometric, hash[:])
+					if err != nil {
+						t.Fatal(err)
+					}
+					offerMessage.BiometricSignature = pairing.Encode(signature)
+				}
+				send(ex, tx, offerMessage)
 				answer := receive(ex, tx)
 				if answer.Type != "answer" {
 					t.Fatalf("peer answer: %+v", answer)
@@ -161,7 +186,7 @@ func TestPhonePairingEndToEnd(t *testing.T) {
 				return pc
 			}
 
-			first := dial(false)
+			first := dial(false, nil)
 			waitPhoneTest(t, ctx, func() bool { return host.State().Phase == HostPending })
 			if state := host.State(); state.Peer != "Test iPhone" || !state.PhonePeer || state.RemotePeer != (route != "lan") {
 				t.Fatalf("connection request: %+v", state)
@@ -175,7 +200,31 @@ func TestPhonePairingEndToEnd(t *testing.T) {
 			if err := host.UpdatePhone(pairing.Encode(pub), func(phone *pairing.Phone) { phone.Bypass = true }); err != nil {
 				t.Fatal(err)
 			}
-			second := dial(true)
+			ed25519Only := dial(true, nil)
+			waitPhoneTest(t, ctx, func() bool { return host.State().Phase == HostPending })
+			if host.State().BiometricEnrollment {
+				t.Fatal("Ed25519-only offer requested biometric enrollment")
+			}
+			host.Reject()
+			_ = ed25519Only.Close()
+			waitPhoneTest(t, ctx, func() bool { return host.State().Phase == HostListening })
+
+			biometric, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			enrollment := dial(true, biometric)
+			waitPhoneTest(t, ctx, func() bool { return host.State().BiometricEnrollment })
+			host.Accept()
+			waitPhoneTest(t, ctx, func() bool { return host.State().Phase == HostActive })
+			wantBioKey := pairing.Encode(elliptic.Marshal(elliptic.P256(), biometric.X, biometric.Y))
+			if phone, _ := identity.Phone(pairing.Encode(pub)); phone.BiometricKey != wantBioKey {
+				t.Fatal("confirmed enrollment did not persist")
+			}
+			_ = enrollment.Close()
+			waitPhoneTest(t, ctx, func() bool { return host.State().Phase == HostListening })
+
+			second := dial(true, biometric)
 			waitPhoneTest(t, ctx, func() bool { return host.State().Phase == HostActive })
 			if route == "relay-only" {
 				pair, err := second.SCTP().Transport().ICETransport().GetSelectedCandidatePair()
@@ -210,8 +259,28 @@ func TestPhonePairingEndToEnd(t *testing.T) {
 			closeSignal()
 			waitPhoneTest(t, ctx, func() bool { return host.PairingRequest() == nil })
 			host.DecidePairing(prompt.ID, true, true)
-			if len(host.PairedPhones()) != 0 {
-				t.Fatal("a cancelled request left a pairing behind")
+			if len(host.PairedPhones()) != 0 || host.State().Notice != "手机已取消" {
+				t.Fatal("a cancelled request left a pairing behind or was not reported")
+			}
+
+			invite = identity.Invite(time.Now())
+			ex, closeSignal, _ = open(false)
+			defer closeSignal()
+			tx, _ = authenticate(ex, "pair")
+			send(ex, tx, pairing.Message{Type: "request", Code: tx.CodeProof(invite.Code), Name: "Lost Final Reply"})
+			if result := receive(ex, tx); result.Status != "pending" {
+				t.Fatalf("pairing before final reply: %+v", result)
+			}
+			host.DecidePairing(host.PairingRequest().ID, true, true)
+			approved = receive(ex, tx)
+			send(ex, tx, pairing.Message{Type: "pair_ack", Nonce: approved.Nonce})
+			if result := receive(ex, tx); result.Status != "ok" || len(host.PairedPhones()) != 1 {
+				t.Fatalf("expected provisional pairing: %+v", result)
+			}
+			closeSignal()
+			waitPhoneTest(t, ctx, func() bool { return host.PairingRequest() == nil })
+			if len(host.PairedPhones()) != 0 || host.State().Notice != "手机已取消" {
+				t.Fatal("unacknowledged final reply did not roll back pairing")
 			}
 		})
 	}
@@ -256,4 +325,76 @@ func mobileTestServer(t *testing.T, relayOnly bool) rendezvous.Config {
 	http.StartTLS()
 	t.Cleanup(http.Close)
 	return rendezvous.Config{URL: http.URL, PublicKey: key, Token: token}
+}
+
+func TestManualPairingAuthenticatesDesktopWithoutSendingCode(t *testing.T) {
+	identity, err := pairing.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := NewHost(HostConfig{Addr: "127.0.0.1:0", Pairing: identity}, nil)
+	defer host.Close()
+	if err := host.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := host.PairingCode(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	formatted, addr := host.PairingManualCode()
+	code := strings.ReplaceAll(formatted, "-", "")
+	if len(formatted) != 19 || len(code) != 16 || addr != host.ListenAddr() {
+		t.Fatalf("unexpected desktop manual entry: %q, %q", formatted, addr)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	pub, key, _ := ed25519.GenerateKey(nil)
+	ex, err := session.OpenMobileLAN(ctx, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ex.Close()
+	hello := pairing.Message{Type: "hello", Purpose: "pair_manual", PublicKey: pairing.Encode(pub), Nonce: pairing.Random()}
+	if err := ex.Send(ctx, hello); err != nil {
+		t.Fatal(err)
+	}
+	challenge, err := ex.Receive(ctx)
+	tx := pairing.Transcript{Purpose: hello.Purpose, ClientNonce: hello.Nonce, HostNonce: challenge.Nonce,
+		ClientKey: hello.PublicKey, HostKey: challenge.PublicKey}
+	if err != nil || challenge.Code != tx.ManualHostProof(code) || !tx.Verify(challenge.PublicKey, challenge) {
+		t.Fatalf("desktop manual proof: %+v, %v", challenge, err)
+	}
+	send := func(msg pairing.Message) {
+		t.Helper()
+		tx.Sign(key, &msg)
+		if err := ex.Send(ctx, msg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	receive := func() pairing.Message {
+		t.Helper()
+		msg, err := ex.Receive(ctx)
+		if err != nil || !tx.Verify(tx.HostKey, msg) {
+			t.Fatalf("unverified manual pairing reply: %+v, %v", msg, err)
+		}
+		return msg
+	}
+	send(pairing.Message{Type: "request", Code: tx.CodeProof(code), Name: "Manual iPhone"})
+	hostKey, _ := pairing.PublicKey(tx.HostKey)
+	if pending := receive(); pending.Status != "pending" || pending.Code != pairing.VerificationCode(code, hostKey, pub) {
+		t.Fatalf("wrong manual verification code: %+v", pending)
+	}
+	host.DecidePairing(host.PairingRequest().ID, true, false)
+	approved := receive()
+	send(pairing.Message{Type: "pair_ack", Nonce: approved.Nonce})
+	if result := receive(); result.Status != "ok" {
+		t.Fatalf("manual pairing failed: %+v", result)
+	}
+	send(pairing.Message{Type: "pair_received", Nonce: approved.Nonce})
+	if committed := receive(); committed.Status != "committed" || committed.Nonce != approved.Nonce {
+		t.Fatalf("missing manual commit confirmation: %+v", committed)
+	}
+	waitPhoneTest(t, ctx, func() bool { return host.PairingRequest() == nil })
+	if phones := host.PairedPhones(); len(phones) != 1 || phones[0].PublicKey != hello.PublicKey {
+		t.Fatal("manual pairing did not persist the verified phone")
+	}
 }

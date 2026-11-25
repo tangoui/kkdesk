@@ -153,3 +153,87 @@ func TestMobileReceivePreservesReceiptBeforeEnd(t *testing.T) {
 		t.Fatalf("after the receipt: %v", err)
 	}
 }
+
+func TestMobileFinalReplyRequiresGuestWrite(t *testing.T) {
+	broker, err := NewServer(strings.Repeat("a", 32), strings.Repeat("b", 32), []string{"turn:127.0.0.1:3478"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(broker)
+	defer server.Close()
+	cfg := Config{URL: server.URL, Token: strings.Repeat("a", 32)}
+	identity, err := pairing.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	host, err := RegisterMobile(ctx, cfg, identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.Close()
+	replies := make(chan error, 1)
+	entered := make(chan context.Context, 1)
+	proceed := make(chan struct{})
+	defer close(proceed)
+	go host.Serve(ctx, func(call context.Context, ex MobileExchange) {
+		request, err := ex.Receive(call)
+		if err != nil {
+			return
+		}
+		if request.Status == "disconnect" {
+			entered <- call
+			select {
+			case <-call.Done():
+			case <-proceed:
+			}
+		}
+		replies <- ex.Send(call, pairing.Message{Type: "result", Status: "committed"})
+	})
+	guest, err := OpenMobile(ctx, cfg, identity.ID(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer guest.Close()
+	if err := guest.Send(ctx, pairing.Message{Type: "request"}); err != nil {
+		t.Fatal(err)
+	}
+	if reply, err := guest.Receive(ctx); err != nil || reply.Status != "committed" {
+		t.Fatalf("guest commit reply: %+v, %v", reply, err)
+	}
+	select {
+	case err := <-replies:
+		if err != nil {
+			t.Fatalf("delivery acknowledgement: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("missing guest delivery acknowledgement")
+	}
+	guest.Close()
+	disconnected, err := OpenMobile(ctx, cfg, identity.ID(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer disconnected.Close()
+	if err := disconnected.Send(ctx, pairing.Message{Type: "request", Status: "disconnect"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-entered:
+	case <-ctx.Done():
+		t.Fatal("request never reached host")
+	}
+	disconnected.Close()
+	select {
+	case err := <-replies:
+		if err == nil {
+			t.Fatal("final reply was acknowledged after guest disconnected")
+		}
+	case <-ctx.Done():
+		t.Fatal("host did not learn the guest disconnected")
+	}
+	if online, err := MobileOnline(ctx, cfg, identity.ID()); err != nil || !online {
+		t.Fatalf("guest disconnect dropped host: %v, %v", online, err)
+	}
+}

@@ -1,7 +1,9 @@
 package pairing
 
 import (
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -15,20 +17,22 @@ import (
 
 // Message is the signed payload of either the LAN or rendezvous envelope.
 type Message struct {
-	Type      string `json:"type"`
-	Purpose   string `json:"purpose,omitempty"`
-	PublicKey string `json:"publicKey,omitempty"`
-	Nonce     string `json:"nonce,omitempty"`
-	Code      string `json:"code,omitempty"`
-	Name      string `json:"name,omitempty"`
-	Model     string `json:"model,omitempty"`
-	OS        string `json:"os,omitempty"`
-	Bypass    bool   `json:"bypass,omitempty"`
-	Status    string `json:"status,omitempty"`
-	Deadline  int64  `json:"deadline,omitempty"`
-	Mode      string `json:"mode,omitempty"`
-	SDP       string `json:"sdp,omitempty"`
-	Signature string `json:"signature,omitempty"`
+	Type               string `json:"type"`
+	Purpose            string `json:"purpose,omitempty"`
+	PublicKey          string `json:"publicKey,omitempty"`
+	Nonce              string `json:"nonce,omitempty"`
+	Code               string `json:"code,omitempty"`
+	Name               string `json:"name,omitempty"`
+	Model              string `json:"model,omitempty"`
+	OS                 string `json:"os,omitempty"`
+	Bypass             bool   `json:"bypass,omitempty"`
+	Status             string `json:"status,omitempty"`
+	Deadline           int64  `json:"deadline,omitempty"`
+	Mode               string `json:"mode,omitempty"`
+	SDP                string `json:"sdp,omitempty"`
+	Signature          string `json:"signature,omitempty"`
+	BiometricKey       string `json:"biometricKey,omitempty"`
+	BiometricSignature string `json:"biometricSignature,omitempty"`
 }
 
 type Transcript struct {
@@ -41,9 +45,13 @@ type Transcript struct {
 
 func (t Transcript) Bytes(m Message) []byte {
 	data := []byte("kkdesk/mobile/v1\x00")
-	for _, field := range []string{t.Purpose, t.ClientNonce, t.HostNonce, t.ClientKey, t.HostKey,
+	fields := []string{t.Purpose, t.ClientNonce, t.HostNonce, t.ClientKey, t.HostKey,
 		m.Type, m.Purpose, m.PublicKey, m.Nonce, m.Code, m.Name, m.Model, m.OS,
-		strconv.FormatBool(m.Bypass), m.Status, strconv.FormatInt(m.Deadline, 10), m.Mode, m.SDP} {
+		strconv.FormatBool(m.Bypass), m.Status, strconv.FormatInt(m.Deadline, 10), m.Mode, m.SDP}
+	if m.BiometricKey != "" {
+		fields = append(fields, m.BiometricKey)
+	}
+	for _, field := range fields {
 		data = binary.BigEndian.AppendUint32(data, uint32(len(field)))
 		data = append(data, field...)
 	}
@@ -58,6 +66,26 @@ func (t Transcript) Verify(key string, m Message) bool {
 	public, ok := PublicKey(key)
 	sig, err := base64.RawURLEncoding.Strict().DecodeString(m.Signature)
 	return ok && err == nil && ed25519.Verify(public, t.Bytes(m), sig)
+}
+
+// VerifyBiometric verifies an ASN.1 DER ECDSA-SHA256 signature from an
+// uncompressed SEC1 P-256 public key against the same bytes as Ed25519.
+func (t Transcript) VerifyBiometric(key string, m Message) bool {
+	raw, err := base64.RawURLEncoding.Strict().DecodeString(key)
+	if err != nil || len(raw) != 65 {
+		return false
+	}
+	curve := elliptic.P256()
+	x, y := elliptic.Unmarshal(curve, raw)
+	if x == nil {
+		return false
+	}
+	signature, err := base64.RawURLEncoding.Strict().DecodeString(m.BiometricSignature)
+	if err != nil || len(signature) < 8 || len(signature) > 72 {
+		return false
+	}
+	hash := sha256.Sum256(t.Bytes(m))
+	return ecdsa.VerifyASN1(&ecdsa.PublicKey{Curve: curve, X: x, Y: y}, hash[:], signature)
 }
 
 func Encode(data []byte) string { return base64.RawURLEncoding.EncodeToString(data) }
@@ -81,8 +109,18 @@ func Random() string {
 // CodeProof binds the QR secret to this exchange without sending it in
 // either the LAN stream or the server's forwarding envelope.
 func (t Transcript) CodeProof(code string) string {
+	return t.proof(code, "pair-code")
+}
+
+// ManualHostProof authenticates the desktop before the phone trusts its
+// fingerprint. Its role differs from that of the phone's CodeProof.
+func (t Transcript) ManualHostProof(code string) string {
+	return t.proof(code, "pair-manual-host")
+}
+
+func (t Transcript) proof(code, role string) string {
 	h := hmac.New(sha256.New, []byte(code))
-	h.Write(t.Bytes(Message{Type: "pair-code"}))
+	h.Write(t.Bytes(Message{Type: role}))
 	return Encode(h.Sum(nil))
 }
 

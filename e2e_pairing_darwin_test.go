@@ -33,6 +33,8 @@ func TestE2EPairingDialogs(t *testing.T) {
 		first.Click()
 	}
 	window.Find(a11y.RoleButton, "手机扫码连接").Click()
+	window.Find(a11y.RoleText, "手动配对码").Wait()
+	window.FindRegexp(a11y.RoleText, "^[A-Z2-7]{4}(-[A-Z2-7]{4}){3}$").Wait()
 	window.FindRegexp(a11y.RoleText, "[0-9]{2}:[0-9]{2} 后自动刷新").Wait()
 	shots := os.Getenv("KKDESK_PAIRING_SHOTS")
 	if shots != "" {
@@ -114,9 +116,27 @@ for barcode in request.results ?? [] {
 	allow.Wait()
 	screenshot("confirm.png")
 	allow.Click()
+	approved, err := ex.Receive(ctx)
+	if err != nil || approved.Status != "approved" || !tx.Verify(challenge.PublicKey, approved) {
+		t.Fatalf("pairing approval: %+v, %v", approved, err)
+	}
+	ack := pairing.Message{Type: "pair_ack", Nonce: approved.Nonce}
+	tx.Sign(key, &ack)
+	if err := ex.Send(ctx, ack); err != nil {
+		t.Fatal(err)
+	}
 	result, err := ex.Receive(ctx)
 	if err != nil || result.Status != "ok" || !tx.Verify(challenge.PublicKey, result) {
 		t.Fatalf("pairing result: %+v, %v", result, err)
+	}
+	ack = pairing.Message{Type: "pair_received", Nonce: approved.Nonce}
+	tx.Sign(key, &ack)
+	if err := ex.Send(ctx, ack); err != nil {
+		t.Fatal(err)
+	}
+	committed, err := ex.Receive(ctx)
+	if err != nil || committed.Status != "committed" || !tx.Verify(challenge.PublicKey, committed) {
+		t.Fatalf("pairing commit confirmation: %+v, %v", committed, err)
 	}
 	window.Find(a11y.RoleMenuItem, "设置").Click()
 	window.Find(a11y.RoleText, "验收用 iPhone").Wait()

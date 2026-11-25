@@ -112,11 +112,13 @@ type HostState struct {
 	FilesOnly bool
 	// FileAccess: the controller may browse and transfer files (the
 	// 文件传输 permission).
-	FileAccess bool
-	RemoteCode string
-	RemoteErr  string
-	RemotePeer bool
-	PhonePeer  bool
+	FileAccess          bool
+	RemoteCode          string
+	RemoteErr           string
+	RemotePeer          bool
+	PhonePeer           bool
+	BiometricEnrollment bool
+	PairingCancellation uint64
 	// ClipboardAccess: the clipboard is synced with the controller's (the
 	// 剪贴板 permission).
 	ClipboardAccess bool
@@ -423,7 +425,7 @@ func (h *Host) State() HostState {
 	defer h.mu.Unlock()
 	s := HostState{Phase: h.phase, Addrs: h.addrs, Port: Port, Password: h.password, Err: h.errMsg, Notice: h.notice,
 		FileAccess: h.fileAccess.Load(), ClipboardAccess: h.clipAccess.Load(), Enabled: h.wantOn, PasswordSince: h.pwSince, Rotate: h.cfg.Rotate,
-		HasFixed: h.cfg.Fixed != "", AutoAccept: h.cfg.AutoAccept}
+		HasFixed: h.cfg.Fixed != "", AutoAccept: h.cfg.AutoAccept, PairingCancellation: h.mobile.cancellation}
 	if h.remote.online {
 		s.RemoteCode = h.remote.code
 	}
@@ -440,6 +442,7 @@ func (h *Host) State() HostState {
 		s.Peer = h.peer.RemoteAddr()
 		if h.mobile.peerKey != "" {
 			s.PhonePeer = true
+			s.BiometricEnrollment = h.mobile.biometricEnrollment
 			if p, ok := h.cfg.Pairing.Phone(h.mobile.peerKey); ok {
 				s.Peer = p.Name
 			}
@@ -704,13 +707,13 @@ func (h *Host) acceptLoop(ctx context.Context, ln *session.Host) {
 		h.wg.Add(1)
 		go func() {
 			defer h.wg.Done()
-			h.handle(p, nil, "", false)
+			h.handle(p, nil, "", "")
 		}()
 	}
 }
 
 // handle runs one incoming peer: busy check, confirmation, session.
-func (h *Host) handle(p *session.Peer, remoteCtx context.Context, phoneKey string, bypassAuthorized bool) {
+func (h *Host) handle(p *session.Peer, remoteCtx context.Context, phoneKey, biometricKey string) {
 	h.mu.Lock()
 	if h.closed || (remoteCtx != nil && (remoteCtx.Err() != nil || !h.wantOn)) {
 		h.mu.Unlock()
@@ -723,6 +726,7 @@ func (h *Host) handle(p *session.Peer, remoteCtx context.Context, phoneKey strin
 		return
 	}
 	confirm := remoteCtx != nil || !h.cfg.AutoAccept
+	var enroll bool
 	if phoneKey != "" {
 		phone, ok := h.cfg.Pairing.Phone(phoneKey)
 		if !ok || !h.wantOn {
@@ -730,12 +734,14 @@ func (h *Host) handle(p *session.Peer, remoteCtx context.Context, phoneKey strin
 			p.CloseWithReason("已解除配对")
 			return
 		}
-		confirm = !phone.Bypass || !bypassAuthorized
+		confirm = !phone.Bypass || biometricKey == "" || phone.BiometricKey != biometricKey
+		enroll = phone.Bypass && biometricKey != "" && phone.BiometricKey != biometricKey
 	}
 	h.busy = true
 	h.peer, h.since = p, time.Now()
 	h.remotePeer = remoteCtx != nil
 	h.mobile.peerKey = phoneKey
+	h.mobile.biometricEnrollment = enroll
 	h.fileAccess.Store(!h.cfg.DisableSessionFiles)
 	h.clipAccess.Store(!h.cfg.DisableSessionClipboard)
 	h.notice = ""
@@ -755,6 +761,7 @@ func (h *Host) handle(p *session.Peer, remoteCtx context.Context, phoneKey strin
 		h.busy, h.peer, h.decide, h.fsrv = false, nil, nil, nil
 		h.remotePeer = false
 		h.mobile.peerKey = ""
+		h.mobile.biometricEnrollment = false
 		if accepted && h.cfg.Rotate == config.RotateAfterSession {
 			h.newPasswordLocked() // 每次连接后更换
 			log.Printf("kkdesk host: temporary password rotated after the session")
@@ -785,6 +792,21 @@ func (h *Host) handle(p *session.Peer, remoteCtx context.Context, phoneKey strin
 		}
 		if !ok || (remoteCtx != nil && remoteCtx.Err() != nil) {
 			p.CloseWithReason("对方拒绝了连接请求")
+			return
+		}
+	}
+	if enroll {
+		h.mu.Lock()
+		// This key can only become trusted after an explicit confirmation.
+		err := h.cfg.Pairing.Update(phoneKey, func(phone *pairing.Phone) {
+			if phone.Bypass {
+				phone.BiometricKey = biometricKey
+			}
+		})
+		h.mobile.biometricEnrollment = false
+		h.mu.Unlock()
+		if err != nil {
+			p.CloseWithReason("无法登记手机生物识别密钥")
 			return
 		}
 	}

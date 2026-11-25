@@ -90,6 +90,9 @@ func (m *Main) confirm(c *ui.Context, hs app.HostState) {
 	}).Body(func() {
 		ui.Column(c, func() {
 			ui.Alert(c, "warning", warn).ShowIcon(true).Show()
+			if hs.BiometricEnrollment {
+				ui.Alert(c, "info", "接受后将登记这台手机的生物识别密钥。请确认手机刚完成面容或指纹验证。").ShowIcon(true).Show()
+			}
 			ui.Row(c, func() {
 				for _, p := range perms {
 					if !permShown(hs, p.label) {

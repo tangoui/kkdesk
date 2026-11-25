@@ -143,5 +143,5 @@ func (h *Host) answerRemote(ctx context.Context, cfg rendezvous.Config, conn *we
 		peer.Close()
 		return
 	}
-	h.handle(peer, ctx, "", false)
+	h.handle(peer, ctx, "", "")
 }

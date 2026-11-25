@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:cryptography/cryptography.dart';
+import 'package:cryptography/cryptography.dart' hide Hmac;
 import 'package:crypto/crypto.dart';
 import 'package:tlslite/tlslite.dart' as tls;
 // tlslite exposes its server API, but keeps the PEM key parser internal.
@@ -210,7 +210,14 @@ void main() {
     },
   );
 
-  for (final outcome in ['ok', 'rejected', 'expired']) {
+  for (final outcome in [
+    'ok',
+    'rejected',
+    'expired',
+    'manual',
+    'manual-wrong',
+    'lost-commit',
+  ]) {
     test(
       'signed LAN pairing state $outcome saves only an accepted computer',
       () async {
@@ -221,7 +228,13 @@ void main() {
         final public = ((await host.extractPublicKey())).bytes;
         final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
         addTearDown(server.close);
-        const invite = 'T5PM62LR52NUFR43D3VCXWRTXA';
+        final manual = outcome.startsWith('manual');
+        final success = outcome == 'ok' || outcome == 'manual';
+        final lostCommit = outcome == 'lost-commit';
+        final invite = manual
+            ? 'ABCD2345EFGH6723'
+            : 'T5PM62LR52NUFR43D3VCXWRTXA';
+        final pairDone = Completer<void>();
         server.listen((socket) async {
           final frames = StreamIterator(
             socket
@@ -253,17 +266,35 @@ void main() {
                 'nonce': transcript.hostNonce,
                 'name': '测试电脑',
                 'os': 'darwin',
+                if (transcript.purpose == 'pair_manual')
+                  'code': encodePairBytes(
+                    Hmac(sha256, utf8.encode(invite))
+                        .convert(transcript.bytes({'type': 'pair-manual-host'}))
+                        .bytes,
+                  ),
               }),
             );
+            await socket.flush();
+            if (outcome == 'manual-wrong') {
+              expect(await frames.moveNext(), isFalse);
+              pairDone.complete();
+              return;
+            }
             final request = await read();
             expect(
               await transcript.verify(transcript.clientKey, request),
               isTrue,
             );
-            if (transcript.purpose == 'pair') {
-              expect(request['code'], transcript.codeProof(invite));
+            if (transcript.purpose == 'status') {
+              send(
+                await transcript.sign(host, {'type': 'result', 'status': 'ok'}),
+              );
+              await socket.flush();
+              return;
             }
-            if (transcript.purpose == 'pair' && outcome != 'expired') {
+            expect(jsonEncode(request), isNot(contains(invite)));
+            expect(request['code'], transcript.codeProof(invite));
+            if (outcome != 'expired') {
               send(
                 await transcript.sign(host, {
                   'type': 'result',
@@ -276,13 +307,58 @@ void main() {
                 }),
               );
             }
-            send(
-              await transcript.sign(host, {
-                'type': 'result',
-                'status': outcome,
-              }),
-            );
-            await socket.flush();
+            if (success || lostCommit) {
+              final nonce = encodePairBytes(randomPairBytes(32));
+              send(
+                await transcript.sign(host, {
+                  'type': 'result',
+                  'status': 'approved',
+                  'nonce': nonce,
+                }),
+              );
+              await socket.flush();
+              final ack = await read();
+              expect(ack['type'], 'pair_ack');
+              expect(ack['nonce'], nonce);
+              expect(
+                await transcript.verify(transcript.clientKey, ack),
+                isTrue,
+              );
+              send(
+                await transcript.sign(host, {
+                  'type': 'result',
+                  'status': 'ok',
+                  'nonce': nonce,
+                }),
+              );
+              await socket.flush();
+              final received = await read();
+              expect(received['type'], 'pair_received');
+              expect(received['nonce'], nonce);
+              expect(
+                await transcript.verify(transcript.clientKey, received),
+                isTrue,
+              );
+              if (!lostCommit) {
+                send(
+                  await transcript.sign(host, {
+                    'type': 'result',
+                    'status': 'committed',
+                    'nonce': nonce,
+                  }),
+                );
+                await socket.flush();
+              }
+            } else {
+              send(
+                await transcript.sign(host, {
+                  'type': 'result',
+                  'status': outcome,
+                }),
+              );
+              await socket.flush();
+            }
+            pairDone.complete();
           } finally {
             socket.destroy();
             await frames.cancel();
@@ -296,22 +372,46 @@ void main() {
         );
         final input = Uri(
           scheme: 'kkdesk',
-          host: 'pair',
+          host: manual ? 'manual' : 'pair',
           queryParameters: {
-            'v': '1',
-            'id': desktopID(public),
-            'c': invite,
-            'fp': fingerprint(public),
+            if (!manual) ...{
+              'v': '1',
+              'id': desktopID(public),
+              'fp': fingerprint(public),
+            },
+            'c': !manual
+                ? invite
+                : outcome == 'manual-wrong'
+                ? 'AAAA-2345-EFGH-6723'
+                : 'ABCD-2345-EFGH-6723',
             'lan': '127.0.0.1:${server.port}',
           },
         ).toString();
-        final request = await service.begin(input);
-        expect((await request.statuses.toList()).last, switch (outcome) {
-          'ok' => PairStatus.success,
-          'expired' => PairStatus.expired,
-          _ => PairStatus.rejected,
-        });
-        expect(devices.computers, hasLength(outcome == 'ok' ? 1 : 0));
+        if (outcome == 'manual-wrong') {
+          await expectLater(
+            service.begin(input),
+            throwsA(isA<PairTrustFailure>()),
+          );
+        } else {
+          final request = await service.begin(input);
+          if (lostCommit) {
+            await expectLater(
+              request.statuses.toList(),
+              throwsA(isA<SocketException>()),
+            );
+          } else {
+            expect((await request.statuses.toList()).last, switch (outcome) {
+              'ok' || 'manual' => PairStatus.success,
+              'expired' => PairStatus.expired,
+              _ => PairStatus.rejected,
+            });
+          }
+        }
+        await pairDone.future.timeout(const Duration(seconds: 5));
+        expect(devices.computers, hasLength(success ? 1 : 0));
+        if (success) {
+          expect(devices.computers.single.id, desktopID(public));
+        }
       },
     );
   }

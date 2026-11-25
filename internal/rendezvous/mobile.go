@@ -127,6 +127,7 @@ type HostMobileExchange struct {
 	connCtx   context.Context
 	id        string
 	input     chan pairing.Message
+	delivered chan struct{}
 	ICE       []webrtc.ICEServer
 	RelayOnly bool
 }
@@ -136,7 +137,29 @@ func (e *HostMobileExchange) Send(ctx context.Context, msg pairing.Message) erro
 		return err
 	}
 	// A canceled write can close the socket shared by all requests.
-	return writeWithTimeout(e.connCtx, e.conn, message{Type: "mobile_data", ID: e.id, Mobile: &msg})
+	kind := "mobile_data"
+	commit := msg.Type == "result" && msg.Status == "committed"
+	if commit {
+		kind = "mobile_final"
+	}
+	if err := writeWithTimeout(e.connCtx, e.conn, message{Type: kind, ID: e.id, Mobile: &msg}); err != nil || !commit {
+		return err
+	}
+	// Intermediate writes only need to reach the relay. The committed
+	// response needs confirmation that the relay wrote to the guest.
+	wait, stop := context.WithTimeout(ctx, 6*time.Second)
+	defer stop()
+	select {
+	case <-e.delivered:
+		return nil
+	case <-wait.Done():
+		select {
+		case <-e.delivered:
+			return nil
+		default:
+			return wait.Err()
+		}
+	}
 }
 
 func (e *HostMobileExchange) Receive(ctx context.Context) (pairing.Message, error) {
@@ -179,7 +202,7 @@ func (h *MobileHost) Serve(ctx context.Context, handle func(context.Context, Mob
 		case "mobile_begin":
 			if !exists && msg.ID != "" && len(requests) < mobileSlots {
 				e := &HostMobileExchange{conn: h.conn, connCtx: ctx, id: msg.ID, input: make(chan pairing.Message, 4),
-					ICE: msg.ICE, RelayOnly: msg.RelayOnly}
+					delivered: make(chan struct{}, 1), ICE: msg.ICE, RelayOnly: msg.RelayOnly}
 				call, stop := context.WithTimeout(ctx, mobileTimeout)
 				requests[msg.ID] = request{exchange: e, cancel: stop}
 				wg.Go(func() {
@@ -197,6 +220,13 @@ func (h *MobileHost) Serve(ctx context.Context, handle func(context.Context, Mob
 				case active.exchange.input <- *msg.Mobile:
 				default:
 					active.cancel()
+				}
+			}
+		case "mobile_delivered":
+			if exists {
+				select {
+				case active.exchange.delivered <- struct{}{}:
+				default:
 				}
 			}
 		case "mobile_end":
@@ -292,7 +322,7 @@ func (s *Server) registerMobile(ctx context.Context, conn *websocket.Conn, devic
 		if err != nil {
 			return
 		}
-		if msg.Type != "mobile_data" && msg.Type != "mobile_end" {
+		if msg.Type != "mobile_data" && msg.Type != "mobile_final" && msg.Type != "mobile_end" {
 			return
 		}
 		s.mu.Lock()
@@ -375,6 +405,11 @@ func (s *Server) forwardMobile(ctx context.Context, conn *websocket.Conn, device
 		case msg := <-out:
 			if msg.Type == "mobile_end" || writeWithTimeout(ctx, conn, message{Type: "mobile_data", Mobile: msg.Mobile}) != nil {
 				return
+			}
+			if msg.Type == "mobile_final" {
+				if err := writeWithTimeout(h.ctx, h.conn, message{Type: "mobile_delivered", ID: id}); err != nil {
+					return
+				}
 			}
 		case <-inputDone:
 			return

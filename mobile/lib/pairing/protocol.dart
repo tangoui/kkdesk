@@ -32,6 +32,8 @@ String desktopID(List<int> publicKey) => encodePairBytes(
       .toList(),
 );
 
+String fingerprintOfKey(String key) => fingerprint(decodePairBytes(key, 32));
+
 String fingerprint(List<int> publicKey) => sha256.convert(publicKey).toString();
 
 String verificationCode(String code, List<int> host, List<int> phone) {
@@ -59,11 +61,12 @@ class PairTarget {
   final String id, code, fingerprint;
   final List<String> lan;
   final String? server, token, serverKey, hostKey;
+  bool get manual => id.isEmpty && fingerprint.isEmpty;
 
   PairTarget verified(String publicKey) => PairTarget(
-    id: id,
+    id: manual ? desktopID(decodePairBytes(publicKey, 32)) : id,
     code: '',
-    fingerprint: fingerprint,
+    fingerprint: manual ? fingerprintOfKey(publicKey) : fingerprint,
     lan: lan,
     server: server,
     token: token,
@@ -75,7 +78,7 @@ class PairTarget {
     final uri = Uri.parse(input.trim());
     final fields = uri.queryParametersAll;
     if (uri.scheme != 'kkdesk' ||
-        uri.host != 'pair' ||
+        (uri.host != 'pair' && uri.host != 'manual') ||
         uri.hasPort ||
         uri.userInfo.isNotEmpty ||
         uri.path.isNotEmpty ||
@@ -84,6 +87,21 @@ class PairTarget {
       throw const FormatException('请扫描 kkdesk 的配对二维码');
     }
     final p = uri.queryParameters;
+    if (uri.host == 'manual') {
+      final address = p['lan'] ?? '';
+      final code = p['c']?.toUpperCase() ?? '';
+      if (p.length != 2 ||
+          !RegExp(r'^[A-Z2-7]{4}(-[A-Z2-7]{4}){3}$').hasMatch(code)) {
+        throw const FormatException('请输入四组手动配对码，每组四位');
+      }
+      lanEndpoint(address);
+      return PairTarget(
+        id: '',
+        code: code.replaceAll('-', ''),
+        fingerprint: '',
+        lan: [address],
+      );
+    }
     final code = p['c'] ?? '', fp = p['fp'] ?? '', id = p['id'] ?? '';
     if (p['v'] != '1' ||
         !RegExp(r'^[A-Za-z0-9_-]{20,64}$').hasMatch(code) ||
@@ -214,6 +232,7 @@ class PairTranscript {
       msg['deadline'] ?? 0,
       msg['mode'],
       msg['sdp'],
+      if (msg['biometricKey'] case final String key when key.isNotEmpty) key,
     ]) {
       final utf = utf8.encode(field?.toString() ?? '');
       final length = ByteData(4)..setUint32(0, utf.length);
@@ -223,8 +242,22 @@ class PairTranscript {
     return out.takeBytes();
   }
 
-  String codeProof(String code) => encodePairBytes(
-    Hmac(sha256, utf8.encode(code)).convert(bytes({'type': 'pair-code'})).bytes,
+  String codeProof(String code) => _codeProof(code, 'pair-code');
+
+  bool verifyManualHost(String code, Object? proof) {
+    if (proof is! String) return false;
+    final expected = _codeProof(code, 'pair-manual-host').codeUnits;
+    final got = proof.codeUnits;
+    if (expected.length != got.length) return false;
+    var diff = 0;
+    for (var i = 0; i < got.length; i++) {
+      diff |= expected[i] ^ got[i];
+    }
+    return diff == 0;
+  }
+
+  String _codeProof(String code, String role) => encodePairBytes(
+    Hmac(sha256, utf8.encode(code)).convert(bytes({'type': role})).bytes,
   );
 
   Future<PairMessage> sign(KeyPair key, PairMessage msg) async {

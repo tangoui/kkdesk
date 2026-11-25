@@ -18,9 +18,11 @@ import (
 )
 
 type mobileHostState struct {
-	pending  *PairingRequest
-	decision chan pairDecision
-	peerKey  string
+	pending             *PairingRequest
+	decision            chan pairDecision
+	peerKey             string
+	biometricEnrollment bool
+	cancellation        uint64
 }
 
 type PairingRequest struct {
@@ -70,6 +72,29 @@ func (h *Host) PairingCode(now time.Time) (string, time.Time, error) {
 	}
 	invite := identity.Invite(now)
 	return pairing.QRURI(identity.ID(), invite.Code, identity.Fingerprint(), cfg.URL, cfg.Token, cfg.PublicKey, lan), invite.Expires, nil
+}
+
+// PairingManualCode exposes the code for the same invitation as the QR.
+func (h *Host) PairingManualCode() (string, string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.cfg.Pairing == nil || h.ln == nil || !h.wantOn {
+		return "", ""
+	}
+	tcp := h.ln.Addr().(*net.TCPAddr)
+	ip := tcp.IP.String()
+	if tcp.IP.IsUnspecified() {
+		if len(h.addrs) == 0 {
+			return "", ""
+		}
+		ip = h.addrs[0]
+	}
+	manual := h.cfg.Pairing.CurrentInvite(time.Now()).Manual
+	if manual == "" {
+		return "", ""
+	}
+	return strings.Join([]string{manual[:4], manual[4:8], manual[8:12], manual[12:]}, "-"),
+		net.JoinHostPort(ip, strconv.Itoa(tcp.Port))
 }
 
 func (h *Host) ClearPairingCode() {
@@ -163,6 +188,10 @@ func (h *Host) serveMobile(ctx, listener context.Context, cfg rendezvous.Config,
 		return
 	}
 	switch hello.Purpose {
+	case "pair_manual":
+		if _, lan := exchange.(*session.MobileLAN); !lan {
+			return
+		}
 	case "pair", "connect", "status", "unpair":
 	default:
 		return
@@ -179,9 +208,16 @@ func (h *Host) serveMobile(ctx, listener context.Context, cfg rendezvous.Config,
 	}
 	phone, paired := identity.Phone(hello.PublicKey)
 	challenge := pairing.Message{Type: "challenge", Nonce: nonce, PublicKey: identity.PublicKey(), Bypass: paired && phone.Bypass}
-	if hello.Purpose == "pair" {
+	if hello.Purpose == "connect" && challenge.Bypass {
+		challenge.BiometricKey = phone.BiometricKey
+	}
+	isPair := hello.Purpose == "pair" || hello.Purpose == "pair_manual"
+	if isPair {
 		challenge.Name, _ = os.Hostname()
 		challenge.OS = runtime.GOOS
+		if hello.Purpose == "pair_manual" {
+			challenge.Code = identity.ManualHostProof(transcript, time.Now())
+		}
 	}
 	if err := send(challenge); err != nil {
 		return
@@ -190,18 +226,8 @@ func (h *Host) serveMobile(ctx, listener context.Context, cfg rendezvous.Config,
 	if err != nil || !transcript.Verify(hello.PublicKey, req) {
 		return
 	}
-	if hello.Purpose == "pair" && req.Type == "request" {
-		if lan, ok := exchange.(*session.MobileLAN); ok {
-			// With no further messages expected, EOF cancels the prompt.
-			var stop context.CancelFunc
-			ctx, stop = context.WithCancel(ctx)
-			defer stop()
-			go func() {
-				_, _ = lan.Receive(ctx)
-				stop()
-			}()
-		}
-		h.requestPairing(ctx, transcript, public, req, send)
+	if isPair && req.Type == "request" {
+		h.requestPairing(ctx, exchange, transcript, public, req, send)
 		return
 	}
 	phone, paired = identity.Phone(hello.PublicKey)
@@ -224,7 +250,11 @@ func (h *Host) serveMobile(ctx, listener context.Context, cfg rendezvous.Config,
 		}
 	case "connect":
 		if req.Type == "offer" && (req.Mode == "desktop" || req.Mode == "files") && req.SDP != "" {
-			h.answerMobile(listener, cfg, exchange, hello.PublicKey, challenge.Bypass && phone.Bypass, req, send, result)
+			var biometricKey string
+			if challenge.Bypass && phone.Bypass && transcript.VerifyBiometric(req.BiometricKey, req) {
+				biometricKey = req.BiometricKey
+			}
+			h.answerMobile(listener, cfg, exchange, hello.PublicKey, biometricKey, req, send, result)
 		}
 	}
 }
@@ -234,7 +264,7 @@ func identityPublic(store *pairing.Store) []byte {
 	return public
 }
 
-func (h *Host) requestPairing(ctx context.Context, exchange pairing.Transcript, public []byte, req pairing.Message, send func(pairing.Message) error) {
+func (h *Host) requestPairing(ctx context.Context, transport rendezvous.MobileExchange, exchange pairing.Transcript, public []byte, req pairing.Message, send func(pairing.Message) error) {
 	key := exchange.ClientKey
 	result := func(status string, bypass bool) error {
 		return send(pairing.Message{Type: "result", Status: status, Bypass: bypass})
@@ -269,42 +299,112 @@ func (h *Host) requestPairing(ctx context.Context, exchange pairing.Transcript, 
 	h.mobile.pending, h.mobile.decision = pending, decision
 	h.mu.Unlock()
 	h.notify()
+	cancelled := false
 	defer func() {
 		h.mu.Lock()
 		h.mobile.pending, h.mobile.decision = nil, nil
+		if cancelled {
+			h.mobile.cancellation++
+			h.notice = "手机已取消"
+		}
 		h.mu.Unlock()
 		h.notify()
 	}()
 	if err := send(pairing.Message{Type: "result", Status: "pending", Code: verification, Deadline: pending.Deadline.UnixMilli()}); err != nil {
+		cancelled = true
 		return
 	}
 
+	// Start reading before the user decides so either transport can close
+	// the dialog immediately. The next valid frame echoes the approval nonce.
+	receiveCtx, stop := context.WithCancel(ctx)
+	defer stop()
+	receive := func() <-chan pairing.Message {
+		received := make(chan pairing.Message, 1)
+		go func() {
+			msg, _ := transport.Receive(receiveCtx)
+			received <- msg
+		}()
+		return received
+	}
+	received := receive()
 	timer := time.NewTimer(time.Until(pending.Deadline))
 	defer timer.Stop()
+	var choice pairDecision
 	select {
-	case choice := <-decision:
-		if !choice.accept {
-			_ = result("rejected", false)
-			return
-		}
-		h.mu.Lock()
-		if !h.wantOn || ctx.Err() != nil || !time.Now().Before(pending.Deadline) {
-			h.mu.Unlock()
-			_ = result("timed_out", false)
-			return
-		}
-		err := h.cfg.Pairing.Save(pairing.Phone{PublicKey: key, Name: name, Model: model, Bypass: choice.bypass})
-		h.mu.Unlock()
-		if err != nil {
-			_ = result("save_failed", false)
-			return
-		}
-		if err := result("ok", choice.bypass); err != nil {
-			_ = h.RemovePhone(key)
-		}
+	case choice = <-decision:
+	case <-received:
+		cancelled = true
+		return
 	case <-timer.C:
 		_ = result("timed_out", false)
+		return
 	case <-ctx.Done():
+		cancelled = true
+		return
+	}
+	if !choice.accept {
+		_ = result("rejected", false)
+		return
+	}
+	if !time.Now().Before(pending.Deadline) {
+		_ = result("timed_out", false)
+		return
+	}
+	receiptNonce := pairing.Random()
+	if err := send(pairing.Message{Type: "result", Status: "approved", Nonce: receiptNonce, Bypass: choice.bypass}); err != nil {
+		cancelled = true
+		return
+	}
+	timer.Reset(8 * time.Second)
+	select {
+	case ack := <-received:
+		if ack.Type != "pair_ack" || ack.Nonce != receiptNonce || !exchange.Verify(key, ack) {
+			cancelled = true
+			return
+		}
+	case <-timer.C:
+		cancelled = true
+		return
+	case <-ctx.Done():
+		cancelled = true
+		return
+	}
+	h.mu.Lock()
+	if !h.wantOn || ctx.Err() != nil {
+		h.mu.Unlock()
+		cancelled = true
+		return
+	}
+	err = h.cfg.Pairing.Save(pairing.Phone{PublicKey: key, Name: name, Model: model, Bypass: choice.bypass})
+	h.mu.Unlock()
+	if err != nil {
+		_ = result("save_failed", false)
+		return
+	}
+	// Keep the rollback active until the phone acknowledges the final reply.
+	// A write to a rendezvous registration only confirms the first hop.
+	delivered := false
+	defer func() {
+		if !delivered {
+			cancelled = true
+			if err := h.RemovePhone(key); err != nil {
+				h.setErr("撤销未完成的手机配对失败：" + err.Error())
+			}
+		}
+	}()
+	if err := send(pairing.Message{Type: "result", Status: "ok", Nonce: receiptNonce, Bypass: choice.bypass}); err != nil {
+		return
+	}
+	timer.Reset(8 * time.Second)
+	select {
+	case ack := <-receive():
+		delivered = ack.Type == "pair_received" && ack.Nonce == receiptNonce && exchange.Verify(key, ack)
+	case <-timer.C:
+	}
+	if delivered {
+		// The phone waits for this signed confirmation before saving or showing success.
+		delivered = send(pairing.Message{Type: "result", Status: "committed", Nonce: receiptNonce, Bypass: choice.bypass}) == nil
 	}
 }
 
@@ -316,7 +416,7 @@ func minTime(a, b time.Time) time.Time {
 }
 
 func (h *Host) answerMobile(listener context.Context, cfg rendezvous.Config, exchange rendezvous.MobileExchange,
-	key string, bypass bool, req pairing.Message, send func(pairing.Message) error, result func(string)) {
+	key, biometricKey string, req pairing.Message, send func(pairing.Message) error, result func(string)) {
 	h.mu.Lock()
 	busy := h.busy
 	h.mu.Unlock()
@@ -359,6 +459,6 @@ func (h *Host) answerMobile(listener context.Context, cfg rendezvous.Config, exc
 			peer.Close()
 			return
 		}
-		h.handle(peer, remote, key, bypass)
+		h.handle(peer, remote, key, biometricKey)
 	})
 }

@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:cryptography/cryptography.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -12,6 +13,7 @@ import '../activity_history.dart';
 import '../lan_remote_session.dart';
 import '../lan_session.dart';
 import '../mobile_services.dart';
+import 'biometric_key.dart';
 import 'protocol.dart';
 import 'transport.dart';
 
@@ -110,7 +112,12 @@ class PairNetwork {
     ) async {
       final transport = await connect();
       try {
-        return await AuthenticatedPair.start(target, transport, 'pair', key);
+        return await AuthenticatedPair.start(
+          target,
+          transport,
+          target.manual ? 'pair_manual' : 'pair',
+          key,
+        );
       } catch (_) {
         await transport.close();
         rethrow;
@@ -306,8 +313,9 @@ class RealPairingService implements PairingService {
     final pair = await devices.network.begin(target);
     final challenge = pair.challenge;
     final name = challenge['name'] as String?;
+    final verifiedTarget = target.verified(pair.transcript.hostKey);
     final computer = Computer(
-      id: target.id,
+      id: verifiedTarget.id,
       name: name == null || name.isEmpty ? 'kkdesk 电脑' : name,
       os: switch (challenge['os']) {
         'darwin' => ComputerOS.mac,
@@ -338,23 +346,39 @@ class RealPairingService implements PairingService {
           reply = await pair.receive(const Duration(seconds: 35));
         }
         if (cancelled) return;
+        String? approval;
+        if (reply['status'] == 'approved') {
+          approval = reply['nonce'] as String;
+          decodePairBytes(approval, 32);
+          await pair.send({'type': 'pair_ack', 'nonce': approval});
+          reply = await pair.receive();
+        }
+        if (cancelled) return;
+        if (reply['status'] == 'ok') {
+          if (approval == null || reply['nonce'] != approval) {
+            throw const PairTrustFailure('电脑配对确认无效');
+          }
+          await pair.send({'type': 'pair_received', 'nonce': approval});
+          reply = await pair.receive();
+        }
+        if (cancelled) return;
         final status = switch (reply['status']) {
-          'ok' => PairStatus.success,
+          'committed' => PairStatus.success,
           'expired' => PairStatus.expired,
           'timed_out' => PairStatus.timedOut,
           _ => PairStatus.rejected,
         };
         if (status == PairStatus.success) {
+          if (approval == null || reply['nonce'] != approval) {
+            throw const PairTrustFailure('电脑配对确认无效');
+          }
           final record = Computer(
             id: computer.id,
             name: computer.name,
             os: computer.os,
             confirmOnHost: reply['bypass'] != true,
           );
-          await devices.savePair(
-            record,
-            target.verified(pair.transcript.hostKey),
-          );
+          await devices.savePair(record, verifiedTarget);
           unawaited(devices.refresh());
         }
         if (!cancelled) states.add(status);
@@ -398,9 +422,13 @@ Future<({String name, String model})> _phoneInfo() async {
 }
 
 class PairedRemoteSessions implements RemoteSessions {
-  PairedRemoteSessions(this.devices, this.biometrics);
+  PairedRemoteSessions(
+    this.devices, {
+    this.biometricKey = const BiometricKey(),
+  });
   final PairedDevices devices;
-  final Biometrics biometrics;
+  final BiometricKey biometricKey;
+  final notices = ValueNotifier<String?>(null);
 
   @override
   RemoteSession paired(Computer computer) =>
@@ -413,9 +441,9 @@ class PairedRemoteSessions implements RemoteSessions {
     }
     try {
       await devices.network.use(target, 'connect', (pair) async {
-        if (pair.bypass &&
-            !await biometrics.authenticate('验证身份以连接「${computer.name}」')) {
-          throw const PairFailure('生物识别未通过');
+        if (pair.bypass) {
+          pair.protectOffer = (offer) =>
+              _authorizeOffer(computer.id, pair, offer);
         }
         await run(pair);
       });
@@ -424,6 +452,40 @@ class PairedRemoteSessions implements RemoteSessions {
       rethrow;
     }
   };
+
+  Future<PairMessage> _authorizeOffer(
+    String id,
+    AuthenticatedPair pair,
+    PairMessage offer,
+  ) async {
+    final registered = pair.challenge['biometricKey'];
+    try {
+      final publicKey = encodePairBytes(await biometricKey.prepare(id));
+      final payload = {...offer, 'biometricKey': publicKey};
+      if (publicKey != registered) {
+        notices.value = registered == null
+            ? '完成生物识别后，请在电脑上确认登记免确认密钥。'
+            : '生物识别密钥已更换，请在电脑上确认重新开启免确认。';
+      }
+      final signature = await biometricKey.sign(
+        id,
+        pair.transcript.bytes(payload),
+      );
+      return {...payload, 'biometricSignature': encodePairBytes(signature)};
+    } on PlatformException catch (error) {
+      if (error.code == 'invalidated' || error.code == 'missing') {
+        try {
+          await biometricKey.remove(id);
+        } on PlatformException {
+          // The desktop can still confirm this connection.
+        }
+        notices.value = '生物识别密钥已失效，本次由电脑确认。下次连接时重新开启免确认。';
+      } else {
+        notices.value = '本次连接需要在电脑上确认。';
+      }
+      return offer;
+    }
+  }
 
   @override
   RemoteSession lan(String address, String password) =>
@@ -438,7 +500,7 @@ Future<MobileServices> realMobileServices(SharedPreferences prefs) async {
   return MobileServices(
     devices: devices,
     pairing: RealPairingService(devices),
-    sessions: PairedRemoteSessions(devices, bio),
+    sessions: PairedRemoteSessions(devices),
     settings: MobileSettings(prefs),
     biometrics: bio,
     history: ActivityHistory(prefs),

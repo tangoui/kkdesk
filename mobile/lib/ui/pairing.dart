@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../mobile_services.dart';
+import '../pairing/protocol.dart' show lanEndpoint;
 import 'common.dart';
 
 class ScanPage extends StatefulWidget {
@@ -15,11 +16,11 @@ class ScanPage extends StatefulWidget {
     super.key,
     required this.camera,
     this.preview = false,
-    this.manualCode = false,
+    this.demoCode = false,
   });
   final bool camera;
   final bool preview;
-  final bool manualCode;
+  final bool demoCode;
 
   @override
   State<ScanPage> createState() => _ScanPageState();
@@ -66,7 +67,10 @@ class _ScanPageState extends State<ScanPage> {
   Future<void> _code() async {
     if (_busy) return;
     setState(() => _busy = true);
-    final code = await appSheet<String>(context, (_) => const _ManualCode());
+    final code = await appSheet<String>(
+      context,
+      (_) => widget.demoCode ? const _DemoManualCode() : const _ManualPairing(),
+    );
     if (!mounted) return;
     if (code != null) {
       _finish(code);
@@ -251,19 +255,15 @@ class _ScanPageState extends State<ScanPage> {
                       const Spacer(),
                       Row(
                         children: [
-                          if (widget.manualCode)
-                            Expanded(
-                              child: _ScanAction(
-                                label: '输入配对码',
-                                icon: CupertinoIcons.keyboard,
-                                onTap: _busy ? null : _code,
-                                wide: true,
-                              ),
+                          Expanded(
+                            child: _ScanAction(
+                              label: '输入配对码',
+                              icon: CupertinoIcons.keyboard,
+                              onTap: _busy ? null : _code,
+                              wide: true,
                             ),
-                          if (widget.manualCode)
-                            const SizedBox(width: 12)
-                          else
-                            const Spacer(),
+                          ),
+                          const SizedBox(width: 12),
                           _ScanAction(
                             label: '从相册识别',
                             icon: CupertinoIcons.photo,
@@ -417,14 +417,176 @@ class _ScanMask extends CustomPainter {
   bool shouldRepaint(_ScanMask oldDelegate) => oldDelegate.box != box;
 }
 
-class _ManualCode extends StatefulWidget {
-  const _ManualCode();
+class _ManualPairing extends StatefulWidget {
+  const _ManualPairing();
 
   @override
-  State<_ManualCode> createState() => _ManualCodeState();
+  State<_ManualPairing> createState() => _ManualPairingState();
 }
 
-class _ManualCodeState extends State<_ManualCode> {
+class _ManualPairingState extends State<_ManualPairing> {
+  final _address = TextEditingController();
+  final _code = TextEditingController();
+  final _codeFocus = FocusNode();
+  static final _groupedCode = RegExp(r'^[A-Z2-7]{4}(?:-[A-Z2-7]{4}){3}$');
+
+  @override
+  void dispose() {
+    _address.dispose();
+    _code.dispose();
+    _codeFocus.dispose();
+    super.dispose();
+  }
+
+  bool _validAddress(String address) {
+    try {
+      lanEndpoint(address);
+      return true;
+    } on FormatException {
+      return false;
+    }
+  }
+
+  void _submit() {
+    final address = _address.text.trim();
+    final code = _code.text;
+    if (!_validAddress(address) || !_groupedCode.hasMatch(code)) return;
+    // The scanner returns this string to the local pairing service.
+    Navigator.pop(
+      context,
+      Uri(
+        scheme: 'kkdesk',
+        host: 'manual',
+        queryParameters: {'lan': address, 'c': code},
+      ).toString(),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final address = _address.text.trim();
+    final validAddress = _validAddress(address);
+    final canSubmit = validAddress && _groupedCode.hasMatch(_code.text);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          '手动配对',
+          style: Theme.of(context).textTheme.titleLarge,
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          '让手机和电脑连接同一局域网，然后输入电脑弹窗中的地址和配对码。',
+          style: TextStyle(color: context.muted),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 18),
+        KInput(
+          key: const ValueKey('manual-pair-address'),
+          controller: _address,
+          label: '电脑局域网地址',
+          hint: '192.168.1.23:9876',
+          error: address.isNotEmpty && !validAddress ? '请输入 IP 地址和端口' : null,
+          keyboardType: TextInputType.url,
+          textInputAction: TextInputAction.next,
+          onSubmitted: (_) => _codeFocus.requestFocus(),
+          onChanged: (_) => setState(() {}),
+        ),
+        const SizedBox(height: 12),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
+          child: Text(
+            '手动配对码',
+            style: TextStyle(
+              color: context.muted,
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+        Semantics(
+          label: '手动配对码',
+          child: CupertinoTextField(
+            key: const ValueKey('manual-pair-code'),
+            controller: _code,
+            focusNode: _codeFocus,
+            placeholder: 'ABCD-EFGH-JKLM-2345',
+            placeholderStyle: TextStyle(color: context.muted, fontSize: 15),
+            style: TextStyle(color: context.ink, fontSize: 16),
+            cursorColor: context.action,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: context.recessed,
+              borderRadius: BorderRadius.circular(11),
+            ),
+            autocorrect: false,
+            enableSuggestions: false,
+            enableIMEPersonalizedLearning: false,
+            smartDashesType: SmartDashesType.disabled,
+            textCapitalization: TextCapitalization.characters,
+            textInputAction: TextInputAction.done,
+            inputFormatters: const [_PairCodeFormatter()],
+            onChanged: (_) => setState(() {}),
+            onSubmitted: (_) => _submit(),
+          ),
+        ),
+        const SizedBox(height: 14),
+        KButton(label: '继续', onTap: canSubmit ? _submit : null),
+      ],
+    );
+  }
+}
+
+class _PairCodeFormatter extends TextInputFormatter {
+  const _PairCodeFormatter();
+
+  static final _base32 = RegExp(r'[A-Za-z2-7]');
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    if (!newValue.composing.isCollapsed) return newValue;
+    final digits = _base32
+        .allMatches(newValue.text)
+        .take(16)
+        .map((match) => match[0]!)
+        .join()
+        .toUpperCase();
+    final grouped = [
+      for (var i = 0; i < digits.length; i += 4)
+        digits.substring(i, math.min(i + 4, digits.length)),
+    ].join('-');
+
+    int formattedOffset(int offset) {
+      if (offset < 0) return offset;
+      final count = _base32
+          .allMatches(newValue.text.substring(0, offset))
+          .length;
+      final kept = math.min(count, digits.length);
+      return kept == 0 ? 0 : kept + (kept - 1) ~/ 4;
+    }
+
+    return TextEditingValue(
+      text: grouped,
+      selection: newValue.selection.copyWith(
+        baseOffset: formattedOffset(newValue.selection.baseOffset),
+        extentOffset: formattedOffset(newValue.selection.extentOffset),
+      ),
+    );
+  }
+}
+
+class _DemoManualCode extends StatefulWidget {
+  const _DemoManualCode();
+
+  @override
+  State<_DemoManualCode> createState() => _DemoManualCodeState();
+}
+
+class _DemoManualCodeState extends State<_DemoManualCode> {
   final _controller = TextEditingController();
 
   @override

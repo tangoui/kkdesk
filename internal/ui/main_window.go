@@ -86,16 +86,17 @@ type Main struct {
 	prober *app.Prober // online state of 我的设备
 
 	// UI thread
-	allow           bool
-	nav             string // selected sidebar item
-	showPW          bool
-	rotate          string // 临时密码 rotation (config.Rotate*), bound to the setting
-	hostname        string
-	dev             devicesState
-	xfer            filesPageState
-	set             settingsState
-	screenRecording screenRecordingGuide
-	pairing         pairingUI
+	allow               bool
+	nav                 string // selected sidebar item
+	showPW              bool
+	rotate              string // 临时密码 rotation (config.Rotate*), bound to the setting
+	hostname            string
+	dev                 devicesState
+	xfer                filesPageState
+	set                 settingsState
+	screenRecording     screenRecordingGuide
+	pairing             pairingUI
+	pairingCancellation uint64
 
 	mu         sync.Mutex
 	connecting bool
@@ -174,6 +175,10 @@ func (m *Main) ShowError(msg string) {
 func (m *Main) page(c *ui.Context) {
 	th := c.Theme
 	hs := m.o.Host.State()
+	if hs.PairingCancellation != m.pairingCancellation {
+		m.pairingCancellation = hs.PairingCancellation
+		ui.Message(c, "info", "手机已取消")
+	}
 	m.screenRecording.update(hs.Enabled, &m.o.Form.ScreenRecordingPromptShown, screenRecordingMissing)
 	ui.Row(c, func() {
 		m.sidebar(c, hs)

@@ -22,14 +22,16 @@ const Lifetime = 3 * time.Minute
 var ErrExpired = errors.New("pairing code expired or already used")
 
 type Phone struct {
-	PublicKey string `json:"publicKey"`
-	Name      string `json:"name"`
-	Model     string `json:"model,omitempty"`
-	Bypass    bool   `json:"bypass,omitempty"`
+	PublicKey    string `json:"publicKey"`
+	Name         string `json:"name"`
+	Model        string `json:"model,omitempty"`
+	Bypass       bool   `json:"bypass,omitempty"`
+	BiometricKey string `json:"biometricKey,omitempty"`
 }
 
 type Invite struct {
 	Code    string
+	Manual  string
 	Expires time.Time
 }
 
@@ -125,9 +127,28 @@ func (s *Store) Invite(now time.Time) Invite {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.invite.Code == "" || !now.Before(s.invite.Expires) {
-		s.invite = Invite{Code: rand.Text(), Expires: now.Add(Lifetime)}
+		var manual [10]byte
+		_, _ = rand.Read(manual[:])
+		s.invite = Invite{Code: rand.Text(), Manual: base32.StdEncoding.EncodeToString(manual[:]), Expires: now.Add(Lifetime)}
 	}
 	return s.invite
+}
+
+func (s *Store) CurrentInvite(now time.Time) Invite {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !now.Before(s.invite.Expires) {
+		return Invite{}
+	}
+	return s.invite
+}
+
+func (s *Store) ManualHostProof(tx Transcript, now time.Time) string {
+	invite := s.CurrentInvite(now)
+	if invite.Manual == "" {
+		return ""
+	}
+	return tx.ManualHostProof(invite.Manual)
 }
 
 func (s *Store) Invalidate() {
@@ -139,11 +160,16 @@ func (s *Store) Invalidate() {
 func (s *Store) Claim(t Transcript, proof string, now time.Time) (Invite, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.invite.Code == "" || !now.Before(s.invite.Expires) ||
-		subtle.ConstantTimeCompare([]byte(t.CodeProof(s.invite.Code)), []byte(proof)) != 1 {
+	code := s.invite.Code
+	if t.Purpose == "pair_manual" {
+		code = s.invite.Manual
+	}
+	if code == "" || !now.Before(s.invite.Expires) ||
+		subtle.ConstantTimeCompare([]byte(t.CodeProof(code)), []byte(proof)) != 1 {
 		return Invite{}, ErrExpired
 	}
 	invite := s.invite
+	invite.Code = code
 	s.invite = Invite{}
 	return invite, nil
 }

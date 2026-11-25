@@ -34,7 +34,7 @@ class PairTransport {
   });
 
   final StreamIterator<String> _receive;
-  final void Function(String) _send;
+  final Future<void> Function(String) _send;
   final void Function() _close;
   final bool relay, relayOnly;
   final List<PairMessage> ice;
@@ -52,7 +52,7 @@ class PairTransport {
     return message;
   }
 
-  void send(PairMessage message) =>
+  Future<void> send(PairMessage message) =>
       _send(jsonEncode({if (relay) 'type': 'mobile_data', 'mobile': message}));
 
   Future<void> close() async {
@@ -82,7 +82,10 @@ class PairTransport {
     }
     return PairTransport._(
       messages,
-      socket.writeln,
+      (frame) async {
+        socket.writeln(frame);
+        await socket.flush();
+      },
       socket.destroy,
       relay: false,
     );
@@ -104,7 +107,9 @@ class PairTransport {
       }
       return PairTransport._(
         messages,
-        socket.add,
+        (frame) async {
+          socket.add(frame);
+        },
         () {
           unawaited(socket.close());
         },
@@ -139,6 +144,7 @@ class AuthenticatedPair {
   final PairMessage challenge;
   final SimpleKeyPair key;
   bool get bypass => challenge['bypass'] == true;
+  Future<PairMessage> Function(PairMessage offer)? protectOffer;
 
   static Future<AuthenticatedPair> start(
     PairTarget target,
@@ -148,7 +154,7 @@ class AuthenticatedPair {
   ) async {
     final local = encodePairBytes((await key.extractPublicKey()).bytes);
     final nonce = encodePairBytes(randomPairBytes(32));
-    transport.send({
+    await transport.send({
       'type': 'hello',
       'purpose': purpose,
       'publicKey': local,
@@ -169,12 +175,15 @@ class AuthenticatedPair {
         clientKey: local,
         hostKey: remote,
       );
+      final matchingIdentity = target.manual
+          ? transcript.verifyManualHost(target.code, challenge['code'])
+          : (target.hostKey == null || target.hostKey == remote) &&
+                desktopID(public) == target.id &&
+                fingerprint(public) == target.fingerprint;
       if (challenge['type'] != 'challenge' ||
-          target.hostKey != null && target.hostKey != remote ||
-          desktopID(public) != target.id ||
-          fingerprint(public) != target.fingerprint ||
+          !matchingIdentity ||
           !await transcript.verify(remote, challenge)) {
-        throw const PairTrustFailure('电脑身份与配对信息不匹配');
+        throw PairTrustFailure(target.manual ? '手动配对码错误或已过期' : '电脑身份与配对信息不匹配');
       }
       return AuthenticatedPair(transport, transcript, challenge, key);
     } on FormatException {
@@ -184,8 +193,13 @@ class AuthenticatedPair {
     }
   }
 
-  Future<void> send(PairMessage msg) async =>
-      transport.send(await transcript.sign(key, msg));
+  Future<void> send(PairMessage msg) async {
+    final protect = protectOffer;
+    if (msg['type'] == 'offer' && protect != null) {
+      msg = await protect(msg);
+    }
+    await transport.send(await transcript.sign(key, msg));
+  }
 
   Future<PairMessage> receive([
     Duration timeout = const Duration(seconds: 8),

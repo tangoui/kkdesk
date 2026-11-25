@@ -30,6 +30,11 @@ func (m *Main) pairingQR(c *ui.Context) {
 	p := &m.pairing
 	now := time.Now()
 	uri, expires, err := m.o.Host.PairingCode(now)
+	var manualCode, lanAddress string
+	if err == nil {
+		manualCode, lanAddress = m.o.Host.PairingManualCode()
+	}
+	showManual := manualCode != "" && lanAddress != ""
 	if err == nil && uri != p.uri {
 		var qr *qrcode.QRCode
 		qr, err = qrcode.New(uri, qrcode.Medium)
@@ -54,7 +59,19 @@ func (m *Main) pairingQR(c *ui.Context) {
 		ui.Column(c, func() {
 			ui.Text(c, "打开 kkdesk App，点右上角的扫码按钮").Secondary()
 			size := max(120, min(264, c.Size().W-86))
+			if showManual {
+				// Leave room for both manual fields and the footer in short windows.
+				size = max(120, min(size, c.Size().H-330))
+			}
 			ui.Image(c, p.qr).Size(size, size)
+			if showManual {
+				ui.Column(c, func() {
+					ui.Text(c, "电脑局域网地址").Size(13).Secondary()
+					mono(c, lanAddress, 15, text.Medium, c.Theme.Text)
+					ui.Text(c, "手动配对码").Size(13).Secondary()
+					mono(c, manualCode, 20, text.Semibold, c.Theme.Primary.Base)
+				}, layout.Gap(5), layout.Middle())
+			}
 			left := ((time.Until(expires) + time.Second - 1) / time.Second) * time.Second
 			ui.Text(c, formatElapsed(max(0, left))+" 后自动刷新").Size(13).Tertiary()
 		}, layout.Gap(12), layout.Middle(), layout.Padding(insets(8, 0, 0, 0)))
