@@ -9,6 +9,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'mobile_services.dart';
 import 'ui/common.dart';
 import 'ui/devices.dart';
+import 'ui/files/file_browser.dart';
+import 'ui/files/transfer_center.dart';
+import 'lan_remote_session.dart';
 import 'ui/pairing.dart';
 import 'ui/remote.dart';
 import 'ui/settings.dart';
@@ -20,6 +23,7 @@ Future<void> main() async {
   final preferences = await SharedPreferences.getInstance();
   runApp(
     KkdeskApp(
+      filePreferences: SharedPreferencesAsync(),
       services: MobileServices.demo(
         preferences: preferences,
         camera: true,
@@ -30,8 +34,9 @@ Future<void> main() async {
 }
 
 class KkdeskApp extends StatefulWidget {
-  const KkdeskApp({super.key, required this.services});
+  const KkdeskApp({super.key, required this.services, this.filePreferences});
   final MobileServices services;
+  final SharedPreferencesAsync? filePreferences;
 
   @override
   State<KkdeskApp> createState() => _KkdeskAppState();
@@ -96,7 +101,11 @@ class _KkdeskAppState extends State<KkdeskApp> with WidgetsBindingObserver {
       locale: const Locale('zh', 'CN'),
       supportedLocales: const [Locale('zh', 'CN')],
       localizationsDelegates: GlobalMaterialLocalizations.delegates,
-      home: _Home(services: widget.services, auth: _auth),
+      home: _Home(
+        services: widget.services,
+        auth: _auth,
+        filePreferences: widget.filePreferences,
+      ),
       builder: (context, child) => Stack(
         fit: StackFit.expand,
         children: [
@@ -170,9 +179,14 @@ class _AppLockState extends State<_AppLock> {
 }
 
 class _Home extends StatefulWidget {
-  const _Home({required this.services, required this.auth});
+  const _Home({
+    required this.services,
+    required this.auth,
+    this.filePreferences,
+  });
   final MobileServices services;
   final Future<bool> Function(String reason) auth;
+  final SharedPreferencesAsync? filePreferences;
 
   @override
   State<_Home> createState() => _HomeState();
@@ -181,6 +195,7 @@ class _Home extends StatefulWidget {
 class _HomeState extends State<_Home> {
   int _tab = 0;
   bool _connecting = false;
+  late final _transfers = TransferCenter(preferences: widget.filePreferences);
   MobileServices get _services => widget.services;
 
   @override
@@ -194,6 +209,41 @@ class _HomeState extends State<_Home> {
           if (mounted) _launchLan(address, password);
         });
       }
+    }
+  }
+
+  @override
+  void dispose() {
+    _transfers.dispose();
+    super.dispose();
+  }
+
+  Future<void> _connectFiles([Computer? computer]) async {
+    if (_connecting) return;
+    _connecting = true;
+    try {
+      FocusScope.of(context).unfocus();
+      final target = await appSheet<({String address, String password})>(
+        context,
+        (_) => const LanSignIn(files: true),
+      );
+      if (target == null || !mounted) return;
+      if ((_services.settings.locked || computer?.confirmOnHost == false) &&
+          !await _authorize('验证身份以传输文件')) {
+        return;
+      }
+      if (!mounted) return;
+      await Navigator.push<void>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => FileBrowser(
+            center: _transfers,
+            connect: () => _transfers.connect(target.address, target.password),
+          ),
+        ),
+      );
+    } finally {
+      _connecting = false;
     }
   }
 
@@ -310,6 +360,7 @@ class _HomeState extends State<_Home> {
       Computer(id: 'lan:$address', name: address, os: ComputerOS.unknown),
       _services.sessions.lan(address, password),
       viewOnly: false,
+      reopenFiles: () => _transfers.connect(address, password),
     );
   }
 
@@ -336,18 +387,30 @@ class _HomeState extends State<_Home> {
     Computer computer,
     RemoteSession session, {
     required bool viewOnly,
-  }) => Navigator.push<void>(
-    context,
-    MaterialPageRoute(
-      builder: (_) => RemotePage(
-        computer: computer,
-        session: session,
-        settings: _services.settings,
-        history: _services.history,
-        viewOnly: viewOnly,
+    Future<TransferConnection> Function()? reopenFiles,
+  }) {
+    TransferConnection? files;
+    return Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => RemotePage(
+          computer: computer,
+          session: session,
+          settings: _services.settings,
+          history: _services.history,
+          viewOnly: viewOnly,
+          fileCenter: _transfers,
+          connectFiles: session is LanRemoteSession
+              ? () async => files ??= TransferConnection(
+                  address: session.address,
+                  service: await session.files,
+                  reopen: reopenFiles,
+                )
+              : null,
+        ),
       ),
-    ),
-  );
+    );
+  }
 
   @override
   Widget build(BuildContext context) => AnnotatedRegion<SystemUiOverlayStyle>(
@@ -374,10 +437,13 @@ class _HomeState extends State<_Home> {
               scan: _scan,
               add: _add,
               connect: _connect,
+              transfer: _connectFiles,
             ),
             TransfersPage(
               history: _services.history,
               devices: _services.devices,
+              files: _transfers,
+              browse: _connectFiles,
             ),
             SettingsPage(services: _services, authenticate: _authorize),
           ],

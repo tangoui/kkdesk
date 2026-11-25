@@ -155,8 +155,9 @@ void main() {
     expect(services.history.connections.single.path, '直连');
     await tester.tap(find.byKey(const ValueKey('transfers-tab')));
     await tester.pumpAndSettle();
+    expect(find.text('文件传输'), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('最近连接'), 140);
     expect(find.text('最近连接'), findsOneWidget);
-    expect(find.text('第 2 期'), findsOneWidget);
     expect(find.text('林舟的 MacBook Pro'), findsOneWidget);
   });
 

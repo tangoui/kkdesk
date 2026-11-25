@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
+import 'files/file_transfer_service.dart';
 import 'lan_session.dart';
 import 'mobile_services.dart';
 import 'touch_controller.dart';
@@ -11,6 +12,7 @@ class LanRemoteSession extends ChangeNotifier implements RemoteSession {
   LanRemoteSession(this.address, this._password);
 
   final String address;
+  Future<FileTransferService> get files => _session.files;
   final String _password;
   final _renderer = RTCVideoRenderer();
   late final LanSession _session = LanSession(

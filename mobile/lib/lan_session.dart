@@ -6,6 +6,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
+import 'files/file_transfer_service.dart';
+import 'files/lan_file_transfer_service.dart';
 import 'lan_protocol.dart';
 
 part 'lan_session_mobile_controls.dart';
@@ -13,6 +15,8 @@ part 'lan_session_mobile_controls.dart';
 const _exchangeTimeout = Duration(seconds: 12);
 const _measure = bool.fromEnvironment('KKDESK_SPIKE_METRICS');
 const _probeChannel = MethodChannel('kkdesk/spike');
+
+enum LanSessionMode { desktop, files }
 
 class LanSession {
   LanSession({required this.onStream, required this.onEnded});
@@ -25,6 +29,7 @@ class LanSession {
   Socket? _socket;
   RTCDataChannel? _move;
   RTCDataChannel? _input;
+  LanFileTransferService? _files;
   Timer? _ping;
   Timer? _stats;
   bool _closed = false;
@@ -33,7 +38,17 @@ class LanSession {
   bool get inputReady =>
       _input?.state == RTCDataChannelState.RTCDataChannelOpen;
 
-  Future<void> connect(String address, String password) async {
+  Future<FileTransferService> get files async {
+    final service = _files;
+    if (_closed || service == null) throw const FileTransferError('closed');
+    return service.ready;
+  }
+
+  Future<void> connect(
+    String address,
+    String password, {
+    LanSessionMode mode = LanSessionMode.desktop,
+  }) async {
     final endpoint = Uri.tryParse('tcp://$address');
     if (endpoint == null ||
         endpoint.host.isEmpty ||
@@ -69,9 +84,9 @@ class LanSession {
         });
         final auth = await _receive(messages);
         if (auth['ok'] != true) throw StateError('电脑拒绝了连接密码');
-        final peer = await _offer();
+        final peer = await _offer(mode, address);
         final local = await peer.getLocalDescription();
-        _send(socket, {'sdp': local!.toMap(), 'mode': 'desktop'});
+        _send(socket, {'sdp': local!.toMap(), 'mode': mode.name});
         final reply = await _receive(messages);
         final answer = reply['sdp'] as Map<String, dynamic>;
         if (answer['type'] != 'answer') {
@@ -80,7 +95,8 @@ class LanSession {
         await peer.setRemoteDescription(
           RTCSessionDescription(answer['sdp'] as String, 'answer'),
         );
-        if (_measure && !_closed) {
+        if (mode == LanSessionMode.files) await files;
+        if (mode == LanSessionMode.desktop && _measure && !_closed) {
           _stats = Timer.periodic(const Duration(seconds: 1), (_) {
             unawaited(_logStats(peer));
           });
@@ -96,7 +112,7 @@ class LanSession {
     }
   }
 
-  Future<RTCPeerConnection> _offer() async {
+  Future<RTCPeerConnection> _offer(LanSessionMode mode, String address) async {
     final peer = await createPeerConnection({'iceServers': <Object>[]});
     if (_closed) {
       await peer.dispose();
@@ -115,7 +131,10 @@ class LanSession {
       switch (state) {
         case RTCPeerConnectionState.RTCPeerConnectionStateFailed:
         case RTCPeerConnectionState.RTCPeerConnectionStateClosed:
-          if (!_closed) onEnded('远程连接已断开');
+          if (!_closed) {
+            unawaited(_files?.close());
+            onEnded('远程连接已断开');
+          }
         default:
           break;
       }
@@ -131,7 +150,16 @@ class LanSession {
     _move = await peer.createDataChannel('input-move', _UnreliableChannel());
     _input = await peer.createDataChannel('input', RTCDataChannelInit());
     final meta = await peer.createDataChannel('meta', RTCDataChannelInit());
-    await peer.createDataChannel('files', RTCDataChannelInit());
+    final filesChannel = await peer.createDataChannel(
+      'files',
+      RTCDataChannelInit()..ordered = true,
+    );
+    final files = LanFileTransferService(filesChannel, address);
+    if (_closed) {
+      await files.close();
+      throw StateError('连接已取消');
+    }
+    _files = files;
     meta.onDataChannelState = (state) {
       _ping?.cancel();
       if (state == RTCDataChannelState.RTCDataChannelOpen && !_closed) {
@@ -156,11 +184,21 @@ class LanSession {
         _clock.receive(bytes, time);
       }
     };
-    await peer.addTransceiver(
-      kind: RTCRtpMediaType.RTCRtpMediaTypeVideo,
-      init: RTCRtpTransceiverInit(direction: TransceiverDirection.RecvOnly),
-    );
-    await peer.setLocalDescription(await peer.createOffer());
+    if (mode == LanSessionMode.desktop) {
+      await peer.addTransceiver(
+        kind: RTCRtpMediaType.RTCRtpMediaTypeVideo,
+        init: RTCRtpTransceiverInit(direction: TransceiverDirection.RecvOnly),
+      );
+    }
+    final offer = mode == LanSessionMode.files
+        ? await peer.createOffer({
+            'mandatory': {
+              'OfferToReceiveAudio': false,
+              'OfferToReceiveVideo': false,
+            },
+          })
+        : await peer.createOffer();
+    await peer.setLocalDescription(offer);
     if (peer.iceGatheringState !=
         RTCIceGatheringState.RTCIceGatheringStateComplete) {
       await gather.future.timeout(const Duration(seconds: 8));
@@ -290,6 +328,7 @@ class LanSession {
     _socket?.destroy();
     _ping?.cancel();
     _stats?.cancel();
+    await _files?.close();
     if (_frameProbe) await _probeChannel.invokeMethod<void>('stopFrameProbe');
     await _peer?.dispose();
   }
