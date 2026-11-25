@@ -1,5 +1,7 @@
 # kkdesk 手机端第 1 期模拟器截图
 
+[第二轮真机反馈版截图](round-2/README.md)包含三栏导航、传输页和更新后的弹窗。
+
 | 页面 | iOS | Android |
 | --- | --- | --- |
 | 设备 · 浅色 | [iOS](ios/01-devices-light.png) | [Android](android/01-devices-light.png) |

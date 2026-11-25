@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'activity_history.dart';
 import 'lan_remote_session.dart';
 import 'touch_controller.dart';
 
@@ -224,6 +225,7 @@ class MobileServices {
     required this.sessions,
     required this.settings,
     required this.biometrics,
+    required this.history,
     this.camera = true,
     this.preview = false,
   });
@@ -240,6 +242,7 @@ class MobileServices {
     sessions: DemoRemoteSessions(),
     settings: MobileSettings(preferences),
     biometrics: biometrics ?? _DemoBiometrics(),
+    history: ActivityHistory(preferences),
     camera: camera,
     preview: preview,
   );
@@ -249,6 +252,7 @@ class MobileServices {
   final RemoteSessions sessions;
   final MobileSettings settings;
   final Biometrics biometrics;
+  final ActivityHistory history;
   final bool camera;
   final bool preview;
 }

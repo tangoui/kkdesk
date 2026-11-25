@@ -20,8 +20,8 @@ void main() {
     await openApp(tester);
     expect(find.text('在线 · 2'), findsOneWidget);
     expect(find.text('离线 · 2'), findsOneWidget);
-    expect(find.text('传输'), findsNothing);
-    await tester.enterText(find.byType(TextField), '办公室');
+    expect(find.text('传输'), findsOneWidget);
+    await tester.enterText(find.byType(EditableText), '办公室');
     await tester.pumpAndSettle();
     expect(find.text('办公室台式机'), findsOneWidget);
     expect(find.text('渲染服务器'), findsNothing);
@@ -41,7 +41,13 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('输入配对码'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byKey(const ValueKey('pair-code')), '12345678');
+    await tester.enterText(
+      find.descendant(
+        of: find.byKey(const ValueKey('pair-code')),
+        matching: find.byType(EditableText),
+      ),
+      '12345678',
+    );
     await tester.pump();
     await tester.tap(find.text('继续'));
     await tester.pump();
@@ -56,6 +62,7 @@ void main() {
     await tester.tap(find.text('完成'));
     await tester.pumpAndSettle();
     expect(find.text('已配对'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 5));
   });
 
   testWidgets('settings can switch theme and manage paired devices', (
@@ -105,6 +112,8 @@ void main() {
     expect(services.settings.touchMode('mac'), TouchMode.direct);
     expect(services.settings.touchMode('office'), TouchMode.trackpad);
 
+    final frame = find.byKey(const ValueKey('remote-video-frame'));
+    final desktopSize = tester.getSize(frame);
     await tester.tap(find.byKey(const ValueKey('remote-ball')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('remote-keyboard')));
@@ -120,6 +129,8 @@ void main() {
     tester.view.viewInsets = const FakeViewPadding(bottom: 100);
     await tester.pump();
     expect(find.byKey(const ValueKey('shortcut-bar')), findsOneWidget);
+    expect(tester.getSize(frame), desktopSize);
+    expect(tester.getTopLeft(frame).dy, isNegative);
     await tester.tap(find.text('Ctrl'), kind: PointerDeviceKind.mouse);
     await tester.pumpAndSettle();
     expect(input.focusNode.hasFocus, isTrue);
@@ -141,6 +152,12 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('remote-disconnect')));
     await tester.pumpAndSettle();
     expect(find.byTooltip('扫码配对'), findsOneWidget);
+    expect(services.history.connections.single.path, '直连');
+    await tester.tap(find.byKey(const ValueKey('transfers-tab')));
+    await tester.pumpAndSettle();
+    expect(find.text('最近连接'), findsOneWidget);
+    expect(find.text('第 2 期'), findsOneWidget);
+    expect(find.text('林舟的 MacBook Pro'), findsOneWidget);
   });
 
   testWidgets(
@@ -152,9 +169,12 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('connect-office')));
       await tester.pumpAndSettle();
+      await tester.tap(find.text('继续验证'));
+      await tester.pumpAndSettle();
       expect(biometrics.reasons.single, contains('办公室台式机'));
       expect(find.textContaining('生物识别未通过'), findsOneWidget);
       expect(find.byKey(const ValueKey('remote-ball')), findsNothing);
+      await tester.pump(const Duration(seconds: 5));
     },
   );
 }
