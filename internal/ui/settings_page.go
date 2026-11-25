@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/tangoui/tango/service/updater/updateui"
 	"github.com/tangoui/tango/sys/shell"
@@ -115,18 +116,20 @@ func (m *Main) settingsPage(c *ui.Context, hs app.HostState) {
 			ui.Menu(c, settingsNav, &s.tab).Show()
 		}, layout.W(160), layout.Padding(insets(4, 0, 4, 0)))
 		panel(c, func() {
-			f := ui.Form(c).LabelWidth(140)
-			f.Body(func() {
-				switch s.tab {
-				case "quality":
-					m.qualitySettings(c, f)
-				case "network":
-					m.networkSettings(c, f, hs)
-				case "general":
-					m.generalSettings(c, f)
-				default:
-					m.securitySettings(c, f, hs)
-				}
+			ui.ConfigProvider(c).Theme(settingsTheme(c.Theme.Dark)).Body(func() {
+				f := ui.Form(c).LabelWidth(140)
+				f.Body(func() {
+					switch s.tab {
+					case "quality":
+						m.qualitySettings(c, f)
+					case "network":
+						m.networkSettings(c, f, hs)
+					case "general":
+						m.generalSettings(c, f)
+					default:
+						m.securitySettings(c, f, hs)
+					}
+				})
 			})
 		}, layout.Grow(1), layout.MinW(0), layout.Padding(insets(24, 24, 24, 24)))
 	}, layout.Gap(16), layout.AlignItems(layout.AlignStart))
@@ -350,3 +353,30 @@ func (m *Main) generalSettings(c *ui.Context, f *ui.FormW) {
 // (like Ant's) lets the help line take the item's bottom margin, which
 // leaves the next label right under the help text.
 func helpGap(c *ui.Context) { ui.Div(c, layout.H(12)) }
+
+// settingsHelpFontSize is the size of the grey help lines under the settings
+// (Ant's FontSizeSM): the form's default, the body size, is too loud for
+// the many explanations on this page.
+const settingsHelpFontSize = 12
+
+var (
+	settingsThemeOnce [2]sync.Once
+	settingsThemes    [2]*theme.Theme
+)
+
+// settingsTheme is the window's Ant Design theme with smaller form help
+// lines, built once per light/dark.
+func settingsTheme(dark bool) *theme.Theme {
+	i := 0
+	if dark {
+		i = 1
+	}
+	settingsThemeOnce[i].Do(func() {
+		opts := []theme.Option{theme.WithComponents(theme.Components{Form: theme.FormToken{MessageFontSize: settingsHelpFontSize}})}
+		if dark {
+			opts = append(opts, theme.Dark())
+		}
+		settingsThemes[i] = theme.AntDesign(opts...)
+	})
+	return settingsThemes[i]
+}
