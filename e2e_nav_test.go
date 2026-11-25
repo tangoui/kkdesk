@@ -30,6 +30,13 @@ func TestE2ENav(t *testing.T) {
 	if root == "" {
 		t.Skip("KKDESK_E2E_NAV not set")
 	}
+	// Start from scratch: a configuration left by an earlier run (devices,
+	// theme, port) would change what the pages show.
+	for _, d := range []string{"cfg", "dst"} {
+		if err := os.RemoveAll(filepath.Join(root, d)); err != nil {
+			t.Fatal(err)
+		}
+	}
 	shots := os.Getenv("KKDESK_E2E_SHOTS")
 	shot := func(w *automation.Window, name string) {
 		if shots != "" {

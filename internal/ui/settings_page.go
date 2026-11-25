@@ -102,7 +102,7 @@ func (m *Main) settingsPage(c *ui.Context, hs app.HostState) {
 			ui.Menu(c, settingsNav, &s.tab).Show()
 		}, layout.W(160), layout.Padding(insets(4, 0, 4, 0)))
 		panel(c, func() {
-			f := ui.Form(c).LabelWidth(140).Layout(layout.Gap(20)) // room between items, as Ant forms have
+			f := ui.Form(c).LabelWidth(140)
 			f.Body(func() {
 				switch s.tab {
 				case "quality":
@@ -126,6 +126,7 @@ func (m *Main) securitySettings(c *ui.Context, f *ui.FormW, hs app.HostState) {
 			m.setRotate(c, s.rotate)
 		}
 	})
+	helpGap(c)
 	it := f.Item("固定密码")
 	switch {
 	case s.fixedErr != "":
@@ -163,12 +164,14 @@ func (m *Main) securitySettings(c *ui.Context, f *ui.FormW, hs app.HostState) {
 			}
 		}, layout.Gap(8), layout.Middle(), layout.WrapItems())
 	})
+	helpGap(c)
 	f.Item("连接前需要确认").Help("关闭后，密码正确的连接会被自动接受。").Body(func() {
 		switchRow(c, &s.confirm, "别人连接时弹窗，由我决定是否接受", func(on bool) {
 			m.update(c, func(st *config.Settings) { st.Confirm = on })
 			m.o.Host.SetAutoAccept(!on)
 		})
 	})
+	helpGap(c)
 	f.Item("允许被远程控制").Help("启动时是否开启被控；连接页的开关只改变本次运行。").Body(func() {
 		switchRow(c, &s.allow, "启动后允许其他电脑连接本机", func(on bool) {
 			m.update(c, func(st *config.Settings) { st.AllowRemote = on })
@@ -196,6 +199,7 @@ func (m *Main) qualitySettings(c *ui.Context, f *ui.FormW) {
 			m.o.Host.SetQuality(fps, m.o.Store.Settings().BitrateMbps)
 		}
 	})
+	helpGap(c)
 	f.Item("默认码率").Help("自动目前固定为 8 Mbps。").Body(func() {
 		if ui.Select(c, &s.bitrate, bitrateOpts()).Width(200).A11yLabel("默认码率").Changed() {
 			b, _ := strconv.Atoi(s.bitrate)
@@ -227,6 +231,7 @@ func (m *Main) networkSettings(c *ui.Context, f *ui.FormW, hs app.HostState) {
 			ui.Text(c, "当前 "+itoa(hs.Port)).Size(12).Tertiary()
 		}, layout.Gap(8), layout.Middle())
 	})
+	helpGap(c)
 	f.Item("本机地址").Help("把地址和端口告诉对方即可连接。").Body(func() {
 		ui.Column(c, func() {
 			if len(hs.Addrs) == 0 {
@@ -295,3 +300,8 @@ func (m *Main) generalSettings(c *ui.Context, f *ui.FormW) {
 		}, layout.Gap(8), layout.Middle())
 	})
 }
+
+// helpGap separates an item with a help line from the next one. Tango's form
+// (like Ant's) lets the help line take the item's bottom margin, which
+// leaves the next label right under the help text.
+func helpGap(c *ui.Context) { ui.Div(c, layout.H(12)) }
