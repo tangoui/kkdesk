@@ -9,15 +9,18 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterFragmentActivity() {
     private val mediaUploadPicker = MediaUploadPicker(this)
+    private val biometricKey = BiometricKey(this)
 
     override fun onDestroy() {
         mediaUploadPicker.close()
+        biometricKey.close()
         super.onDestroy()
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         mediaUploadPicker.register(flutterEngine.dartExecutor.binaryMessenger)
+        biometricKey.register(flutterEngine.dartExecutor.binaryMessenger)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "kkdesk/display")
             .setMethodCallHandler { call, result ->
                 if (call.method != "setImmersive") {
