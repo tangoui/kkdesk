@@ -210,6 +210,8 @@ func (m *Main) securitySettings(c *ui.Context, f *ui.FormW, hs app.HostState) {
 			m.o.Host.SetSessionDefaults(s.sessionClipboard, on)
 		})
 	})
+	helpGap(c)
+	f.Item("已配对手机").Body(func() { m.pairedPhones(c) })
 }
 
 // switchRow is a switch with its text; changed runs on a toggle.

@@ -28,6 +28,7 @@ import (
 	"github.com/tangoui/kkdesk/internal/files"
 	"github.com/tangoui/kkdesk/internal/inject"
 	"github.com/tangoui/kkdesk/internal/input"
+	"github.com/tangoui/kkdesk/internal/pairing"
 	"github.com/tangoui/kkdesk/internal/rendezvous"
 	"github.com/tangoui/kkdesk/internal/session"
 	"github.com/tangoui/kkdesk/internal/stats"
@@ -76,6 +77,7 @@ type HostConfig struct {
 	Log                     io.Writer
 	AutoAccept              bool
 	Remote                  rendezvous.Config
+	Pairing                 *pairing.Store
 }
 
 // HostPhase is what the host is doing.
@@ -114,6 +116,7 @@ type HostState struct {
 	RemoteCode string
 	RemoteErr  string
 	RemotePeer bool
+	PhonePeer  bool
 	// ClipboardAccess: the clipboard is synced with the controller's (the
 	// 剪贴板 permission).
 	ClipboardAccess bool
@@ -147,6 +150,7 @@ type Host struct {
 	remote     remoteHostState
 	closed     bool
 	remotePeer bool
+	mobile     mobileHostState
 
 	fileAccess atomic.Bool // current 文件传输 permission
 	clipAccess atomic.Bool // current 剪贴板 permission
@@ -172,7 +176,7 @@ func NewHost(cfg HostConfig, notify func()) *Host {
 	}
 	h := &Host{cfg: cfg, notify: notify, addrs: LocalIPv4()}
 	if cfg.Remote.URL != "" {
-		h.remote.code = rendezvous.NewCode()
+		h.remote.code = h.deviceCode()
 	}
 	h.fileAccess.Store(!cfg.DisableSessionFiles)
 	h.clipAccess.Store(!cfg.DisableSessionClipboard)
@@ -434,6 +438,12 @@ func (h *Host) State() HostState {
 	}
 	if h.peer != nil {
 		s.Peer = h.peer.RemoteAddr()
+		if h.mobile.peerKey != "" {
+			s.PhonePeer = true
+			if p, ok := h.cfg.Pairing.Phone(h.mobile.peerKey); ok {
+				s.Peer = p.Name
+			}
+		}
 		s.RemotePeer = h.remotePeer
 		s.Since = h.since
 		s.FilesOnly = h.peer.Mode() == session.ModeFiles
@@ -457,6 +467,9 @@ func (h *Host) SetEnabled(on bool) error {
 	if !on {
 		h.stopLocked()
 		h.stopRemoteLocked()
+		if h.cfg.Pairing != nil {
+			h.cfg.Pairing.Invalidate()
+		}
 		if !h.busy {
 			h.phase = HostOff
 		}
@@ -527,6 +540,14 @@ func (h *Host) startLocked() error {
 	}
 	h.errMsg = ""
 	ctx, cancel := context.WithCancel(context.Background())
+	if h.cfg.Pairing != nil {
+		ln.SetMobileHandler(func(ctx context.Context, exchange *session.MobileLAN, release func()) {
+			h.wg.Go(func() {
+				defer release()
+				h.serveMobile(ctx, ctx, rendezvous.Config{}, exchange)
+			})
+		})
+	}
 	h.ln, h.cancel = ln, cancel
 	if !h.busy {
 		h.phase = HostListening
@@ -653,6 +674,9 @@ func (h *Host) Close() {
 		h.closed = true
 		h.stopLocked()
 		h.stopRemoteLocked()
+		if h.cfg.Pairing != nil {
+			h.cfg.Pairing.Invalidate()
+		}
 		if h.pwTimer != nil {
 			h.pwTimer.Stop()
 			h.pwTimer = nil
@@ -680,13 +704,13 @@ func (h *Host) acceptLoop(ctx context.Context, ln *session.Host) {
 		h.wg.Add(1)
 		go func() {
 			defer h.wg.Done()
-			h.handle(p, nil)
+			h.handle(p, nil, "", false)
 		}()
 	}
 }
 
 // handle runs one incoming peer: busy check, confirmation, session.
-func (h *Host) handle(p *session.Peer, remoteCtx context.Context) {
+func (h *Host) handle(p *session.Peer, remoteCtx context.Context, phoneKey string, bypassAuthorized bool) {
 	h.mu.Lock()
 	if h.closed || (remoteCtx != nil && (remoteCtx.Err() != nil || !h.wantOn)) {
 		h.mu.Unlock()
@@ -698,14 +722,25 @@ func (h *Host) handle(p *session.Peer, remoteCtx context.Context) {
 		p.CloseWithReason("对方正在被其他设备控制")
 		return
 	}
+	confirm := remoteCtx != nil || !h.cfg.AutoAccept
+	if phoneKey != "" {
+		phone, ok := h.cfg.Pairing.Phone(phoneKey)
+		if !ok || !h.wantOn {
+			h.mu.Unlock()
+			p.CloseWithReason("已解除配对")
+			return
+		}
+		confirm = !phone.Bypass || !bypassAuthorized
+	}
 	h.busy = true
 	h.peer, h.since = p, time.Now()
 	h.remotePeer = remoteCtx != nil
+	h.mobile.peerKey = phoneKey
 	h.fileAccess.Store(!h.cfg.DisableSessionFiles)
 	h.clipAccess.Store(!h.cfg.DisableSessionClipboard)
 	h.notice = ""
 	var ch chan bool
-	if remoteCtx != nil || !h.cfg.AutoAccept {
+	if confirm {
 		ch = make(chan bool, 1)
 		h.decide = ch
 		h.phase = HostPending
@@ -719,6 +754,7 @@ func (h *Host) handle(p *session.Peer, remoteCtx context.Context) {
 		h.mu.Lock()
 		h.busy, h.peer, h.decide, h.fsrv = false, nil, nil, nil
 		h.remotePeer = false
+		h.mobile.peerKey = ""
 		if accepted && h.cfg.Rotate == config.RotateAfterSession {
 			h.newPasswordLocked() // 每次连接后更换
 			log.Printf("kkdesk host: temporary password rotated after the session")

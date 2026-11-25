@@ -95,6 +95,7 @@ type Main struct {
 	xfer            filesPageState
 	set             settingsState
 	screenRecording screenRecordingGuide
+	pairing         pairingUI
 
 	mu         sync.Mutex
 	connecting bool
@@ -201,9 +202,14 @@ func (m *Main) page(c *ui.Context) {
 			}
 		}, layout.Grow(1)).Bg(th.BgLayout)
 	}, layout.Grow(1))
-	if hs.Phase == app.HostPending {
+	if request := m.o.Host.PairingRequest(); request != nil {
+		m.pairingConfirm(c, request)
+	} else if hs.Phase == app.HostPending {
 		m.confirm(c, hs)
+	} else if m.pairing.open {
+		m.pairingQR(c)
 	} else {
+		m.phoneSettingsDialog(c)
 		m.screenRecording.dialog(c, os.Getenv("TANGO_DEV_ROLE") == "worker", openScreenRecordingSettings)
 	}
 }

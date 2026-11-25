@@ -26,7 +26,7 @@ func (h *Host) SetRemote(cfg rendezvous.Config) {
 	}
 	h.stopRemoteLocked()
 	h.cfg.Remote = cfg
-	h.remote.code = rendezvous.NewCode()
+	h.remote.code = h.deviceCode()
 	if h.wantOn {
 		h.startRemoteLocked()
 	}
@@ -48,6 +48,9 @@ func (h *Host) startRemoteLocked() {
 		defer h.wg.Done()
 		h.serveRemote(ctx, cfg, code)
 	}()
+	if h.cfg.Pairing != nil {
+		h.wg.Go(func() { h.runMobileRemote(ctx, cfg) })
+	}
 }
 
 func (h *Host) stopRemoteLocked() {
@@ -140,5 +143,5 @@ func (h *Host) answerRemote(ctx context.Context, cfg rendezvous.Config, conn *we
 		peer.Close()
 		return
 	}
-	h.handle(peer, ctx)
+	h.handle(peer, ctx, "", false)
 }

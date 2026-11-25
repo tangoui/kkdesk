@@ -70,10 +70,14 @@ func (m *Main) confirm(c *ui.Context, hs app.HostState) {
 	}
 	md := ui.Modal(c, &open, "连接请求").Width(min(420, c.Size().W-32)).MaskClosable(false).Header(func() {
 		ui.Row(c, func() {
-			ui.Avatar(c, "").Icon(antd.DesktopOutlined).Size(44).Bg(th.Primary.Bg)
+			peerIcon := antd.DesktopOutlined
+			if hs.PhonePeer {
+				peerIcon = antd.MobileOutlined
+			}
+			ui.Avatar(c, "").Icon(peerIcon).Size(44).Bg(th.Primary.Bg)
 			ui.Column(c, func() {
 				ui.Text(c, hs.Peer+" "+what).Size(16).Strong()
-				if !hs.RemotePeer {
+				if !hs.RemotePeer && !hs.PhonePeer {
 					ui.Text(c, "地址 "+hs.Peer+" · 局域网直连").Size(12).Tertiary()
 				}
 			}, layout.Gap(2), layout.Grow(1), layout.MinW(0))
