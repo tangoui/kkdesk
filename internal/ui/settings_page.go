@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/tangoui/tango/service/updater/updateui"
 	"github.com/tangoui/tango/sys/shell"
@@ -115,18 +116,20 @@ func (m *Main) settingsPage(c *ui.Context, hs app.HostState) {
 			ui.Menu(c, settingsNav, &s.tab).Show()
 		}, layout.W(160), layout.Padding(insets(4, 0, 4, 0)))
 		panel(c, func() {
-			f := ui.Form(c).LabelWidth(140)
-			f.Body(func() {
-				switch s.tab {
-				case "quality":
-					m.qualitySettings(c, f)
-				case "network":
-					m.networkSettings(c, f, hs)
-				case "general":
-					m.generalSettings(c, f)
-				default:
-					m.securitySettings(c, f, hs)
-				}
+			ui.ConfigProvider(c).Theme(settingsTheme(c.Theme.Dark)).Body(func() {
+				f := ui.Form(c).LabelWidth(140).LabelAlign(ui.AlignStart)
+				f.Body(func() {
+					switch s.tab {
+					case "quality":
+						m.qualitySettings(c, f)
+					case "network":
+						m.networkSettings(c, f, hs)
+					case "general":
+						m.generalSettings(c, f)
+					default:
+						m.securitySettings(c, f, hs)
+					}
+				})
 			})
 		}, layout.Grow(1), layout.MinW(0), layout.Padding(insets(24, 24, 24, 24)))
 	}, layout.Gap(16), layout.AlignItems(layout.AlignStart))
@@ -209,12 +212,21 @@ func (m *Main) securitySettings(c *ui.Context, f *ui.FormW, hs app.HostState) {
 
 // switchRow is a switch with its text; changed runs on a toggle.
 func switchRow(c *ui.Context, val *bool, label string, changed func(bool)) {
-	ui.Row(c, func() {
+	controlRow(c, func() {
 		if ui.Switch(c, val).A11yLabel(label).Changed() {
 			changed(*val)
 		}
 		ui.Text(c, label).Size(14)
-	}, layout.Gap(8), layout.Middle())
+	}, layout.Gap(8))
+}
+
+// controlRow lays out a form control shorter than the label line (a switch
+// is 22 px, the label line 32 px) in a row as tall as the label line and
+// centered in it, so the label and the control share a middle line instead
+// of the label sitting lower.
+func controlRow(c *ui.Context, fn func(), opts ...layout.Option) {
+	formTheme := c.ThemeFor(theme.CompForm).Components.Form
+	ui.Row(c, fn, append([]layout.Option{layout.H(formTheme.LabelHeight), layout.Middle()}, opts...)...)
 }
 
 func (m *Main) qualitySettings(c *ui.Context, f *ui.FormW) {
@@ -331,7 +343,7 @@ func (m *Main) generalSettings(c *ui.Context, f *ui.FormW) {
 		reveal = "在资源管理器中显示"
 	}
 	f.Item("配置文件").Help("设置和我的设备都保存在这个文件里，不会上传。").Body(func() {
-		ui.Row(c, func() {
+		controlRow(c, func() {
 			ui.Text(c, m.o.Store.Path()).Size(13).Secondary().Ellipsis().Layout(layout.Grow(1), layout.MinW(0))
 			if ui.Button(c, reveal).Small().Clicked() {
 				path, a := m.o.Store.Path(), m.o.App
@@ -342,7 +354,7 @@ func (m *Main) generalSettings(c *ui.Context, f *ui.FormW) {
 					}
 				})
 			}
-		}, layout.Gap(8), layout.Middle())
+		}, layout.Gap(8))
 	})
 }
 
@@ -350,3 +362,30 @@ func (m *Main) generalSettings(c *ui.Context, f *ui.FormW) {
 // (like Ant's) lets the help line take the item's bottom margin, which
 // leaves the next label right under the help text.
 func helpGap(c *ui.Context) { ui.Div(c, layout.H(12)) }
+
+// settingsHelpFontSize is the size of the grey help lines under the settings
+// (Ant's FontSizeSM): the form's default, the body size, is too loud for
+// the many explanations on this page.
+const settingsHelpFontSize = 12
+
+var (
+	settingsThemeOnce [2]sync.Once
+	settingsThemes    [2]*theme.Theme
+)
+
+// settingsTheme is the window's Ant Design theme with smaller form help
+// lines, built once per light/dark.
+func settingsTheme(dark bool) *theme.Theme {
+	i := 0
+	if dark {
+		i = 1
+	}
+	settingsThemeOnce[i].Do(func() {
+		opts := []theme.Option{theme.WithComponents(theme.Components{Form: theme.FormToken{MessageFontSize: settingsHelpFontSize}})}
+		if dark {
+			opts = append(opts, theme.Dark())
+		}
+		settingsThemes[i] = theme.AntDesign(opts...)
+	})
+	return settingsThemes[i]
+}
