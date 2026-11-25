@@ -21,6 +21,7 @@ import (
 
 	"github.com/tangoui/kkdesk/internal/capture"
 	"github.com/tangoui/kkdesk/internal/codec"
+	"github.com/tangoui/kkdesk/internal/files"
 	"github.com/tangoui/kkdesk/internal/inject"
 	"github.com/tangoui/kkdesk/internal/input"
 	"github.com/tangoui/kkdesk/internal/session"
@@ -70,6 +71,12 @@ type HostState struct {
 	Deadline time.Time // pending: automatic rejection
 	Err      string    // last error or permission guidance
 	Notice   string    // informational message (e.g. last session ended)
+	// FilesOnly: the controller connected only to transfer files (no
+	// screen is shared).
+	FilesOnly bool
+	// FileAccess: the controller may browse and transfer files (the
+	// 文件传输 permission).
+	FileAccess bool
 }
 
 // Host accepts controllers and streams this screen to one at a time. Its
@@ -92,6 +99,9 @@ type Host struct {
 	wg       sync.WaitGroup
 	addrs    []string
 	stopOnce sync.Once
+	fsrv     *files.Server // file server of the current session
+
+	fileAccess atomic.Bool // the 文件传输 permission; on by default
 }
 
 // NewHost returns a host that is not listening yet (see SetEnabled). notify
@@ -113,7 +123,32 @@ func NewHost(cfg HostConfig, notify func()) *Host {
 	if pw == "" {
 		pw = NewPassword()
 	}
-	return &Host{cfg: cfg, notify: notify, password: pw, addrs: LocalIPv4()}
+	h := &Host{cfg: cfg, notify: notify, password: pw, addrs: LocalIPv4()}
+	h.fileAccess.Store(true)
+	return h
+}
+
+// FileAccess reports whether the controller may browse and transfer files.
+func (h *Host) FileAccess() bool { return h.fileAccess.Load() }
+
+// SetFileAccess turns the 文件传输 permission on or off. Turning it off
+// aborts running transfers at once; the controller sees ErrDenied.
+func (h *Host) SetFileAccess(on bool) {
+	if h.fileAccess.Swap(on) == on {
+		return
+	}
+	h.mu.Lock()
+	srv := h.fsrv
+	h.mu.Unlock()
+	if on {
+		log.Printf("kkdesk host: file access on")
+	} else {
+		log.Printf("kkdesk host: file access off")
+	}
+	if srv != nil {
+		srv.CheckAllowed()
+	}
+	h.notify()
 }
 
 // NewPassword returns a random 6-digit password.
@@ -192,13 +227,15 @@ func excludeSelfWindows(remote string, local []string, env string) bool {
 func (h *Host) State() HostState {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	s := HostState{Phase: h.phase, Addrs: h.addrs, Port: Port, Password: h.password, Err: h.errMsg, Notice: h.notice}
+	s := HostState{Phase: h.phase, Addrs: h.addrs, Port: Port, Password: h.password, Err: h.errMsg, Notice: h.notice,
+		FileAccess: h.fileAccess.Load()}
 	if tcp, err := net.ResolveTCPAddr("tcp", h.cfg.Addr); err == nil && tcp.Port != 0 {
 		s.Port = tcp.Port
 	}
 	if h.peer != nil {
 		s.Peer = h.peer.RemoteAddr()
 		s.Since = h.since
+		s.FilesOnly = h.peer.Mode() == session.ModeFiles
 		if h.phase == HostPending {
 			s.Deadline = h.since.Add(ConfirmTimeout)
 		}
@@ -356,7 +393,7 @@ func (h *Host) handle(p *session.Peer) {
 	defer func() {
 		p.Close()
 		h.mu.Lock()
-		h.busy, h.peer, h.decide = false, nil, nil
+		h.busy, h.peer, h.decide, h.fsrv = false, nil, nil, nil
 		if h.ln != nil {
 			h.phase = HostListening
 		} else {
@@ -381,6 +418,19 @@ func (h *Host) handle(p *session.Peer) {
 			return
 		}
 	}
+	h.serveFiles(p)
+	if p.Mode() == session.ModeFiles {
+		h.mu.Lock()
+		h.phase, h.since = HostActive, time.Now()
+		h.mu.Unlock()
+		h.notify()
+		log.Printf("kkdesk host: %s connected to transfer files", p.RemoteAddr())
+		<-p.Done()
+		h.mu.Lock()
+		h.notice = "上次连接已结束：" + p.RemoteAddr()
+		h.mu.Unlock()
+		return
+	}
 	if help := CaptureHelp(); help != "" {
 		h.setErr(help)
 		log.Printf("kkdesk host: %s", help)
@@ -399,6 +449,20 @@ func (h *Host) handle(p *session.Peer) {
 	}
 	h.mu.Lock()
 	h.notice = "上次连接已结束：" + p.RemoteAddr()
+	h.mu.Unlock()
+}
+
+// serveFiles starts the file server of an accepted session (both modes);
+// it stops when the session closes.
+func (h *Host) serveFiles(p *session.Peer) {
+	ch := p.FileChannel()
+	if ch == nil {
+		return
+	}
+	srv := files.NewServer(ch, h.fileAccess.Load)
+	srv.SetLogf(func(format string, args ...any) { log.Printf("kkdesk host: "+format, args...) })
+	h.mu.Lock()
+	h.fsrv = srv
 	h.mu.Unlock()
 }
 

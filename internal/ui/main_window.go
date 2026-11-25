@@ -32,14 +32,17 @@ import (
 const (
 	modeControl  = "control"
 	modeView     = "view"
-	modeTransfer = "transfer" // not implemented yet (disabled)
+	modeTransfer = "transfer" // 传文件: only the file window
 )
+
+// ModeTransfer is the 传文件 connection mode (Form.Mode).
+const ModeTransfer = modeTransfer
 
 // Form is the persisted content of the 控制其他电脑 form.
 type Form struct {
 	PeerAddr string
 	Password string
-	Mode     string   // modeControl (default) or modeView
+	Mode     string   // modeControl (default), modeView or modeTransfer
 	Recent   []Recent // successful connections, newest first
 }
 
@@ -48,6 +51,7 @@ type Recent struct {
 	Addr     string
 	At       time.Time
 	ViewOnly bool
+	Files    bool // 传文件
 }
 
 // maxRecent bounds the 最近连接 list.
@@ -190,6 +194,8 @@ func (m *Main) sidebar(c *ui.Context, hs app.HostState) {
 					col, msg, sub = th.TextQuaternary, "未开启被控", ""
 				case hs.Err != "":
 					col, msg, sub = th.Warning.Base, "需要处理", ""
+				case hs.Phase == app.HostActive && hs.FilesOnly:
+					col, msg, sub = th.Error.Base, "正在传输文件", ""
 				case hs.Phase == app.HostActive:
 					col, msg, sub = th.Error.Base, "正在被控制", ""
 				}
@@ -223,13 +229,15 @@ func (m *Main) comingSoon(c *ui.Context) {
 	}, layout.Pad(48), layout.Gap(16))
 }
 
-// connect dials in the background and opens the session window.
-func (m *Main) connect(addr, pw string, viewOnly bool) {
+// connect dials in the background and opens the session window, or only
+// the file window in 传文件 mode.
+func (m *Main) connect(addr, pw, mode string) {
 	m.mu.Lock()
 	m.connecting, m.connErr = true, ""
 	m.mu.Unlock()
-	viewOnly = viewOnly || m.o.ViewOnly
-	v := app.NewViewer(app.ViewerConfig{Addr: addr, Password: pw, ViewOnly: viewOnly, Log: m.o.ViewerLog}, nil)
+	viewOnly := mode == modeView || m.o.ViewOnly
+	filesOnly := mode == modeTransfer
+	v := app.NewViewer(app.ViewerConfig{Addr: addr, Password: pw, ViewOnly: viewOnly, FilesOnly: filesOnly, Log: m.o.ViewerLog}, nil)
 	go func() {
 		err := v.Connect(context.Background())
 		m.mu.Lock()
@@ -243,12 +251,17 @@ func (m *Main) connect(addr, pw string, viewOnly bool) {
 			return
 		}
 		m.o.App.Post(func() {
-			m.addRecent(Recent{Addr: addr, At: time.Now(), ViewOnly: viewOnly})
-			if err := OpenSession(m.o.App, v, func(msg string) {
+			m.addRecent(Recent{Addr: addr, At: time.Now(), ViewOnly: viewOnly && !filesOnly, Files: filesOnly})
+			onEnd := func(msg string) {
 				if msg != "" {
 					m.ShowError(msg)
 				}
-			}); err != nil {
+			}
+			open := OpenSession
+			if filesOnly {
+				open = func(a *tango.App, v *app.Viewer, onEnd func(string)) error { return OpenFiles(a, v, true, onEnd) }
+			}
+			if err := open(m.o.App, v, onEnd); err != nil {
 				log.Printf("kkdesk: session window: %v", err)
 				v.Close()
 			}

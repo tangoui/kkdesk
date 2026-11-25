@@ -63,6 +63,13 @@ func endLine(col theme.Color) ui.PaintFunc {
 	}
 }
 
+// bottomLine paints a 1px line along the bottom edge of a box.
+func bottomLine(col theme.Color) ui.PaintFunc {
+	return func(l *paint.List, r geom.Rect) {
+		l.Fill(geom.Rect{X: r.X, Y: r.Y + r.H - 1, W: r.W, H: 1}, geom.Radii{}, col)
+	}
+}
+
 // topLine paints a 1px line along the top edge of a box.
 func topLine(col theme.Color) ui.PaintFunc {
 	return func(l *paint.List, r geom.Rect) {

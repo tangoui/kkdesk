@@ -14,6 +14,7 @@ import (
 
 	"github.com/tangoui/kkdesk/internal/codec"
 	"github.com/tangoui/kkdesk/internal/display"
+	"github.com/tangoui/kkdesk/internal/files"
 	"github.com/tangoui/kkdesk/internal/input"
 	"github.com/tangoui/kkdesk/internal/session"
 	"github.com/tangoui/kkdesk/internal/stats"
@@ -27,7 +28,10 @@ type ViewerConfig struct {
 	Addr     string // host[:port]; the port defaults to 21118
 	Password string
 	ViewOnly bool // force view-only
-	Log      io.Writer
+	// FilesOnly connects only to transfer files (session.ModeFiles): the
+	// host shares no screen.
+	FilesOnly bool
+	Log       io.Writer
 }
 
 // ViewerPhase is the viewer's connection state.
@@ -68,6 +72,7 @@ type Viewer struct {
 	fps      int
 	closing  bool
 	onEnd    []func()
+	files    *files.Client
 
 	// video goroutine only
 	dec      codec.Decoder
@@ -135,12 +140,33 @@ func IsLoopback(addr string) bool {
 // Addr returns the host address.
 func (v *Viewer) Addr() string { return v.cfg.Addr }
 
+// FilesOnly reports whether the session only transfers files.
+func (v *Viewer) FilesOnly() bool { return v.cfg.FilesOnly }
+
+// Files returns the session's file client (nil before Connect succeeded or
+// if the host offers no file channel). It is created once per session.
+func (v *Viewer) Files() *files.Client {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.files == nil && v.peer != nil {
+		if ch := v.peer.FileChannel(); ch != nil {
+			v.files = files.NewClient(ch)
+			v.files.SetLogf(func(format string, args ...any) { log.Printf("kkdesk viewer: "+format, args...) })
+		}
+	}
+	return v.files
+}
+
 // Connect dials the host. It blocks until the session is established or
 // fails; on failure the state is ViewerClosed with a user-facing Err.
 func (v *Viewer) Connect(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, DialTimeout)
 	defer cancel()
-	p, err := session.Dial(ctx, v.cfg.Addr, v.cfg.Password)
+	mode := session.ModeDesktop
+	if v.cfg.FilesOnly {
+		mode = session.ModeFiles
+	}
+	p, err := session.DialWithOptions(ctx, v.cfg.Addr, v.cfg.Password, session.DialOptions{Mode: mode})
 	if err != nil {
 		msg := DialError(v.cfg.Addr, err)
 		v.end(msg)

@@ -19,7 +19,7 @@ var (
 	modeOpts   = []ui.Option{
 		{Label: "远程控制", Value: modeControl},
 		{Label: "仅查看", Value: modeView},
-		{Label: "传文件", Value: modeTransfer, Disabled: true},
+		{Label: "传文件", Value: modeTransfer},
 	}
 )
 
@@ -142,8 +142,14 @@ func hostStatus(hs app.HostState) string {
 		}
 		return "等待连接…"
 	case app.HostPending:
+		if hs.FilesOnly {
+			return hs.Peer + " 请求传输文件"
+		}
 		return hs.Peer + " 请求控制本机"
 	case app.HostActive:
+		if hs.FilesOnly {
+			return hs.Peer + " 正在传输文件"
+		}
 		return "正在被 " + hs.Peer + " 控制"
 	}
 	return hs.Notice
@@ -184,7 +190,7 @@ func (m *Main) connectCard(c *ui.Context) {
 		b := ui.Button(c, "连接").AutoInsertSpace(false).Primary().Large().Block().Loading(connecting).Disabled(addr == "")
 		b.Layout(layout.Margin(insets(8, 0, 0, 0)))
 		if (b.Clicked() || submit) && !connecting && addr != "" {
-			m.connect(addr, strings.TrimSpace(st.Password), st.Mode == modeView)
+			m.connect(addr, strings.TrimSpace(st.Password), st.Mode)
 		}
 		if errMsg != "" {
 			ui.Alert(c, "error", errMsg).ShowIcon(true).Show()
@@ -223,7 +229,10 @@ func (m *Main) recent(c *ui.Context) {
 				ui.Column(c, func() {
 					mono(c, r.Addr, 14, text.Medium, th.Text)
 					mode := "远程控制"
-					if r.ViewOnly {
+					switch {
+					case r.Files:
+						mode = "传文件"
+					case r.ViewOnly:
 						mode = "仅查看"
 					}
 					ui.Text(c, whenText(r.At)+" · "+mode).Size(12).Tertiary().NoWrap()
@@ -232,7 +241,10 @@ func (m *Main) recent(c *ui.Context) {
 			if card.Clicked() {
 				f.PeerAddr = r.Addr
 				f.Mode = modeControl
-				if r.ViewOnly {
+				switch {
+				case r.Files:
+					f.Mode = modeTransfer
+				case r.ViewOnly:
 					f.Mode = modeView
 				}
 				c.Invalidate()

@@ -197,6 +197,15 @@ func (w *sessionWin) popupMenu(x, y int, st app.ViewerState) {
 	m.Separator()
 	m.Check("仅查看", st.ViewOnly, func() { v.SetViewOnly(!st.ViewOnly) })
 	m.Separator()
+	t := m.Submenu("工具")
+	t.Add("文件传输", func() {
+		w.app.Post(func() {
+			if err := OpenFiles(w.app, v, false, nil); err != nil {
+				log.Printf("kkdesk viewer: file window: %v", err)
+			}
+		})
+	})
+	m.Separator()
 	m.Add("退出远控", v.Close)
 	// Popup blocks until the menu closes; off the UI thread so the window
 	// keeps drawing (the video is a native view and keeps playing anyway).

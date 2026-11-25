@@ -90,6 +90,9 @@ func run(o options) error {
 	uihost.Persist(&st) // before the first frame
 	if o.connect != "" {
 		st.Form = appui.Form{PeerAddr: o.connect, Password: o.password}
+		if o.files {
+			st.Form.Mode = appui.ModeTransfer
+		}
 	}
 
 	// The main window is created in OnReady; host and viewer notify it.
@@ -104,6 +107,7 @@ func run(o options) error {
 		hostPW = o.password
 	}
 	host := app.NewHost(app.HostConfig{
+		Addr:        o.listen,
 		Password:    hostPW,
 		FPS:         o.fps,
 		MaxWidth:    o.maxWidth,
@@ -161,7 +165,7 @@ func run(o options) error {
 			openMain(false, "")
 			return
 		}
-		viewer = app.NewViewer(app.ViewerConfig{Addr: o.connect, Password: o.password, ViewOnly: o.viewOnly, Log: logw}, nil)
+		viewer = app.NewViewer(app.ViewerConfig{Addr: o.connect, Password: o.password, ViewOnly: o.viewOnly, FilesOnly: o.files, Log: logw}, nil)
 		go func() {
 			if err := viewer.Connect(context.Background()); err != nil {
 				fmt.Fprintln(os.Stderr, "kkdesk:", err)
@@ -169,13 +173,19 @@ func run(o options) error {
 				return
 			}
 			a.Post(func() {
-				err := appui.OpenSession(a, viewer, func(msg string) {
+				onEnd := func(msg string) {
 					if msg != "" {
 						fmt.Fprintln(os.Stderr, "kkdesk:", msg)
 					}
-				})
+				}
+				var err error
+				if o.files {
+					err = appui.OpenFiles(a, viewer, true, onEnd)
+				} else {
+					err = appui.OpenSession(a, viewer, onEnd)
+				}
 				if err != nil {
-					fmt.Fprintln(os.Stderr, "kkdesk: session window:", err)
+					fmt.Fprintln(os.Stderr, "kkdesk: window:", err)
 					viewer.Close()
 					a.Quit()
 				}

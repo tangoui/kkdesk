@@ -21,8 +21,10 @@ type options struct {
 	logPath    string
 	autoAccept bool
 	viewOnly   bool
+	files      bool
 	selftest   bool
 	appLog     string
+	listen     string
 }
 
 func parseFlags(args []string) (options, *flag.FlagSet, error) {
@@ -37,10 +39,12 @@ func parseFlags(args []string) (options, *flag.FlagSet, error) {
 	fs.StringVar(&o.logPath, "log", "", "write JSON Lines stats to `file`")
 	fs.BoolVar(&o.autoAccept, "autoaccept", false, "host: accept incoming connections without asking (measurement)")
 	fs.BoolVar(&o.viewOnly, "view-only", false, "viewer: do not send input")
+	fs.BoolVar(&o.files, "files", false, "viewer: only transfer files (opens the file window, no remote screen)")
 	fs.BoolVar(&o.selftest, "selftest", false, "check capture, encoding and input injection without UI or network, write "+app.SelftestLog+" and "+app.SelftestH264+", then exit (0 = pass)")
+	fs.StringVar(&o.listen, "listen", "", "host: listen on `addr` (default :21118)")
 	fs.StringVar(&o.appLog, "applog", defaultAppLog(), "write a human-readable diagnostic log to `file` (\"\" = none)")
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Usage:\n  kkdesk -selftest\n  kkdesk -host [-autoaccept] [-fps N] [-bitrate Mbps] [-log file]\n  kkdesk -connect addr -password pw [-view-only] [-log file]\n\nFlags:\n")
+		fmt.Fprintf(fs.Output(), "Usage:\n  kkdesk -selftest\n  kkdesk -host [-autoaccept] [-fps N] [-bitrate Mbps] [-log file]\n  kkdesk -connect addr -password pw [-view-only | -files] [-log file]\n\nFlags:\n")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -48,6 +52,9 @@ func parseFlags(args []string) (options, *flag.FlagSet, error) {
 	}
 	if o.host && o.connect != "" {
 		return o, fs, fmt.Errorf("-host and -connect are mutually exclusive")
+	}
+	if o.files && o.connect == "" {
+		return o, fs, fmt.Errorf("-files needs -connect")
 	}
 	return o, fs, nil
 }
