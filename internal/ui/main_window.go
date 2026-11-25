@@ -28,6 +28,7 @@ import (
 
 	"github.com/tangoui/kkdesk/internal/app"
 	"github.com/tangoui/kkdesk/internal/config"
+	"github.com/tangoui/kkdesk/internal/rendezvous"
 )
 
 // Connection modes of the 控制其他电脑 form.
@@ -234,7 +235,11 @@ func (m *Main) sidebar(c *ui.Context, hs app.HostState) {
 				ui.Avatar(c, string([]rune(name)[:1])).Size(32)
 				ui.Column(c, func() {
 					ui.Text(c, name).Size(13).Weight(text.Weight(500)).Ellipsis()
-					ui.Text(c, "本机 · 局域网直连").Size(12).Tertiary().NoWrap()
+					connection := "本机 · 局域网直连"
+					if hs.RemoteCode != "" {
+						connection = "本机 · 跨网服务已连接"
+					}
+					ui.Text(c, connection).Size(12).Tertiary().NoWrap()
 				}, layout.Grow(1), layout.MinW(0))
 			}, layout.Gap(10), layout.Middle())
 			ui.Row(c, func() {
@@ -272,7 +277,7 @@ func (m *Main) connect(addr, pw, mode string) {
 	filesOnly := mode == modeTransfer
 	st := m.o.Store.Settings()
 	v := app.NewViewer(app.ViewerConfig{Addr: addr, Password: pw, ViewOnly: viewOnly, FilesOnly: filesOnly, Log: m.o.ViewerLog,
-		FPS: st.FPS, BitrateBps: st.BitrateMbps * 1_000_000}, nil)
+		FPS: st.FPS, BitrateBps: st.BitrateMbps * 1_000_000, Remote: rendezvous.Config{URL: st.RemoteURL, Token: st.RemoteToken}}, nil)
 	go func() {
 		err := v.Connect(context.Background())
 		m.mu.Lock()
@@ -285,10 +290,12 @@ func (m *Main) connect(addr, pw, mode string) {
 		if err != nil {
 			return
 		}
-		if _, err := m.o.Store.Connected(v.Addr(), time.Now()); err != nil {
-			log.Printf("kkdesk: address book: %v", err)
+		if !rendezvous.IsCode(addr) {
+			if _, err := m.o.Store.Connected(v.Addr(), time.Now()); err != nil {
+				log.Printf("kkdesk: address book: %v", err)
+			}
+			m.syncProbeTargets()
 		}
-		m.syncProbeTargets()
 		m.o.App.Post(func() {
 			m.addRecent(Recent{Addr: addr, At: time.Now(), ViewOnly: viewOnly && !filesOnly, Files: filesOnly})
 			onEnd := func(msg string) {

@@ -119,6 +119,10 @@ type videoEvent struct {
 }
 
 func newPeer(isHost, loopback bool, mode Mode) (*Peer, error) {
+	return newConfiguredPeer(isHost, loopback, mode, webrtc.Configuration{})
+}
+
+func newConfiguredPeer(isHost, loopback bool, mode Mode, config webrtc.Configuration) (*Peer, error) {
 	m := &webrtc.MediaEngine{}
 	fb := []webrtc.RTCPFeedback{{Type: "goog-remb"}, {Type: "ccm", Parameter: "fir"}, {Type: "nack"}, {Type: "nack", Parameter: "pli"}}
 	if err := m.RegisterCodec(webrtc.RTPCodecParameters{
@@ -135,7 +139,7 @@ func newPeer(isHost, loopback bool, mode Mode) (*Peer, error) {
 	se := webrtc.SettingEngine{}
 	se.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4})
 	se.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled)
-	se.SetIncludeLoopbackCandidate(true)
+	se.SetIncludeLoopbackCandidate(len(config.ICEServers) == 0)
 	if loopback {
 		// Self-connection: only offer 127.0.0.1 so ICE is fast and deterministic.
 		se.SetIPFilter(func(ip net.IP) bool { return ip.IsLoopback() })
@@ -143,8 +147,7 @@ func newPeer(isHost, loopback bool, mode Mode) (*Peer, error) {
 	se.SetICETimeouts(3*time.Second, 6*time.Second, time.Second)
 
 	api := webrtc.NewAPI(webrtc.WithMediaEngine(m), webrtc.WithInterceptorRegistry(ir), webrtc.WithSettingEngine(se))
-	// No ICE servers: host candidates only.
-	pc, err := api.NewPeerConnection(webrtc.Configuration{})
+	pc, err := api.NewPeerConnection(config)
 	if err != nil {
 		return nil, err
 	}

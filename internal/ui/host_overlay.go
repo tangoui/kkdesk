@@ -48,7 +48,9 @@ func (m *Main) confirm(c *ui.Context, hs app.HostState) {
 			ui.Avatar(c, "").Icon(antd.DesktopOutlined).Size(44).Bg(th.Primary.Bg)
 			ui.Column(c, func() {
 				ui.Text(c, hs.Peer+" "+what).Size(16).Strong()
-				ui.Text(c, "地址 "+hs.Peer+" · 局域网直连").Size(12).Tertiary()
+				if !hs.RemotePeer {
+					ui.Text(c, "地址 "+hs.Peer+" · 局域网直连").Size(12).Tertiary()
+				}
 			}, layout.Gap(2), layout.Grow(1), layout.MinW(0))
 		}, layout.Gap(12), layout.Middle())
 	}).Footer(func() {

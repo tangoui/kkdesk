@@ -27,6 +27,7 @@ import (
 	"github.com/tangoui/kkdesk/internal/files"
 	"github.com/tangoui/kkdesk/internal/inject"
 	"github.com/tangoui/kkdesk/internal/input"
+	"github.com/tangoui/kkdesk/internal/rendezvous"
 	"github.com/tangoui/kkdesk/internal/session"
 	"github.com/tangoui/kkdesk/internal/stats"
 )
@@ -67,6 +68,7 @@ type HostConfig struct {
 	BitrateMbps int // 0 = auto
 	Log         io.Writer
 	AutoAccept  bool
+	Remote      rendezvous.Config
 }
 
 // HostPhase is what the host is doing.
@@ -102,6 +104,9 @@ type HostState struct {
 	// FileAccess: the controller may browse and transfer files (the
 	// 文件传输 permission).
 	FileAccess bool
+	RemoteCode string
+	RemoteErr  string
+	RemotePeer bool
 }
 
 // Host accepts controllers and streams this screen to one at a time. Its
@@ -110,25 +115,28 @@ type Host struct {
 	cfg    HostConfig
 	notify func()
 
-	mu       sync.Mutex
-	password string
-	pwSince  time.Time
-	pwTimer  *time.Timer // timed rotation
-	ln       *session.Host
-	cancel   context.CancelFunc
-	phase    HostPhase
-	peer     *session.Peer
-	since    time.Time
-	decide   chan bool
-	errMsg   string
-	notice   string
-	busy     bool
-	wg       sync.WaitGroup
-	addrs    []string
-	stopOnce sync.Once
-	fsrv     *files.Server // file server of the current session
-	wantOn   bool          // SetEnabled(true) and not turned off since
-	retry    *time.Timer   // next listen attempt while the port is busy
+	mu         sync.Mutex
+	password   string
+	pwSince    time.Time
+	pwTimer    *time.Timer // timed rotation
+	ln         *session.Host
+	cancel     context.CancelFunc
+	phase      HostPhase
+	peer       *session.Peer
+	since      time.Time
+	decide     chan bool
+	errMsg     string
+	notice     string
+	busy       bool
+	wg         sync.WaitGroup
+	addrs      []string
+	stopOnce   sync.Once
+	fsrv       *files.Server // file server of the current session
+	wantOn     bool          // SetEnabled(true) and not turned off since
+	retry      *time.Timer   // next listen attempt while the port is busy
+	remote     remoteHostState
+	closed     bool
+	remotePeer bool
 
 	fileAccess atomic.Bool // the 文件传输 permission; on by default
 }
@@ -152,6 +160,9 @@ func NewHost(cfg HostConfig, notify func()) *Host {
 		cfg.Rotate = config.RotateNever
 	}
 	h := &Host{cfg: cfg, notify: notify, addrs: LocalIPv4()}
+	if cfg.Remote.URL != "" {
+		h.remote.code = rendezvous.NewCode()
+	}
 	h.fileAccess.Store(true)
 	h.mu.Lock()
 	if cfg.Password == "" {
@@ -358,6 +369,10 @@ func (h *Host) State() HostState {
 	s := HostState{Phase: h.phase, Addrs: h.addrs, Port: Port, Password: h.password, Err: h.errMsg, Notice: h.notice,
 		FileAccess: h.fileAccess.Load(), Enabled: h.wantOn, PasswordSince: h.pwSince, Rotate: h.cfg.Rotate,
 		HasFixed: h.cfg.Fixed != "", AutoAccept: h.cfg.AutoAccept}
+	if h.remote.online {
+		s.RemoteCode = h.remote.code
+	}
+	s.RemoteErr = h.remote.err
 	if tcp, err := net.ResolveTCPAddr("tcp", h.cfg.Addr); err == nil && tcp.Port != 0 {
 		s.Port = tcp.Port
 	}
@@ -368,6 +383,7 @@ func (h *Host) State() HostState {
 	}
 	if h.peer != nil {
 		s.Peer = h.peer.RemoteAddr()
+		s.RemotePeer = h.remotePeer
 		s.Since = h.since
 		s.FilesOnly = h.peer.Mode() == session.ModeFiles
 		if h.phase == HostPending {
@@ -383,17 +399,19 @@ func (h *Host) SetEnabled(on bool) error {
 	h.mu.Lock()
 	defer h.notify()
 	defer h.mu.Unlock()
-	if on == h.wantOn && (!on || h.ln != nil || h.retry != nil) {
+	if h.closed || (on == h.wantOn && (!on || h.ln != nil || h.retry != nil)) {
 		return nil
 	}
 	h.wantOn = on
 	if !on {
 		h.stopLocked()
+		h.stopRemoteLocked()
 		if !h.busy {
 			h.phase = HostOff
 		}
 		return nil
 	}
+	h.startRemoteLocked()
 	return h.startLocked()
 }
 
@@ -581,7 +599,9 @@ func (h *Host) Disconnect() {
 func (h *Host) Close() {
 	h.stopOnce.Do(func() {
 		h.mu.Lock()
+		h.closed = true
 		h.stopLocked()
+		h.stopRemoteLocked()
 		if h.pwTimer != nil {
 			h.pwTimer.Stop()
 			h.pwTimer = nil
@@ -609,14 +629,19 @@ func (h *Host) acceptLoop(ctx context.Context, ln *session.Host) {
 		h.wg.Add(1)
 		go func() {
 			defer h.wg.Done()
-			h.handle(p)
+			h.handle(p, nil)
 		}()
 	}
 }
 
 // handle runs one incoming peer: busy check, confirmation, session.
-func (h *Host) handle(p *session.Peer) {
+func (h *Host) handle(p *session.Peer, remoteCtx context.Context) {
 	h.mu.Lock()
+	if h.closed || (remoteCtx != nil && (remoteCtx.Err() != nil || !h.wantOn)) {
+		h.mu.Unlock()
+		p.CloseWithReason("被控端已关闭远程连接")
+		return
+	}
 	if h.busy {
 		h.mu.Unlock()
 		p.CloseWithReason("对方正在被其他设备控制")
@@ -624,9 +649,10 @@ func (h *Host) handle(p *session.Peer) {
 	}
 	h.busy = true
 	h.peer, h.since = p, time.Now()
+	h.remotePeer = remoteCtx != nil
 	h.notice = ""
 	var ch chan bool
-	if !h.cfg.AutoAccept {
+	if remoteCtx != nil || !h.cfg.AutoAccept {
 		ch = make(chan bool, 1)
 		h.decide = ch
 		h.phase = HostPending
@@ -639,11 +665,12 @@ func (h *Host) handle(p *session.Peer) {
 		p.Close()
 		h.mu.Lock()
 		h.busy, h.peer, h.decide, h.fsrv = false, nil, nil, nil
+		h.remotePeer = false
 		if accepted && h.cfg.Rotate == config.RotateAfterSession {
 			h.newPasswordLocked() // 每次连接后更换
 			log.Printf("kkdesk host: temporary password rotated after the session")
 		}
-		if h.ln != nil {
+		if h.ln != nil || h.remote.online {
 			h.phase = HostListening
 		} else {
 			h.phase = HostOff
@@ -653,6 +680,10 @@ func (h *Host) handle(p *session.Peer) {
 	}()
 
 	if ch != nil {
+		var disabled <-chan struct{}
+		if remoteCtx != nil {
+			disabled = remoteCtx.Done()
+		}
 		t := time.NewTimer(ConfirmTimeout)
 		defer t.Stop()
 		ok := false
@@ -661,8 +692,9 @@ func (h *Host) handle(p *session.Peer) {
 		case <-t.C:
 		case <-p.Done():
 			return
+		case <-disabled:
 		}
-		if !ok {
+		if !ok || (remoteCtx != nil && remoteCtx.Err() != nil) {
 			p.CloseWithReason("对方拒绝了连接请求")
 			return
 		}

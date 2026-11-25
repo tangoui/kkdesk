@@ -1,0 +1,77 @@
+package app
+
+import (
+	"context"
+	"net"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/tangoui/kkdesk/internal/rendezvous"
+)
+
+func TestRemoteFileSession(t *testing.T) {
+	const token = "test-enrollment-token-of-sufficient-length"
+	const secret = "test-relay-secret-of-sufficient-length"
+	relay, err := rendezvous.StartRelay(rendezvous.RelayConfig{
+		UDPAddr: "127.0.0.1:0", BindIP: "127.0.0.1", PublicIP: net.IPv4(127, 0, 0, 1),
+		MinPort: 49160, MaxPort: 49259, Secret: secret,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer relay.Close()
+	for _, tc := range []struct {
+		name      string
+		relayOnly bool
+	}{{"direct", false}, {"TURN", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			signaling, err := rendezvous.NewServer(token, secret, []string{"turn:" + relay.UDPAddr.String()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			signaling.RelayOnly = tc.relayOnly
+			server := httptest.NewServer(signaling)
+			defer server.Close()
+			cfg := rendezvous.Config{URL: server.URL, Token: token}
+			h := NewHost(HostConfig{Addr: "127.0.0.1:0", AutoAccept: true, Remote: cfg}, nil)
+			if err := h.SetEnabled(true); err != nil {
+				t.Fatal(err)
+			}
+			defer h.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+			defer cancel()
+			for h.State().RemoteCode == "" && ctx.Err() == nil {
+				time.Sleep(10 * time.Millisecond)
+			}
+			code := h.State().RemoteCode
+			if code == "" {
+				t.Fatalf("device did not register: %+v", h.State())
+			}
+			v := NewViewer(ViewerConfig{Addr: code, FilesOnly: true, Remote: cfg}, nil)
+			defer v.Close()
+			if err := v.Connect(ctx); err != nil {
+				t.Fatal(err)
+			}
+			for h.State().Phase != HostPending && ctx.Err() == nil {
+				time.Sleep(10 * time.Millisecond)
+			}
+			if state := h.State(); state.Phase != HostPending || !state.RemotePeer {
+				t.Fatalf("remote request must wait for confirmation: %+v", state)
+			}
+			h.mu.Lock()
+			servingFiles := h.fsrv != nil
+			h.mu.Unlock()
+			if servingFiles {
+				t.Fatal("file access started before confirmation")
+			}
+			h.Accept()
+			if _, err := v.Files().Home(ctx); err != nil {
+				t.Fatalf("file request failed: %v", err)
+			}
+			if v.State().Relayed != tc.relayOnly {
+				t.Fatalf("relayed = %v, want %v", v.State().Relayed, tc.relayOnly)
+			}
+		})
+	}
+}

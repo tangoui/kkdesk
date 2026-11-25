@@ -17,6 +17,7 @@ import (
 	"github.com/tangoui/kkdesk/internal/display"
 	"github.com/tangoui/kkdesk/internal/files"
 	"github.com/tangoui/kkdesk/internal/input"
+	"github.com/tangoui/kkdesk/internal/rendezvous"
 	"github.com/tangoui/kkdesk/internal/session"
 	"github.com/tangoui/kkdesk/internal/stats"
 )
@@ -38,6 +39,7 @@ type ViewerConfig struct {
 	// BitrateBps is automatic.
 	FPS        int
 	BitrateBps int
+	Remote     rendezvous.Config
 }
 
 // ViewerPhase is the viewer's connection state.
@@ -59,6 +61,7 @@ type ViewerState struct {
 	BitrateBps int // 0 = auto
 	FPS        int
 	Stats      stats.Second // latest per-second aggregate
+	Relayed    bool
 }
 
 // Viewer connects to a host and shows its screen. Methods are safe for
@@ -77,6 +80,7 @@ type Viewer struct {
 	bitrate  int
 	fps      int
 	closing  bool
+	relayed  bool
 	onEnd    []func()
 	files    *files.Client
 	since    time.Time // connected at
@@ -92,7 +96,9 @@ type Viewer struct {
 // NewViewer returns a viewer for cfg. notify is called from any goroutine
 // when the state changes.
 func NewViewer(cfg ViewerConfig, notify func()) *Viewer {
-	if _, _, err := net.SplitHostPort(cfg.Addr); err != nil {
+	if rendezvous.IsCode(cfg.Addr) {
+		cfg.Addr = rendezvous.NormalizeCode(cfg.Addr)
+	} else if _, _, err := net.SplitHostPort(cfg.Addr); err != nil {
 		cfg.Addr = net.JoinHostPort(cfg.Addr, fmt.Sprint(Port))
 	}
 	if cfg.Log == nil {
@@ -170,15 +176,33 @@ func (v *Viewer) Files() *files.Client {
 // Connect dials the host. It blocks until the session is established or
 // fails; on failure the state is ViewerClosed with a user-facing Err.
 func (v *Viewer) Connect(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, DialTimeout)
+	isRemote := rendezvous.IsCode(v.cfg.Addr)
+	dialTimeout := DialTimeout
+	if isRemote {
+		dialTimeout = 45 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, dialTimeout)
 	defer cancel()
 	mode := session.ModeDesktop
 	if v.cfg.FilesOnly {
 		mode = session.ModeFiles
 	}
-	p, err := session.DialWithOptions(ctx, v.cfg.Addr, v.cfg.Password, session.DialOptions{Mode: mode})
+	var p *session.Peer
+	var err error
+	if isRemote {
+		if v.cfg.Remote.URL == "" {
+			err = errors.New("请先在「设置 › 网络」配置跨网服务")
+		} else {
+			p, err = session.DialRemote(ctx, v.cfg.Remote, v.cfg.Addr, mode)
+		}
+	} else {
+		p, err = session.DialWithOptions(ctx, v.cfg.Addr, v.cfg.Password, session.DialOptions{Mode: mode})
+	}
 	if err != nil {
 		msg := DialError(v.cfg.Addr, err)
+		if isRemote {
+			msg = fmt.Sprintf("跨网连接失败：%v", err)
+		}
 		v.end(msg)
 		return errors.New(msg)
 	}
@@ -192,6 +216,7 @@ func (v *Viewer) Connect(ctx context.Context) error {
 		return errors.New("已取消")
 	}
 	v.peer, v.phase, v.since = p, ViewerWaiting, time.Now()
+	v.relayed = isRemote && p.Relayed()
 	fps, bps := v.fps, v.bitrate
 	v.mu.Unlock()
 	p.OnVideo(v.video)
@@ -303,7 +328,7 @@ func (v *Viewer) Close() {
 func (v *Viewer) State() ViewerState {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	s := ViewerState{Phase: v.phase, Addr: v.cfg.Addr, Err: v.errMsg, ViewOnly: v.viewOnly, BitrateBps: v.bitrate, FPS: v.fps}
+	s := ViewerState{Phase: v.phase, Addr: v.cfg.Addr, Err: v.errMsg, ViewOnly: v.viewOnly, BitrateBps: v.bitrate, FPS: v.fps, Relayed: v.relayed}
 	if v.rec != nil {
 		s.Stats = v.rec.Last()
 	}

@@ -128,7 +128,11 @@ type gotFrame struct {
 
 func TestVideoAndInput(t *testing.T) {
 	host, ctl := connect(t)
+	testVideoAndInput(t, host, ctl)
+}
 
+func testVideoAndInput(t *testing.T, host, ctl *Peer) {
+	t.Helper()
 	frames := syntheticFrames()
 	got := make(chan gotFrame, len(frames))
 	ctl.OnVideo(func(frame []byte, captureAt time.Time) {

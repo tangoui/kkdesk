@@ -26,6 +26,7 @@ import (
 
 	"github.com/tangoui/kkdesk/internal/app"
 	"github.com/tangoui/kkdesk/internal/config"
+	"github.com/tangoui/kkdesk/internal/rendezvous"
 	appui "github.com/tangoui/kkdesk/internal/ui"
 )
 
@@ -155,7 +156,9 @@ func run(o options) error {
 			openMain(false, "")
 			return
 		}
-		viewer = app.NewViewer(app.ViewerConfig{Addr: o.connect, Password: o.password, ViewOnly: o.viewOnly, FilesOnly: o.files, Log: logw}, nil)
+		settings := store.Settings()
+		viewer = app.NewViewer(app.ViewerConfig{Addr: o.connect, Password: o.password, ViewOnly: o.viewOnly, FilesOnly: o.files, Log: logw,
+			Remote: rendezvous.Config{URL: settings.RemoteURL, Token: settings.RemoteToken}}, nil)
 		go func() {
 			if err := viewer.Connect(context.Background()); err != nil {
 				fmt.Fprintln(os.Stderr, "kkdesk:", err)
@@ -244,6 +247,7 @@ func hostConfig(o options, store *config.Store, logw io.Writer) app.HostConfig {
 		BitrateMbps: st.BitrateMbps,
 		Log:         logw,
 		AutoAccept:  o.autoAccept || !st.Confirm,
+		Remote:      rendezvous.Config{URL: st.RemoteURL, Token: st.RemoteToken},
 	}
 	if cfg.Addr == "" {
 		cfg.Addr = fmt.Sprintf(":%d", st.Port)

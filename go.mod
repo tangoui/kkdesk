@@ -16,7 +16,6 @@ require (
 	github.com/pion/srtp/v3 v3.0.10 // indirect
 	github.com/pion/stun/v3 v3.1.1 // indirect
 	github.com/pion/transport/v4 v4.0.1 // indirect
-	github.com/pion/turn/v4 v4.1.4 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/image v0.47.0 // indirect
@@ -25,10 +24,12 @@ require (
 )
 
 require (
+	github.com/coder/websocket v1.8.14
 	github.com/pion/ice/v4 v4.2.2
 	github.com/pion/interceptor v0.1.44
 	github.com/pion/rtcp v1.2.16
 	github.com/pion/rtp v1.10.1
+	github.com/pion/turn/v4 v4.1.4
 	github.com/pion/webrtc/v4 v4.2.11
 	github.com/tangoui/tango v0.2.2-0.20261124110843-ed116886df41
 	golang.org/x/sys v0.49.0

@@ -12,6 +12,7 @@ import (
 	"github.com/tangoui/tango/ui/text"
 
 	"github.com/tangoui/kkdesk/internal/app"
+	"github.com/tangoui/kkdesk/internal/rendezvous"
 )
 
 var (
@@ -73,6 +74,7 @@ func (m *Main) hostCard(c *ui.Context, hs app.HostState) {
 				}, layout.Gap(4), layout.Middle())
 			}
 		}, layout.Gap(4), layout.PadVH(12, 0))
+		m.remoteDeviceCode(c, hs)
 		hline(c)
 		// 临时密码
 		ui.Column(c, func() {
@@ -177,22 +179,31 @@ func (m *Main) connectCard(c *ui.Context) {
 	}
 	m.mu.Unlock()
 	st := m.o.Form
+	hasRemote := m.o.Store.Settings().RemoteURL != ""
 	panel(c, func() {
-		cardHead(c, "控制其他电脑", "输入对方的地址和临时密码。仅支持局域网内直连。")
+		description, placeholder := "输入对方的地址和临时密码。", "例如 192.168.1.20"
+		if hasRemote {
+			description, placeholder = "输入局域网地址或对方的跨网设备码。", "例如 192.168.1.20 或 KD-…"
+		}
+		cardHead(c, "控制其他电脑", description)
 		ui.Column(c, func() {
 			ui.Text(c, "对方地址").Size(13).Secondary()
-			ui.Input(c, &st.PeerAddr).Size(ui.Large).Placeholder("例如 192.168.1.20").A11yLabel("对方地址")
+			ui.Input(c, &st.PeerAddr).Size(ui.Large).Placeholder(placeholder).A11yLabel("对方地址")
 		}, layout.Gap(8))
+		addr := strings.TrimSpace(st.PeerAddr)
 		var submit bool
-		ui.Column(c, func() {
-			ui.Text(c, "临时密码").Size(13).Secondary()
-			submit = ui.Input(c, &st.Password).Size(ui.Large).Password().Placeholder("6 位数字").A11yLabel("临时密码").Submitted()
-		}, layout.Gap(8), layout.Padding(insets(6, 0, 0, 0)))
+		if rendezvous.IsCode(addr) {
+			ui.Text(c, "连接需要对方确认。").Size(13).Secondary()
+		} else {
+			ui.Column(c, func() {
+				ui.Text(c, "临时密码").Size(13).Secondary()
+				submit = ui.Input(c, &st.Password).Size(ui.Large).Password().Placeholder("6 位数字").A11yLabel("临时密码").Submitted()
+			}, layout.Gap(8), layout.Padding(insets(6, 0, 0, 0)))
+		}
 		ui.Row(c, func() {
 			ui.Text(c, "连接方式").Size(13).Tertiary()
 			ui.Segmented(c, &st.Mode, modeOpts).A11yLabel("连接方式")
 		}, layout.Gap(12), layout.Middle(), layout.WrapItems(), layout.Padding(insets(8, 0, 0, 0)))
-		addr := strings.TrimSpace(st.PeerAddr)
 		b := ui.Button(c, "连接").AutoInsertSpace(false).Primary().Large().Block().Loading(connecting).Disabled(addr == "")
 		b.Layout(layout.Margin(insets(8, 0, 0, 0)))
 		if (b.Clicked() || submit) && !connecting && addr != "" {
@@ -201,7 +212,9 @@ func (m *Main) connectCard(c *ui.Context) {
 		if errMsg != "" {
 			ui.Alert(c, "error", errMsg).ShowIcon(true).Show()
 		}
-		ui.Text(c, "点对点直连，画面和操作不经过任何服务器；跨网络的中继连接后续提供。").Size(12).Tertiary()
+		if !hasRemote {
+			ui.Text(c, "可在「设置 › 网络」配置跨网服务。").Size(12).Tertiary()
+		}
 	}, layout.Grow(1), layout.Basis(340), layout.Pad(20), layout.Gap(8))
 }
 

@@ -67,6 +67,8 @@ type Settings struct {
 	BitrateMbps   int    `json:"bitrateMbps"` // 0 = automatic
 	Port          int    `json:"port"`
 	Theme         string `json:"theme"`
+	RemoteURL     string `json:"remoteURL,omitempty"`
+	RemoteToken   string `json:"remoteToken,omitempty"`
 }
 
 // Defaults are the settings of a new installation.

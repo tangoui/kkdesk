@@ -135,7 +135,11 @@ func (w *sessionWin) strip(c *ui.Context, st app.ViewerState) {
 				ms := int(s.LatencyP50.Milliseconds())
 				dot(c, th.Success.Base, 6)
 				mono(c, fmt.Sprintf("%d ms", ms), 12, 500, latencyColor(th, ms))
-				mono(c, fmt.Sprintf("%.0f fps · %.1f Mbps · 直连", s.FPS, s.BitrateBps/1e6), 12, 400, th.TextTertiary)
+				path := "直连"
+				if st.Relayed {
+					path = "中继"
+				}
+				mono(c, fmt.Sprintf("%.0f fps · %.1f Mbps · %s", s.FPS, s.BitrateBps/1e6, path), 12, 400, th.TextTertiary)
 				c.WakeAt(time.Now().Add(500 * time.Millisecond))
 			}
 			b := ui.Button(c, "控制中心").Icon(icon.Sliders).Small().Disabled(st.Phase == app.ViewerClosed)
@@ -201,18 +205,11 @@ func (w *sessionWin) popupMenu(x, y int, st app.ViewerState) {
 	}
 	v := w.v
 	m := menu.New()
-	q := m.Submenu("画质")
-	for _, b := range bitrates {
-		q.Radio(b.label, "bitrate", st.BitrateBps == b.bps, func() { v.SetQuality(b.bps, st.FPS) })
-	}
-	f := m.Submenu("帧率")
-	for _, fps := range frameRates {
-		f.Radio(fmt.Sprintf("%d fps", fps), "fps", st.FPS == fps, func() { v.SetQuality(st.BitrateBps, fps) })
-	}
+	addQualityMenus(m, v, st)
 	m.Separator()
 	m.Check("真彩", false, nil).SetDisabled(true)
 	m.Check("HDR", false, nil).SetDisabled(true)
-	m.Check("中继连接", false, nil).SetDisabled(true)
+	m.Check("中继连接", st.Relayed, nil).SetDisabled(true)
 	m.Separator()
 	m.Check("仅查看", st.ViewOnly, func() { v.SetViewOnly(!st.ViewOnly) })
 	m.Separator()
@@ -235,6 +232,17 @@ func (w *sessionWin) popupMenu(x, y int, st app.ViewerState) {
 		}
 		w.invalidate()
 	}()
+}
+
+func addQualityMenus(m *menu.Menu, v *app.Viewer, st app.ViewerState) {
+	quality := m.Submenu("画质")
+	for _, b := range bitrates {
+		quality.Radio("bitrate", b.label, st.BitrateBps == b.bps, func() { v.SetQuality(b.bps, st.FPS) })
+	}
+	rate := m.Submenu("帧率")
+	for _, fps := range frameRates {
+		rate.Radio("fps", fmt.Sprintf("%d fps", fps), st.FPS == fps, func() { v.SetQuality(st.BitrateBps, fps) })
+	}
 }
 
 // screen is the remote screen: a native video view over a box that reads

@@ -19,12 +19,13 @@ import (
 // settingsState is the 设置 page: the selected group and the drafts of the
 // fields that are applied with a button (fixed password, port).
 type settingsState struct {
-	tab      string
-	fixed    string
-	fixedErr string
-	port     float64
-	portErr  string
-	saved    int // st.Port the draft was taken from
+	tab                               string
+	fixed                             string
+	fixedErr                          string
+	port                              float64
+	portErr                           string
+	saved                             int // st.Port the draft was taken from
+	remoteURL, remoteToken, remoteErr string
 
 	// bound controls, refreshed from the store every frame
 	rotate, fps, bitrate, theme string
@@ -34,6 +35,7 @@ type settingsState struct {
 func (s *settingsState) init(st config.Settings) {
 	s.tab = "security"
 	s.port, s.saved = float64(st.Port), st.Port
+	s.remoteURL, s.remoteToken = st.RemoteURL, st.RemoteToken
 }
 
 var settingsNav = []ui.MenuItem{
@@ -247,6 +249,8 @@ func (m *Main) networkSettings(c *ui.Context, f *ui.FormW, hs app.HostState) {
 			}
 		}, layout.Gap(4), layout.Padding(insets(5, 0, 0, 0)))
 	})
+	helpGap(c)
+	m.remoteSettings(c, f)
 }
 
 // applyPort saves the port and restarts the listener on it.
