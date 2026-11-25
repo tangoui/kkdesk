@@ -288,7 +288,8 @@ func DialWithOptions(ctx context.Context, addr, password string, opts DialOption
 // reset), as opposed to a timeout or garbage.
 func closedEarly(err error) bool {
 	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
-		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, net.ErrClosed)
+		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, net.ErrClosed) ||
+		closedEarlyOS(err)
 }
 
 func isLoopback(a net.Addr) bool {
