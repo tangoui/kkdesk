@@ -1,5 +1,5 @@
 name: kkdesk_mobile
-description: "A new Flutter project."
+description: kkdesk 手机端
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -33,11 +33,20 @@ dependencies:
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
+  flutter_localizations:
+    sdk: flutter
   cupertino_icons: ^1.0.8
   flutter_webrtc: 1.6.3
   crypto: ^3.0.8
+  mobile_scanner: ^7.5.0
+  image_picker: ^1.2.1
+  local_auth: ^3.0.2
+  flutter_slidable: ^4.0.3
+  shared_preferences: ^2.5.6
 
 dev_dependencies:
+  flutter_driver:
+    sdk: flutter
   flutter_test:
     sdk: flutter
 
@@ -58,6 +67,8 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+  assets:
+    - assets/demo_desktop.jpg
 
   # To add assets to your application, add an assets section, like this:
   # assets:

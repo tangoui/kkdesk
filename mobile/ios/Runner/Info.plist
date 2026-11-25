@@ -24,6 +24,12 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<key>NSCameraUsageDescription</key>
+	<string>扫描电脑端 kkdesk 的配对二维码。</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>从相册选择 kkdesk 的配对二维码截图。</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>使用面容 ID 解锁 kkdesk 并确认免确认连接。</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>连接到同一局域网中运行 kkdesk 的电脑。</string>
 	<key>LSRequiresIPhoneOS</key>

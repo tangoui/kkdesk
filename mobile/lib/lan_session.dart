@@ -8,6 +8,8 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import 'lan_protocol.dart';
 
+part 'lan_session_mobile_controls.dart';
+
 const _exchangeTimeout = Duration(seconds: 12);
 const _measure = bool.fromEnvironment('KKDESK_SPIKE_METRICS');
 const _probeChannel = MethodChannel('kkdesk/spike');
