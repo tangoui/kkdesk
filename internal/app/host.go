@@ -22,6 +22,7 @@ import (
 
 	"github.com/tangoui/kkdesk/internal/capture"
 	"github.com/tangoui/kkdesk/internal/codec"
+	"github.com/tangoui/kkdesk/internal/config"
 	"github.com/tangoui/kkdesk/internal/files"
 	"github.com/tangoui/kkdesk/internal/inject"
 	"github.com/tangoui/kkdesk/internal/input"
@@ -42,11 +43,23 @@ const AutoBitrate = 8_000_000
 
 // HostConfig configures a Host.
 type HostConfig struct {
-	Addr        string // listen address; default ":21118"
-	Password    string // fixed password; empty generates a 6-digit one
-	FPS         int    // capture frame rate
-	MaxWidth    int    // capture width limit; 0 = native
-	BitrateMbps int    // 0 = auto
+	Addr string // listen address; default ":21118"
+	// Password is the temporary password; empty generates a 6-digit one.
+	// PasswordSince is when it was made (zero: now), for a timed Rotate.
+	Password      string
+	PasswordSince time.Time
+	// Fixed is the fixed password (设置 › 安全), accepted next to the
+	// temporary one; "" for none.
+	Fixed string
+	// Rotate is the temporary password policy (config.Rotate*); "" is
+	// config.RotateNever.
+	Rotate string
+	// OnPassword is called with every new temporary password (to save
+	// it). It runs with the host locked: it must not call the host.
+	OnPassword  func(config.TempPassword)
+	FPS         int // capture frame rate
+	MaxWidth    int // capture width limit; 0 = native
+	BitrateMbps int // 0 = auto
 	Log         io.Writer
 	AutoAccept  bool
 }
@@ -67,12 +80,17 @@ type HostState struct {
 	Phase    HostPhase
 	Addrs    []string // local IPv4 addresses
 	Port     int
-	Password string
-	Peer     string    // remote address while pending or active
-	Since    time.Time // active: session start; pending: request time
-	Deadline time.Time // pending: automatic rejection
-	Err      string    // last error or permission guidance
-	Notice   string    // informational message (e.g. last session ended)
+	Password string // temporary password
+	// PasswordSince is when the temporary password was made.
+	PasswordSince time.Time
+	Rotate        string    // temporary password policy (config.Rotate*)
+	HasFixed      bool      // a fixed password is set
+	AutoAccept    bool      // connections are accepted without asking
+	Peer          string    // remote address while pending or active
+	Since         time.Time // active: session start; pending: request time
+	Deadline      time.Time // pending: automatic rejection
+	Err           string    // last error or permission guidance
+	Notice        string    // informational message (e.g. last session ended)
 	// FilesOnly: the controller connected only to transfer files (no
 	// screen is shared).
 	FilesOnly bool
@@ -89,6 +107,8 @@ type Host struct {
 
 	mu       sync.Mutex
 	password string
+	pwSince  time.Time
+	pwTimer  *time.Timer // timed rotation
 	ln       *session.Host
 	cancel   context.CancelFunc
 	phase    HostPhase
@@ -123,13 +143,127 @@ func NewHost(cfg HostConfig, notify func()) *Host {
 	if notify == nil {
 		notify = func() {}
 	}
-	pw := cfg.Password
-	if pw == "" {
-		pw = NewPassword()
+	if cfg.Rotate == "" {
+		cfg.Rotate = config.RotateNever
 	}
-	h := &Host{cfg: cfg, notify: notify, password: pw, addrs: LocalIPv4()}
+	h := &Host{cfg: cfg, notify: notify, addrs: LocalIPv4()}
 	h.fileAccess.Store(true)
+	h.mu.Lock()
+	if cfg.Password == "" {
+		h.newPasswordLocked()
+	} else {
+		h.password, h.pwSince = cfg.Password, cfg.PasswordSince
+		if h.pwSince.IsZero() {
+			h.pwSince = time.Now()
+		}
+		h.scheduleLocked() // a saved password may be due already
+	}
+	h.mu.Unlock()
 	return h
+}
+
+// newPasswordLocked makes a new temporary password: the listener accepts
+// it (and no longer the old one) from the next connection on.
+func (h *Host) newPasswordLocked() {
+	h.password, h.pwSince = NewPassword(), time.Now()
+	if h.ln != nil {
+		h.ln.SetPasswords(h.password, h.cfg.Fixed)
+	}
+	if h.cfg.OnPassword != nil {
+		h.cfg.OnPassword(config.TempPassword{Password: h.password, Since: h.pwSince})
+	}
+	h.scheduleLocked()
+}
+
+// scheduleLocked arms the timer of a timed rotation policy, or rotates at
+// once when the password is due.
+func (h *Host) scheduleLocked() {
+	if h.pwTimer != nil {
+		h.pwTimer.Stop()
+		h.pwTimer = nil
+	}
+	every := config.RotateEvery(h.cfg.Rotate)
+	if every <= 0 {
+		return
+	}
+	d := time.Until(h.pwSince.Add(every))
+	if d <= 0 {
+		h.newPasswordLocked()
+		return
+	}
+	h.pwTimer = time.AfterFunc(d, func() {
+		h.mu.Lock()
+		due := config.RotateEvery(h.cfg.Rotate) > 0 && !time.Now().Before(h.pwSince.Add(config.RotateEvery(h.cfg.Rotate)))
+		if due {
+			h.newPasswordLocked()
+		}
+		h.mu.Unlock()
+		if due {
+			log.Printf("kkdesk host: temporary password rotated (%s)", h.cfg.Rotate)
+			h.notify()
+		}
+	})
+}
+
+// SetRotate changes the temporary password policy (config.Rotate*). A
+// timed policy whose period already passed rotates at once.
+func (h *Host) SetRotate(policy string) {
+	h.mu.Lock()
+	h.cfg.Rotate = policy
+	h.scheduleLocked()
+	h.mu.Unlock()
+	h.notify()
+}
+
+// SetFixedPassword sets the fixed password ("" clears it). The old one
+// stops working at the next connection; running sessions go on.
+func (h *Host) SetFixedPassword(pw string) {
+	h.mu.Lock()
+	h.cfg.Fixed = pw
+	if h.ln != nil {
+		h.ln.SetPasswords(h.password, pw)
+	}
+	h.mu.Unlock()
+	h.notify()
+}
+
+// SetAutoAccept turns the confirmation of incoming connections off (true)
+// or on; it applies to the next connection.
+func (h *Host) SetAutoAccept(on bool) {
+	h.mu.Lock()
+	h.cfg.AutoAccept = on
+	h.mu.Unlock()
+	h.notify()
+}
+
+// SetQuality sets the frame rate and bitrate (Mbps, 0 = auto) the next
+// session starts with; the controller may still change them.
+func (h *Host) SetQuality(fps, bitrateMbps int) {
+	h.mu.Lock()
+	if fps > 0 {
+		h.cfg.FPS = fps
+	}
+	h.cfg.BitrateMbps = bitrateMbps
+	h.mu.Unlock()
+}
+
+// SetAddr changes the listen address. If the host listens (or retries a
+// busy port) it restarts the listener on the new address; a running
+// session is not affected and the new address only serves later
+// connections.
+func (h *Host) SetAddr(addr string) error {
+	h.mu.Lock()
+	defer h.notify()
+	defer h.mu.Unlock()
+	if addr == h.cfg.Addr {
+		return nil
+	}
+	h.cfg.Addr = addr
+	if !h.wantOn {
+		return nil
+	}
+	h.stopLocked()
+	return h.startLocked()
 }
 
 // FileAccess reports whether the controller may browse and transfer files.
@@ -232,7 +366,8 @@ func (h *Host) State() HostState {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	s := HostState{Phase: h.phase, Addrs: h.addrs, Port: Port, Password: h.password, Err: h.errMsg, Notice: h.notice,
-		FileAccess: h.fileAccess.Load(), Enabled: h.wantOn}
+		FileAccess: h.fileAccess.Load(), Enabled: h.wantOn, PasswordSince: h.pwSince, Rotate: h.cfg.Rotate,
+		HasFixed: h.cfg.Fixed != "", AutoAccept: h.cfg.AutoAccept}
 	if tcp, err := net.ResolveTCPAddr("tcp", h.cfg.Addr); err == nil && tcp.Port != 0 {
 		s.Port = tcp.Port
 	}
@@ -272,7 +407,7 @@ func (h *Host) SetEnabled(on bool) error {
 var listenRetryEvery = time.Second
 
 func (h *Host) startLocked() error {
-	ln, err := session.Listen(h.cfg.Addr, h.password)
+	ln, err := session.Listen(h.cfg.Addr, h.password, h.cfg.Fixed)
 	if err != nil {
 		if addrInUse(err) {
 			// The port is often held by a process that is exiting (a hot
@@ -350,17 +485,13 @@ func (h *Host) ListenAddr() string {
 	return h.ln.Addr().String()
 }
 
-// RefreshPassword generates a new password and restarts the listener with
-// it. An active session is not affected.
+// RefreshPassword generates a new temporary password; the old one stops
+// working at once. An active session is not affected.
 func (h *Host) RefreshPassword() {
 	h.mu.Lock()
-	defer h.notify()
-	defer h.mu.Unlock()
-	h.password = NewPassword()
-	if h.ln != nil {
-		h.stopLocked()
-		h.startLocked()
-	}
+	h.newPasswordLocked()
+	h.mu.Unlock()
+	h.notify()
 }
 
 // Accept accepts the pending connection.
@@ -394,6 +525,10 @@ func (h *Host) Close() {
 	h.stopOnce.Do(func() {
 		h.mu.Lock()
 		h.stopLocked()
+		if h.pwTimer != nil {
+			h.pwTimer.Stop()
+			h.pwTimer = nil
+		}
 		h.mu.Unlock()
 		h.Reject()
 		h.Disconnect()
@@ -409,7 +544,7 @@ func (h *Host) acceptLoop(ctx context.Context, ln *session.Host) {
 			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
 				return
 			}
-			if !errors.Is(err, session.ErrBadPassword) {
+			if !errors.Is(err, session.ErrBadPassword) && !errors.Is(err, session.ErrProbe) {
 				log.Printf("kkdesk host: accept: %v", err)
 			}
 			continue
@@ -442,10 +577,15 @@ func (h *Host) handle(p *session.Peer) {
 	h.mu.Unlock()
 	h.notify()
 
+	accepted := false // the session got past the confirmation
 	defer func() {
 		p.Close()
 		h.mu.Lock()
 		h.busy, h.peer, h.decide, h.fsrv = false, nil, nil, nil
+		if accepted && h.cfg.Rotate == config.RotateAfterSession {
+			h.newPasswordLocked() // 每次连接后更换
+			log.Printf("kkdesk host: temporary password rotated after the session")
+		}
 		if h.ln != nil {
 			h.phase = HostListening
 		} else {
@@ -470,6 +610,7 @@ func (h *Host) handle(p *session.Peer) {
 			return
 		}
 	}
+	accepted = true
 	h.serveFiles(p)
 	if p.Mode() == session.ModeFiles {
 		h.mu.Lock()
@@ -531,17 +672,20 @@ func (h *Host) stream(p *session.Peer) error {
 	rec.Start()
 	defer rec.Close()
 
+	h.mu.Lock()
+	fps, mbps, maxW := h.cfg.FPS, h.cfg.BitrateMbps, h.cfg.MaxWidth
+	h.mu.Unlock()
 	bps := AutoBitrate
-	if h.cfg.BitrateMbps > 0 {
-		bps = h.cfg.BitrateMbps * 1_000_000
+	if mbps > 0 {
+		bps = mbps * 1_000_000
 	}
-	vs := &videoSender{peer: p, rec: rec, fps: h.cfg.FPS, bps: bps}
+	vs := &videoSender{peer: p, rec: rec, fps: fps, bps: bps}
 	vs.forceKey.Store(true)
 	p.OnKeyframeRequest(func() { vs.forceKey.Store(true) })
 
 	h.wireInput(p)
 
-	opts := capture.Options{FPS: h.cfg.FPS, MaxWidth: h.cfg.MaxWidth, ExcludeApp: captureExcludeApp(p.RemoteAddr())}
+	opts := capture.Options{FPS: fps, MaxWidth: maxW, ExcludeApp: captureExcludeApp(p.RemoteAddr())}
 	log.Printf("kkdesk host: capture %d fps, max width %d, exclude %q", opts.FPS, opts.MaxWidth, opts.ExcludeApp)
 	capt, err := capture.Start(opts, vs.frame)
 	if err != nil {

@@ -32,6 +32,11 @@ type ViewerConfig struct {
 	// host shares no screen.
 	FilesOnly bool
 	Log       io.Writer
+	// FPS and BitrateBps are the quality the session asks for once
+	// connected (设置 › 画质); 0 FPS leaves the host's frame rate and 0
+	// BitrateBps is automatic.
+	FPS        int
+	BitrateBps int
 }
 
 // ViewerPhase is the viewer's connection state.
@@ -73,6 +78,7 @@ type Viewer struct {
 	closing  bool
 	onEnd    []func()
 	files    *files.Client
+	since    time.Time // connected at
 
 	// video goroutine only
 	dec      codec.Decoder
@@ -91,7 +97,10 @@ func NewViewer(cfg ViewerConfig, notify func()) *Viewer {
 	if cfg.Log == nil {
 		cfg.Log = io.Discard
 	}
-	v := &Viewer{cfg: cfg, viewOnly: cfg.ViewOnly || IsLoopback(cfg.Addr), fps: 60}
+	v := &Viewer{cfg: cfg, viewOnly: cfg.ViewOnly || IsLoopback(cfg.Addr), fps: 60, bitrate: cfg.BitrateBps}
+	if cfg.FPS > 0 {
+		v.fps = cfg.FPS
+	}
 	if notify != nil {
 		v.AddNotify(notify)
 	}
@@ -181,10 +190,15 @@ func (v *Viewer) Connect(ctx context.Context) error {
 		v.end("")
 		return errors.New("已取消")
 	}
-	v.peer, v.phase = p, ViewerWaiting
+	v.peer, v.phase, v.since = p, ViewerWaiting, time.Now()
+	fps, bps := v.fps, v.bitrate
 	v.mu.Unlock()
 	p.OnVideo(v.video)
 	go v.watch(p)
+	addSession(v)
+	if !v.cfg.FilesOnly && (v.cfg.FPS > 0 || v.cfg.BitrateBps > 0) {
+		v.SetQuality(bps, fps) // the host applies it once it streams
+	}
 	v.notify()
 	return nil
 }
@@ -228,6 +242,7 @@ func (v *Viewer) end(msg string) {
 	fns := v.onEnd
 	p := v.peer
 	v.mu.Unlock()
+	removeSession(v)
 	if p != nil {
 		p.Close()
 		<-p.Done()
