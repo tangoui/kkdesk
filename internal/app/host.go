@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/tangoui/kkdesk/internal/capture"
@@ -100,6 +101,8 @@ type Host struct {
 	addrs    []string
 	stopOnce sync.Once
 	fsrv     *files.Server // file server of the current session
+	wantOn   bool          // SetEnabled(true) and not turned off since
+	retry    *time.Timer   // next listen attempt while the port is busy
 
 	fileAccess atomic.Bool // the 文件传输 permission; on by default
 }
@@ -249,9 +252,10 @@ func (h *Host) SetEnabled(on bool) error {
 	h.mu.Lock()
 	defer h.notify()
 	defer h.mu.Unlock()
-	if on == (h.ln != nil) {
+	if on == h.wantOn && (!on || h.ln != nil || h.retry != nil) {
 		return nil
 	}
+	h.wantOn = on
 	if !on {
 		h.stopLocked()
 		if !h.busy {
@@ -262,9 +266,21 @@ func (h *Host) SetEnabled(on bool) error {
 	return h.startLocked()
 }
 
+// listenRetryEvery is how often a busy port is tried again (a variable for
+// tests).
+var listenRetryEvery = time.Second
+
 func (h *Host) startLocked() error {
 	ln, err := session.Listen(h.cfg.Addr, h.password)
 	if err != nil {
+		if addrInUse(err) {
+			// The port is often held by a process that is exiting (a hot
+			// reload, a quick restart): keep trying until it frees up or
+			// the host is turned off.
+			h.errMsg = fmt.Sprintf("端口 %s 正被占用，正在重试…", portOf(h.cfg.Addr))
+			h.retry = time.AfterFunc(listenRetryEvery, h.retryListen)
+			return nil
+		}
 		h.errMsg = fmt.Sprintf("无法监听 %s：%v", h.cfg.Addr, err)
 		return err
 	}
@@ -279,7 +295,42 @@ func (h *Host) startLocked() error {
 	return nil
 }
 
+// retryListen is one more listen attempt after the port was busy.
+func (h *Host) retryListen() {
+	h.mu.Lock()
+	h.retry = nil
+	if !h.wantOn || h.ln != nil {
+		h.mu.Unlock()
+		return
+	}
+	_ = h.startLocked() // reschedules itself while the port stays busy
+	h.mu.Unlock()
+	h.notify()
+}
+
+// addrInUse reports a listen error caused by a port that is already taken.
+func addrInUse(err error) bool {
+	if errors.Is(err, syscall.EADDRINUSE) {
+		return true
+	}
+	var errno syscall.Errno
+	return errors.As(err, &errno) && errno == 10048 // WSAEADDRINUSE
+}
+
+// portOf returns the port of a listen address such as ":21118".
+func portOf(addr string) string {
+	if _, port, err := net.SplitHostPort(addr); err == nil {
+		return port
+	}
+	return addr
+}
+
 func (h *Host) stopLocked() {
+	if h.retry != nil {
+		h.retry.Stop()
+		h.retry = nil
+		h.errMsg = ""
+	}
 	if h.ln == nil {
 		return
 	}

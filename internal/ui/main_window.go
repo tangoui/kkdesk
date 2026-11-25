@@ -205,8 +205,8 @@ func (m *Main) sidebar(c *ui.Context, hs app.HostState) {
 					ui.Text(c, "· "+sub).Size(12).Tertiary().NoWrap()
 				}
 			}, layout.Gap(6), layout.Middle())
-		}, layout.Gap(10), layout.Padding(insets(12, 16, 16, 16))).Paint(topLine(th.Split))
-	}, layout.W(200), layout.PadVH(12, 0)).Bg(th.BgContainer).Paint(endLine(th.Split))
+		}, layout.Gap(10), layout.Padding(insets(12, 16, 12, 16))).Paint(topLine(th.Split))
+	}, layout.W(200), layout.Padding(insets(12, 0, 0, 0))).Bg(th.BgContainer).Paint(endLine(th.Split))
 }
 
 // comingSoon is the placeholder of pages that are not built yet.
