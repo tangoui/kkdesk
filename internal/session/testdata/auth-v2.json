@@ -1,0 +1,10 @@
+{
+  "seed": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "hostKey": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
+  "hostSig": "mBfTIBsvArXBSsw5oNi01gM8os-6UDn0-SULRrbi18HEWmXVSeDr0f8rkWpWqS3VzRH5JLzmgU9pQ2DUHazeAQ",
+  "offer": "v=0\r\ns=offer\r\na=ice-ufrag:offer\r\n",
+  "answer": "v=0\r\ns=answer\r\na=ice-ufrag:answer\r\n",
+  "password": "pāss-123",
+  "proof": "npEv8ixEg7_hgJdy3GG0ZnewBALjZTn43G9OtSBXq6c",
+  "code": "KD-2WSNHIDVMGIX"
+}
