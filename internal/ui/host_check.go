@@ -18,6 +18,10 @@ type hostCheck struct {
 func (m *Main) confirmHost(ctx context.Context, addr, code string) bool {
 	hc := &hostCheck{addr: addr, code: code, reply: make(chan bool, 1)}
 	m.mu.Lock()
+	if m.hostCheck != nil { // one check at a time; the other waits on the user
+		m.mu.Unlock()
+		return false
+	}
 	m.hostCheck = hc
 	m.mu.Unlock()
 	m.Invalidate()

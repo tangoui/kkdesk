@@ -212,12 +212,13 @@ func (m *Main) page(c *ui.Context) {
 			}
 		}, layout.Grow(1)).Bg(th.BgLayout)
 	}, layout.Grow(1))
-	if m.hostCheckDialog(c) {
-		// the user is checking a device code for a connection they started
-	} else if request := m.o.Host.PairingRequest(); request != nil {
+	// Incoming requests first: they time out, the user's own check does not.
+	if request := m.o.Host.PairingRequest(); request != nil {
 		m.pairingConfirm(c, request)
 	} else if hs.Phase == app.HostPending {
 		m.confirm(c, hs)
+	} else if m.hostCheckDialog(c) {
+		// the user is checking a device code for a connection they started
 	} else if m.pairing.open {
 		m.pairingQR(c)
 	} else {

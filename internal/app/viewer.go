@@ -275,6 +275,9 @@ func (v *Viewer) Connect(ctx context.Context) error {
 			err = confirmErr
 		} else {
 			p, err = session.DialWithOptions(ctx, v.cfg.Addr, v.cfg.Password, opts)
+			if confirmedKey != "" && errors.Is(err, session.ErrHostKeyChanged) {
+				err = errors.New("对方的身份和刚才核对的不一致（可能有人冒充），已断开")
+			}
 		}
 		if err == nil && v.cfg.Devices != nil {
 			var first bool
