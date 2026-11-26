@@ -51,10 +51,35 @@ type sigMsg struct {
 	Mode   Mode                       `json:"mode,omitempty"` // with the offer; "" = desktop
 }
 
+// maxSignalMsg bounds one signaling message (an SDP with its candidates is
+// a few KB): a peer cannot make the other side buffer an endless one.
+const maxSignalMsg = 256 << 10
+
+var errSignalTooLarge = errors.New("session: signaling message too large")
+
+// msgLimit reads at most left bytes; recv resets it for every message.
+type msgLimit struct {
+	r    io.Reader
+	left int
+}
+
+func (l *msgLimit) Read(p []byte) (int, error) {
+	if l.left <= 0 {
+		return 0, errSignalTooLarge
+	}
+	if len(p) > l.left {
+		p = p[:l.left]
+	}
+	n, err := l.r.Read(p)
+	l.left -= n
+	return n, err
+}
+
 type sigConn struct {
-	conn net.Conn
-	enc  *json.Encoder
-	dec  *json.Decoder
+	conn  net.Conn
+	enc   *json.Encoder
+	dec   *json.Decoder
+	limit *msgLimit
 }
 
 func newSigConn(ctx context.Context, c net.Conn) (*sigConn, func()) {
@@ -64,7 +89,8 @@ func newSigConn(ctx context.Context, c net.Conn) (*sigConn, func()) {
 	}
 	_ = c.SetDeadline(deadline)
 	stop := context.AfterFunc(ctx, func() { _ = c.SetDeadline(time.Now()) })
-	return &sigConn{conn: c, enc: json.NewEncoder(c), dec: json.NewDecoder(c)}, func() {
+	limit := &msgLimit{r: c, left: maxSignalMsg}
+	return &sigConn{conn: c, enc: json.NewEncoder(c), dec: json.NewDecoder(limit), limit: limit}, func() {
 		stop()
 		_ = c.Close()
 	}
@@ -73,6 +99,7 @@ func newSigConn(ctx context.Context, c net.Conn) (*sigConn, func()) {
 func (s *sigConn) send(m sigMsg) error { return s.enc.Encode(m) }
 
 func (s *sigConn) recv() (sigMsg, error) {
+	s.limit.left = maxSignalMsg
 	var m sigMsg
 	err := s.dec.Decode(&m)
 	return m, err

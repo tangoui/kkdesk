@@ -273,7 +273,6 @@ func TestHostDisableCancelsPendingLAN(t *testing.T) {
 	}
 }
 
-
 // A connection let in by its password alone is refused when that password
 // changed while it was being set up.
 func TestHostPasswordCurrent(t *testing.T) {
@@ -297,4 +296,29 @@ func TestHostPasswordCurrent(t *testing.T) {
 	h.SetFixedPassword("fixed-pass-2")
 	check("fixed-pass-1", false)
 	check("fixed-pass-2", true)
+}
+
+// A connection that stalls in the handshake does not hold up the next one.
+func TestHostStalledHandshakeDoesNotBlock(t *testing.T) {
+	h := NewHost(HostConfig{Addr: "127.0.0.1:0", Password: "123456", Rotate: config.RotateNever}, nil)
+	defer h.Close()
+	if err := h.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	h.SetAutoAccept(true)
+	stalled, err := net.Dial("tcp", h.ListenAddr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stalled.Close() // reads the challenge, never answers
+	time.Sleep(100 * time.Millisecond)
+	start := time.Now()
+	v, err := dialFiles(t, h.ListenAddr(), "123456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer v.Close()
+	if d := time.Since(start); d > 10*time.Second {
+		t.Fatalf("connect took %v behind a stalled handshake", d)
+	}
 }

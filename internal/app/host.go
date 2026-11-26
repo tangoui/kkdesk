@@ -723,8 +723,22 @@ func (h *Host) Close() {
 	})
 }
 
+// acceptWorkers is how many LAN handshakes run at once: one that stalls
+// (up to the signaling timeout) does not hold up the others, and a flood
+// of connections cannot start unbounded handshakes. Only one session runs
+// at a time all the same (handle's busy check).
+const acceptWorkers = 4
+
 func (h *Host) acceptLoop(ctx context.Context, ln *session.Host) {
 	defer h.wg.Done()
+	var workers sync.WaitGroup
+	for range acceptWorkers {
+		workers.Go(func() { h.acceptWorker(ctx, ln) })
+	}
+	workers.Wait()
+}
+
+func (h *Host) acceptWorker(ctx context.Context, ln *session.Host) {
 	for {
 		p, err := ln.Accept(ctx)
 		if err != nil {
