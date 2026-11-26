@@ -117,8 +117,11 @@ func (c *Client) request(ctx context.Context, m msg, onReply func(*msg)) (*msg, 
 
 func (c *Client) onJSON(m *msg) {
 	if m.isResponse() {
+		// The first reply claims the call; a repeated one finds nothing (and
+		// cannot block on the call's one-slot channel).
 		c.mu.Lock()
 		pc := c.pending[m.ID]
+		delete(c.pending, m.ID)
 		c.mu.Unlock()
 		if pc != nil {
 			if pc.onReply != nil && *m.OK {
