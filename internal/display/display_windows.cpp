@@ -504,6 +504,11 @@ int32_t mmdispw_vsync(int64_t *vblank, int64_t *period, int64_t *now, int64_t *f
     return hr;
 }
 
+void mmdispw_pump_sent(void) {
+    MSG m;
+    PeekMessageW(&m, nullptr, 0, 0, PM_NOREMOVE | PM_QS_SENDMESSAGE);
+}
+
 void mmdispw_destroy(mmDispW *d) {
     if (!d) return;
     EnterCriticalSection(&d->cs);
