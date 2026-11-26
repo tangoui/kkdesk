@@ -1,0 +1,69 @@
+name: Android APK
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    secrets:
+      ANDROID_KEYSTORE_BASE64:
+        required: true
+      ANDROID_KEYSTORE_PASSWORD:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      # Fetch Flutter from Git. This version has engine artifacts but no Linux SDK archive.
+      - uses: actions/checkout@v7.0.1
+        with:
+          repository: flutter/flutter
+          ref: refs/tags/3.47.7
+          path: .flutter
+          persist-credentials: false
+      - name: Set up Flutter and the Android SDK
+        run: |
+          echo "$GITHUB_WORKSPACE/.flutter/bin" >> "$GITHUB_PATH"
+          .flutter/bin/flutter precache --android
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358"
+      - name: Verify the app
+        working-directory: mobile
+        run: |
+          flutter pub get --enforce-lockfile
+          flutter analyze --no-pub
+          flutter test --no-pub
+      - name: Build and verify the signed APK
+        working-directory: mobile
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KKDESK_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          : "${KEYSTORE_BASE64:?Missing ANDROID_KEYSTORE_BASE64 secret}"
+          : "${KKDESK_ANDROID_KEYSTORE_PASSWORD:?Missing ANDROID_KEYSTORE_PASSWORD secret}"
+          umask 077
+          export KKDESK_ANDROID_KEYSTORE="$RUNNER_TEMP/kkdesk-android.p12"
+          trap 'rm -f "$KKDESK_ANDROID_KEYSTORE"' EXIT
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$KKDESK_ANDROID_KEYSTORE"
+          unset KEYSTORE_BASE64
+          version=$(jq -er .version ../tan.json)
+          build_number=$(git rev-list --count HEAD)
+          flutter build apk --release --no-pub --build-name "$version" --build-number "$build_number"
+          apk="build/app/outputs/flutter-apk/app-release.apk"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$apk"
+          mkdir -p dist
+          cp "$apk" "dist/kkdesk-$version-android.apk"
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: build-android
+          path: mobile/dist/*.apk
+          if-no-files-found: error

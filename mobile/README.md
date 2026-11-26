@@ -47,3 +47,9 @@ Apple、Windows 四窗格和 Linux Tux 的单色 SVG 来自 Simple Icons 10.0.0�
 在电脑文件页点目录进入，长按或点「多选」选中项目。下载保存到应用文档目录的 `Downloads`，每个任务使用独立子目录。iOS 可以在「文件 → 我的 iPhone → kkdesk」查看。Android 可以从传输记录打开下载结果，选择分享或用其他应用打开。
 
 上传通过系统相册或文件选择器选取多个项目。下载和上传的队列在离开浏览器后继续工作。失败任务在当前 App 进程内可以重试，历史会保留状态。iOS 在后台可能挂起 App，队列会在回到前台时反映实际状态。
+
+## Android APK 发布
+
+推送与 `tan.json` 版本一致的 `vX.Y.Z` 标签后，Release 工作流会将 `kkdesk-X.Y.Z-android.apk` 随桌面端一起发布。也可以在 GitHub Actions 手动运行「Android APK」，从运行结果的 `build-android` 下载 APK。Android 版本号取自 `tan.json`，版本代码取自当前提交的历史提交数。
+
+两种打包方式共用仓库的 `ANDROID_KEYSTORE_BASE64` 和 `ANDROID_KEYSTORE_PASSWORD` 两个 Actions Secrets。发布密钥使用 PKCS#12 格式，别名为 `kkdesk`，密钥密码与密钥库密码相同。保留这一套签名即可覆盖升级同一应用。首次安装正式 APK 时，若手机已有调试签名版，Android 会要求先卸载调试版。
