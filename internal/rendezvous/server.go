@@ -173,12 +173,23 @@ func sendError(ctx context.Context, conn *websocket.Conn, reason string) {
 // register holds code for conn. A registration with key proves the code
 // derives from that key (a signed challenge); it replaces an unsigned one
 // (someone else holding the service token cannot keep a device's code) and
-// a stale one of the same key (a reconnect). Unsigned registrations, from
-// older desktops, are first come first served as before.
+// a dead one of the same key (a reconnect before the old socket timed out),
+// but not a live one: two running copies of one identity would otherwise
+// evict each other every few seconds. Unsigned registrations, from older
+// desktops, are first come first served as before.
 func (s *Server) register(ctx context.Context, conn *websocket.Conn, code, key string) {
 	if key != "" && !s.proveCode(ctx, conn, code, key) {
 		sendError(ctx, conn, "电脑身份校验失败")
 		return
+	}
+	if key != "" {
+		s.mu.Lock()
+		old := s.devices[code]
+		s.mu.Unlock()
+		if old != nil && old.key == key && alive(ctx, old.conn) {
+			sendError(ctx, conn, "设备码已上线")
+			return
+		}
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -364,4 +375,15 @@ func (s *Server) proveCode(ctx context.Context, conn *websocket.Conn, code, key 
 	cancel()
 	return err == nil && msg.Type == "register_proof" && msg.Mobile != nil && msg.Mobile.PublicKey == key &&
 		codeRegistrationTranscript(nonce, key).Verify(key, *msg.Mobile)
+}
+
+// livenessWait bounds the ping that tells a live registration from a dead
+// one being replaced.
+const livenessWait = 2 * time.Second
+
+// alive reports whether the peer of conn still answers a ping.
+func alive(ctx context.Context, conn *websocket.Conn) bool {
+	ctx, cancel := context.WithTimeout(ctx, livenessWait)
+	defer cancel()
+	return conn.Ping(ctx) == nil
 }

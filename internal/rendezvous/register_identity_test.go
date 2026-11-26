@@ -134,3 +134,29 @@ func TestSignedRegistrationWithOldServer(t *testing.T) {
 	}
 	c.CloseNow()
 }
+
+// Two live instances of one identity (a copied configuration, the app plus
+// -host) do not keep evicting each other: the live registration stays.
+func TestSignedDuplicateDoesNotEvictLiveRegistration(t *testing.T) {
+	cfg, ctx := identityTestServer(t)
+	id := newIdentity(t)
+	live, err := RegisterIdentity(ctx, cfg, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer live.CloseNow()
+	readErr := make(chan error, 1)
+	go func() { // a running desktop reads offers, which answers pings
+		_, _, err := live.Read(ctx)
+		readErr <- err
+	}()
+	if c, err := RegisterIdentity(ctx, cfg, id); err == nil {
+		c.CloseNow()
+		t.Fatal("a second live instance replaced the first")
+	}
+	select {
+	case err := <-readErr:
+		t.Fatalf("the live registration was closed: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+}
