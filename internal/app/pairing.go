@@ -280,16 +280,16 @@ func (h *Host) requestPairing(ctx context.Context, transport rendezvous.MobileEx
 		_ = result("busy", false)
 		return
 	}
-	if _, exists := h.cfg.Pairing.Phone(key); exists {
-		h.mu.Unlock()
-		_ = result("already_paired", false)
-		return
-	}
 	now := time.Now()
 	invite, err := h.cfg.Pairing.Claim(exchange, req.Code, now)
 	if err != nil {
 		h.mu.Unlock()
 		_ = result("expired", false)
+		return
+	}
+	if phone, exists := h.cfg.Pairing.Phone(key); exists {
+		h.mu.Unlock()
+		_ = send(pairing.Message{Type: "result", Status: "committed", Nonce: exchange.HostNonce, Bypass: phone.Bypass})
 		return
 	}
 	verification := pairing.VerificationCode(invite.Code, identityPublic(h.cfg.Pairing), public)
@@ -382,8 +382,8 @@ func (h *Host) requestPairing(ctx context.Context, transport rendezvous.MobileEx
 		_ = result("save_failed", false)
 		return
 	}
-	// Keep the rollback active until the phone acknowledges the final reply.
-	// A write to a rendezvous registration only confirms the first hop.
+	// The phone must acknowledge the saved record before it becomes final.
+	// A lost committed reply after that acknowledgement can be recovered.
 	delivered := false
 	defer func() {
 		if !delivered {
@@ -403,8 +403,7 @@ func (h *Host) requestPairing(ctx context.Context, transport rendezvous.MobileEx
 	case <-timer.C:
 	}
 	if delivered {
-		// The phone waits for this signed confirmation before saving or showing success.
-		delivered = send(pairing.Message{Type: "result", Status: "committed", Nonce: receiptNonce, Bypass: choice.bypass}) == nil
+		_ = send(pairing.Message{Type: "result", Status: "committed", Nonce: receiptNonce, Bypass: choice.bypass})
 	}
 }
 

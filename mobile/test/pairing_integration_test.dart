@@ -333,6 +333,9 @@ void main() {
     'manual',
     'manual-wrong',
     'lost-commit',
+    'recovered',
+    'manual-recovered',
+    'wrong-recovery-nonce',
     'already_paired',
     'manual-already-paired',
     'busy',
@@ -351,6 +354,8 @@ void main() {
         addTearDown(server.close);
         final manual = outcome.startsWith('manual');
         final alreadyPaired = outcome == 'manual-already-paired';
+        final recovered = outcome.endsWith('recovered');
+        final wrongRecovery = outcome == 'wrong-recovery-nonce';
         final success = outcome == 'ok' || outcome == 'manual';
         final lostCommit = outcome == 'lost-commit';
         final invite = manual
@@ -397,7 +402,7 @@ void main() {
               }),
             );
             await socket.flush();
-            if (outcome == 'manual-wrong') {
+            if (outcome == 'manual-wrong' || alreadyPaired) {
               expect(await frames.moveNext(), isFalse);
               pairDone.complete();
               return;
@@ -416,7 +421,10 @@ void main() {
             }
             expect(jsonEncode(request), isNot(contains(invite)));
             expect(request['code'], transcript.codeProof(invite));
-            if (outcome != 'expired' && !alreadyPaired) {
+            if (outcome != 'expired' &&
+                !alreadyPaired &&
+                !recovered &&
+                !wrongRecovery) {
               send(
                 await transcript.sign(host, {
                   'type': 'result',
@@ -471,6 +479,18 @@ void main() {
                 );
                 await socket.flush();
               }
+            } else if (recovered || wrongRecovery) {
+              send(
+                await transcript.sign(host, {
+                  'type': 'result',
+                  'status': 'committed',
+                  'nonce': recovered
+                      ? transcript.hostNonce
+                      : encodePairBytes(randomPairBytes(32)),
+                  'bypass': true,
+                }),
+              );
+              await socket.flush();
             } else {
               send(
                 await transcript.sign(host, {
@@ -531,7 +551,15 @@ void main() {
           );
         } else {
           final request = await service.begin(input);
-          if (lostCommit) {
+          if (recovered) {
+            expect(await request.statuses.single, PairStatus.success);
+            expect(devices.computers.single.confirmOnHost, isFalse);
+          } else if (wrongRecovery) {
+            await expectLater(
+              request.statuses.toList(),
+              throwsA(isA<PairTrustFailure>()),
+            );
+          } else if (lostCommit) {
             await expectLater(
               request.statuses.toList(),
               throwsA(isA<SocketException>()),
@@ -544,7 +572,7 @@ void main() {
               'https://existing.example.test',
             );
           } else if (const {
-                'already_paired': '电脑仍保留这台手机的旧配对，请先在电脑端「已配对手机」中移除后再扫码',
+                'already_paired': '配对失败（already_paired）',
                 'busy': '电脑正在处理另一个配对请求，请稍后再试',
                 'invalid': '手机信息无效',
                 'future_status': '配对失败（future_status）',
@@ -565,7 +593,10 @@ void main() {
           }
         }
         await pairDone.future.timeout(const Duration(seconds: 5));
-        expect(devices.computers, hasLength(success || alreadyPaired ? 1 : 0));
+        expect(
+          devices.computers,
+          hasLength(success || alreadyPaired || recovered ? 1 : 0),
+        );
         if (success) {
           expect(devices.computers.single.id, desktopID(public));
         }

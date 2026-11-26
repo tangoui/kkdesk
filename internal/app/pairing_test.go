@@ -134,6 +134,38 @@ func TestPhonePairingEndToEnd(t *testing.T) {
 			waitPhoneTest(t, ctx, func() bool { return host.PairingRequest() == nil })
 			closeSignal()
 
+			// Retry with the same phone key and a fresh invite, as if the
+			// phone lost the last reply and never saved the pairing.
+			purposes := []string{"pair"}
+			if route == "lan" {
+				purposes = append(purposes, "pair_manual")
+			}
+			for _, purpose := range purposes {
+				invite := identity.Invite(time.Now())
+				code := invite.Code
+				if purpose == "pair_manual" {
+					code = invite.Manual
+				}
+				ex, closeSignal, _ := open(false)
+				tx, _ := authenticate(ex, purpose)
+				send(ex, tx, pairing.Message{Type: "request", Code: tx.CodeProof("wrong"), Name: "Test iPhone"})
+				if result := receive(ex, tx); result.Status != "expired" {
+					t.Fatalf("recovery with wrong credential: %+v", result)
+				}
+				closeSignal()
+
+				ex, closeSignal, _ = open(false)
+				tx, _ = authenticate(ex, purpose)
+				send(ex, tx, pairing.Message{Type: "request", Code: tx.CodeProof(code), Name: "Renamed iPhone"})
+				result := receive(ex, tx)
+				closeSignal()
+				phones := host.PairedPhones()
+				if result.Status != "committed" || result.Nonce != tx.HostNonce || result.Bypass || host.PairingRequest() != nil ||
+					len(phones) != 1 || phones[0].Name != "Test iPhone" {
+					t.Fatalf("invalid recovered pairing: %+v, records %+v", result, phones)
+				}
+			}
+
 			dial := func(bypass bool, biometric *ecdsa.PrivateKey) *webrtc.PeerConnection {
 				t.Helper()
 				ex, closeSignal, ice := open(true)
