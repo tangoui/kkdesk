@@ -11,6 +11,7 @@ package display
 #include <stdlib.h>
 #include <string.h>
 #include <d3d11.h>
+#include <d3d10.h>
 
 static HRESULT mmdtNewTexture(void *device, int w, int h, int nv12, unsigned char y, unsigned char u, unsigned char v,
                               void **out) {
@@ -74,6 +75,25 @@ static HRESULT mmdtNoVideoNV12(int w, int h, void **out) {
 		last = hr;
 	}
 	return last;
+}
+
+// Creates an NV12 texture on a new hardware device with video support,
+// separate from winmedia's (out receives the texture; the device is
+// released with it).
+static HRESULT mmdtOtherDeviceNV12(int w, int h, unsigned char y, void **out) {
+	ID3D11Device *dev = NULL;
+	HRESULT hr = D3D11CreateDevice(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL,
+	                               D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT, NULL, 0,
+	                               D3D11_SDK_VERSION, &dev, NULL, NULL);
+	if (FAILED(hr)) return hr;
+	ID3D10Multithread *mt = NULL;
+	if (SUCCEEDED(ID3D11Device_QueryInterface(dev, &IID_ID3D10Multithread, (void **)&mt))) {
+		ID3D10Multithread_SetMultithreadProtected(mt, TRUE);
+		ID3D10Multithread_Release(mt);
+	}
+	hr = mmdtNewTexture(dev, w, h, 1, y, 128, 128, out);
+	ID3D11Device_Release(dev);
+	return hr;
 }
 
 // Reads the BGRA pixel at (x, y) through a staging copy.
@@ -146,6 +166,16 @@ func newNoVideoNV12(w, h int) (uintptr, error) {
 	var t unsafe.Pointer
 	if hr := int32(C.mmdtNoVideoNV12(C.int(w), C.int(h), &t)); hr < 0 {
 		return 0, fmt.Errorf("NV12 texture on a device without video support: %s", winmedia.HR(hr))
+	}
+	return uintptr(t), nil
+}
+
+// newOtherDeviceNV12 creates a solid w×h NV12 texture on a second hardware
+// device (not winmedia.Device()).
+func newOtherDeviceNV12(w, h int, y uint8) (uintptr, error) {
+	var t unsafe.Pointer
+	if hr := int32(C.mmdtOtherDeviceNV12(C.int(w), C.int(h), C.uchar(y), &t)); hr < 0 {
+		return 0, fmt.Errorf("NV12 texture on a second device: %s", winmedia.HR(hr))
 	}
 	return uintptr(t), nil
 }

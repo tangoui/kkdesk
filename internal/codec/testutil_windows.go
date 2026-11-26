@@ -53,8 +53,10 @@ static void mmtestSize(void *tex, int *w, int *h, int *format, int *array) {
 	*array = (int)d.ArraySize;
 }
 
-// Reads the Y value at (x, y) of an NV12 texture through a staging copy.
-static HRESULT mmtestLuma(void *tex, int x, int y, unsigned char *out) {
+// Reads the Y value at (x, y) of an NV12 texture through a staging copy;
+// with chroma=1 reads the U and V values of the 2x2 block at (x, y) instead
+// (out[0], out[1]).
+static HRESULT mmtestRead(void *tex, int x, int y, int chroma, unsigned char *out) {
 	ID3D11Texture2D *src = (ID3D11Texture2D *)tex;
 	ID3D11Device *dev = NULL;
 	ID3D11DeviceContext *ctx = NULL;
@@ -73,7 +75,14 @@ static HRESULT mmtestLuma(void *tex, int x, int y, unsigned char *out) {
 		D3D11_MAPPED_SUBRESOURCE m;
 		hr = ID3D11DeviceContext_Map(ctx, (ID3D11Resource *)st, 0, D3D11_MAP_READ, 0, &m);
 		if (SUCCEEDED(hr)) {
-			*out = ((unsigned char *)m.pData)[(size_t)y * m.RowPitch + x];
+			unsigned char *p = (unsigned char *)m.pData;
+			if (chroma) {
+				unsigned char *uv = p + (size_t)m.RowPitch * d.Height + (size_t)(y / 2) * m.RowPitch + (size_t)(x & ~1);
+				out[0] = uv[0];
+				out[1] = uv[1];
+			} else {
+				*out = p[(size_t)y * m.RowPitch + x];
+			}
 			ID3D11DeviceContext_Unmap(ctx, (ID3D11Resource *)st, 0);
 		}
 		ID3D11Texture2D_Release(st);
@@ -116,8 +125,17 @@ func textureInfo(tex uintptr) (w, h, format, array int) {
 // lumaAt reads the Y value at (x, y) of an NV12 texture.
 func lumaAt(tex uintptr, x, y int) (uint8, error) {
 	var v C.uchar
-	if hr := int32(C.mmtestLuma(winmedia.Ptr(tex), C.int(x), C.int(y), &v)); hr < 0 {
+	if hr := int32(C.mmtestRead(winmedia.Ptr(tex), C.int(x), C.int(y), 0, &v)); hr < 0 {
 		return 0, fmt.Errorf("read NV12: %s", winmedia.HR(hr))
 	}
 	return uint8(v), nil
+}
+
+// chromaAt reads the U and V values covering (x, y) of an NV12 texture.
+func chromaAt(tex uintptr, x, y int) (u, v uint8, err error) {
+	var uv [2]C.uchar
+	if hr := int32(C.mmtestRead(winmedia.Ptr(tex), C.int(x), C.int(y), 1, &uv[0])); hr < 0 {
+		return 0, 0, fmt.Errorf("read NV12 chroma: %s", winmedia.HR(hr))
+	}
+	return uint8(uv[0]), uint8(uv[1]), nil
 }

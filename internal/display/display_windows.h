@@ -29,6 +29,8 @@ int32_t mmdispw_render_to(mmDispW *d, void *target);
 // being presented on another thread would. For tests; the same thread must
 // enter and leave.
 void mmdispw_hold(mmDispW *d, int32_t on);
+// Counters for tests: video processors and output views created so far.
+void mmdispw_counts(mmDispW *d, int32_t *processors, int32_t *outputViews);
 // Number of successful Present calls.
 int32_t mmdispw_presents(mmDispW *d);
 // DWM composition timing: the QPC value of the last vblank, the refresh

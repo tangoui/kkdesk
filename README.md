@@ -25,7 +25,7 @@
 ## 现状（验证原型）
 
 - macOS：被控端和控制端都可用。屏幕采集用 ScreenCaptureKit，编解码用 VideoToolbox H.264 硬件编解码，画面用 `AVSampleBufferDisplayLayer` 显示。
-- Windows：被控端和控制端都已写完，实机验证中。采集用 DXGI Desktop Duplication，编解码用 Media Foundation H.264（优先硬件），画面用 D3D11 视频处理器和 flip 交换链显示，注入用 SendInput。
+- Windows：控制端可用（已实测控制 Mac），被控端实机验证中。采集用 DXGI Desktop Duplication，编解码用 Media Foundation H.264（优先硬件），画面用 D3D11 视频处理器和 flip 交换链显示，注入用 SendInput。
 - 传输：Pion WebRTC。视频是 H.264 RTP，输入、画质切换、时钟同步和文件传输走数据通道。局域网连接用临时或固定密码。跨网设备码连接每次都要求对方确认。
 - 文件传输：浏览、上传下载文件和文件夹、校验、取消、权限开关；「文件传输」页列出会话和本次运行的传输记录。
 - 我的设备、远程会话、设置：通讯录（分组、在线探测）、会话列表、固定密码与临时密码更换策略、端口、主题，数据只存本机。

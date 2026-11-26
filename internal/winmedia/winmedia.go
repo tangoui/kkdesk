@@ -1,9 +1,10 @@
-// Package winmedia holds what the Windows capture and encoder backends
-// share: one process-wide Direct3D 11 device (on the adapter that owns the
-// primary display, multithread protected, wrapped in an
-// IMFDXGIDeviceManager for Media Foundation), a D3D11 video processor that
-// converts and scales the desktop image to NV12, HRESULT formatting and a
-// logger. Only the logger and HRESULT helpers exist on other platforms.
+// Package winmedia holds what the Windows capture, codec (encoder and
+// decoder) and display backends share: one process-wide Direct3D 11 device
+// (on the adapter that owns the primary display, multithread protected,
+// wrapped in an IMFDXGIDeviceManager for Media Foundation), a D3D11 video
+// processor that converts and scales the desktop image to NV12, HRESULT
+// formatting and a logger. Only the logger and HRESULT helpers exist on
+// other platforms.
 package winmedia
 
 import (

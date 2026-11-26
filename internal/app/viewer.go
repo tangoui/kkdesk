@@ -95,12 +95,13 @@ type Viewer struct {
 	since    time.Time // connected at
 
 	// video goroutine only
-	dec      codec.Decoder
-	recvAt   time.Time
-	lastPLI  time.Time
-	seq      uint64
-	gotFrame atomic.Bool
-	diagLogs atomic.Int32 // decode/display failures logged so far (maxDiagLogs)
+	dec          codec.Decoder
+	recvAt       time.Time
+	lastPLI      time.Time
+	seq          uint64
+	gotFrame     atomic.Bool
+	diagLogs     atomic.Int32 // decode/display failures logged so far (maxDiagLogs)
+	noViewLogged atomic.Bool
 }
 
 // NewViewer returns a viewer for cfg. notify is called from any goroutine
@@ -496,8 +497,10 @@ func (v *Viewer) decoded(pix uintptr, captureAt time.Time) {
 	view, peer := v.view, v.peer
 	v.mu.Unlock()
 	if view == nil {
-		if n := v.diagLogs.Add(1); n <= maxDiagLogs {
-			log.Printf("kkdesk viewer: decoded a picture but no display view is attached")
+		// Normal for the first pictures while the session window creates the
+		// view; for good when the window cannot host it (e.g. under tan dev).
+		if !v.noViewLogged.Swap(true) {
+			log.Printf("kkdesk viewer: decoded a picture but no display view is attached (logged once)")
 		}
 		return
 	}

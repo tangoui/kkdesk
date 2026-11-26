@@ -54,25 +54,50 @@ struct mmDispW {
     UINT frameW, frameH;
     ID3D11VideoProcessorInputView *iv;
     ID3D11VideoProcessorEnumerator *en;
-    ID3D11VideoProcessor *vp;
-    UINT vpOutW, vpOutH; // size the processor was created for
+    ID3D11VideoProcessor *vp; // for frameW×frameH input (output size is set per blt)
+    struct {
+        ID3D11Texture2D *tex; // back buffer (referenced while cached)
+        ID3D11VideoProcessorOutputView *view;
+    } ov[2]; // output views of the swap chain's back buffers
+    int ovNext;
     int presents;
     int errLogs;
+    int nProcessors, nOutputViews; // created so far (tests)
 };
 
 namespace {
 
-void resetDevice(mmDispW *d) {
+// releaseViews drops the cached back-buffer output views (before
+// ResizeBuffers, which needs every back-buffer reference released).
+void releaseViews(mmDispW *d) {
+    for (auto &o : d->ov) {
+        release(o.view);
+        release(o.tex);
+    }
+}
+
+// releaseProcessor drops the video processor and everything made from its
+// enumerator.
+void releaseProcessor(mmDispW *d) {
+    releaseViews(d);
     release(d->iv);
     release(d->vp);
     release(d->en);
+}
+
+void resetDevice(mmDispW *d) {
+    releaseProcessor(d);
     release(d->frame);
     release(d->swap);
+    // Flip swap chains are destroyed lazily: flush so a new one can be
+    // created for the same window right away. (No ClearState: the context
+    // is shared with capture and encoding.)
+    if (d->ctx) d->ctx->Flush();
     release(d->vctx);
     release(d->vdev);
     release(d->ctx);
     release(d->dev);
-    d->bufW = d->bufH = d->frameW = d->frameH = d->vpOutW = d->vpOutH = 0;
+    d->bufW = d->bufH = d->frameW = d->frameH = 0;
 }
 
 void logHR(mmDispW *d, const char *what, HRESULT hr) {
@@ -98,8 +123,17 @@ HRESULT useDevice(mmDispW *d, ID3D11Device *dev) {
 void clientSize(mmDispW *d, UINT *w, UINT *h) {
     RECT r = {0, 0, 0, 0};
     GetClientRect(d->hwnd, &r);
-    *w = r.right > r.left ? (UINT)(r.right - r.left) : 1;
-    *h = r.bottom > r.top ? (UINT)(r.bottom - r.top) : 1;
+    *w = r.right > r.left ? (UINT)(r.right - r.left) : 0;
+    *h = r.bottom > r.top ? (UINT)(r.bottom - r.top) : 0;
+}
+
+// placed reports whether the window has a real size: it is created 1x1 and
+// only sized once the UI toolkit has parented and placed it, so no swap
+// chain is made for the temporary top-level window.
+bool placed(mmDispW *d) {
+    UINT w, h;
+    clientSize(d, &w, &h);
+    return w > 1 && h > 1;
 }
 
 HRESULT ensureSwapChain(mmDispW *d) {
@@ -107,6 +141,7 @@ HRESULT ensureSwapChain(mmDispW *d) {
     clientSize(d, &w, &h);
     if (d->swap) {
         if (w == d->bufW && h == d->bufH) return S_OK;
+        releaseViews(d);
         HRESULT hr = d->swap->ResizeBuffers(0, w, h, DXGI_FORMAT_UNKNOWN, 0);
         if (FAILED(hr)) {
             logHR(d, "ResizeBuffers", hr);
@@ -149,13 +184,11 @@ HRESULT ensureSwapChain(mmDispW *d) {
     return hr;
 }
 
-// ensureProcessor (re)creates the video processor for frame → outW×outH.
-HRESULT ensureProcessor(mmDispW *d, UINT outW, UINT outH) {
-    if (d->vp && d->vpOutW == outW && d->vpOutH == outH) return S_OK;
+// ensureProcessor creates the video processor for the current frame size
+// (released whenever that changes). The output size is set per blt.
+HRESULT ensureProcessor(mmDispW *d) {
+    if (d->vp) return S_OK;
     if (!d->vdev || !d->vctx) return E_NOINTERFACE;
-    release(d->iv);
-    release(d->vp);
-    release(d->en);
     D3D11_VIDEO_PROCESSOR_CONTENT_DESC cd;
     memset(&cd, 0, sizeof cd);
     cd.InputFrameFormat = D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE;
@@ -164,8 +197,8 @@ HRESULT ensureProcessor(mmDispW *d, UINT outW, UINT outH) {
     cd.InputWidth = d->frameW;
     cd.InputHeight = d->frameH;
     cd.OutputFrameRate = cd.InputFrameRate;
-    cd.OutputWidth = outW;
-    cd.OutputHeight = outH;
+    cd.OutputWidth = d->frameW;
+    cd.OutputHeight = d->frameH;
     cd.Usage = D3D11_VIDEO_USAGE_OPTIMAL_SPEED;
     HRESULT hr = d->vdev->CreateVideoProcessorEnumerator(&cd, &d->en);
     if (SUCCEEDED(hr)) hr = d->vdev->CreateVideoProcessor(d->en, 0, &d->vp);
@@ -177,9 +210,7 @@ HRESULT ensureProcessor(mmDispW *d, UINT outW, UINT outH) {
     }
     if (FAILED(hr)) {
         logHR(d, "creating the video processor", hr);
-        release(d->iv);
-        release(d->vp);
-        release(d->en);
+        releaseProcessor(d);
         return hr;
     }
     d->vctx->VideoProcessorSetStreamFrameFormat(d->vp, 0, D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE);
@@ -205,9 +236,8 @@ HRESULT ensureProcessor(mmDispW *d, UINT outW, UINT outH) {
     memset(&black, 0, sizeof black);
     black.RGBA.A = 1;
     d->vctx->VideoProcessorSetOutputBackgroundColor(d->vp, FALSE, &black);
-    d->vpOutW = outW;
-    d->vpOutH = outH;
-    logf("display: video processor NV12 %ux%u -> BGRA %ux%u", d->frameW, d->frameH, outW, outH);
+    d->nProcessors++;
+    logf("display: video processor for NV12 %ux%u", d->frameW, d->frameH);
     return S_OK;
 }
 
@@ -220,19 +250,44 @@ RECT fitRect(UINT boxW, UINT boxH, UINT fw, UINT fh) {
     return r;
 }
 
-// blt draws the current frame into target (outW×outH). d->cs held.
-HRESULT blt(mmDispW *d, ID3D11Texture2D *target, UINT outW, UINT outH) {
-    HRESULT hr = ensureProcessor(d, outW, outH);
-    if (FAILED(hr)) return hr;
-    ID3D11VideoProcessorOutputView *ov = nullptr;
+// outputView returns an output view of target: cached for the swap chain's
+// back buffers (cache=true), a new one the caller releases otherwise.
+HRESULT outputView(mmDispW *d, ID3D11Texture2D *target, bool cache, ID3D11VideoProcessorOutputView **out) {
+    *out = nullptr;
+    if (cache)
+        for (auto &o : d->ov)
+            if (o.tex == target) {
+                *out = o.view;
+                return S_OK;
+            }
     D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC od;
     memset(&od, 0, sizeof od);
     od.ViewDimension = D3D11_VPOV_DIMENSION_TEXTURE2D;
-    hr = d->vdev->CreateVideoProcessorOutputView(target, d->en, &od, &ov);
+    HRESULT hr = d->vdev->CreateVideoProcessorOutputView(target, d->en, &od, out);
     if (FAILED(hr)) {
         logHR(d, "CreateVideoProcessorOutputView", hr);
         return hr;
     }
+    d->nOutputViews++;
+    if (cache) {
+        auto &o = d->ov[d->ovNext];
+        d->ovNext = (d->ovNext + 1) % 2;
+        release(o.view);
+        release(o.tex);
+        o.tex = target;
+        target->AddRef();
+        o.view = *out;
+    }
+    return S_OK;
+}
+
+// blt draws the current frame into target (outW x outH). d->cs held.
+HRESULT blt(mmDispW *d, ID3D11Texture2D *target, UINT outW, UINT outH, bool cache) {
+    HRESULT hr = ensureProcessor(d);
+    if (FAILED(hr)) return hr;
+    ID3D11VideoProcessorOutputView *ov = nullptr;
+    hr = outputView(d, target, cache, &ov);
+    if (FAILED(hr)) return hr;
     RECT src = {0, 0, (LONG)d->frameW, (LONG)d->frameH};
     RECT all = {0, 0, (LONG)outW, (LONG)outH};
     RECT dst = fitRect(outW, outH, d->frameW, d->frameH);
@@ -245,14 +300,14 @@ HRESULT blt(mmDispW *d, ID3D11Texture2D *target, UINT outW, UINT outH) {
     st.pInputSurface = d->iv;
     hr = d->vctx->VideoProcessorBlt(d->vp, ov, 0, 1, &st);
     if (FAILED(hr)) logHR(d, "VideoProcessorBlt", hr);
-    ov->Release();
+    if (!cache) ov->Release();
     return hr;
 }
 
 // present draws the current frame into the back buffer and presents it.
 // d->cs held.
 HRESULT present(mmDispW *d) {
-    if (!d->frame) return S_FALSE;
+    if (!d->frame || !placed(d)) return S_FALSE;
     HRESULT hr = ensureSwapChain(d);
     if (FAILED(hr)) return hr;
     ID3D11Texture2D *back = nullptr;
@@ -261,7 +316,7 @@ HRESULT present(mmDispW *d) {
         logHR(d, "GetBuffer", hr);
         return hr;
     }
-    hr = blt(d, back, d->bufW, d->bufH);
+    hr = blt(d, back, d->bufW, d->bufH, true);
     back->Release();
     if (FAILED(hr)) return hr;
     hr = d->swap->Present(0, 0);
@@ -366,17 +421,15 @@ int32_t mmdispw_enqueue(mmDispW *d, void *tex, int32_t *w, int32_t *h) {
     ID3D11Texture2D *src = (ID3D11Texture2D *)tex;
     D3D11_TEXTURE2D_DESC sd;
     src->GetDesc(&sd);
+    if (sd.Format != DXGI_FORMAT_NV12 || sd.Width == 0 || sd.Height == 0) return E_INVALIDARG;
     *w = (int32_t)sd.Width;
     *h = (int32_t)sd.Height;
-    if (sd.Format != DXGI_FORMAT_NV12 || sd.Width == 0 || sd.Height == 0) return E_INVALIDARG;
     ID3D11Device *dev = nullptr;
     src->GetDevice(&dev);
     EnterCriticalSection(&d->cs);
     HRESULT hr = useDevice(d, dev);
     if (SUCCEEDED(hr) && (!d->frame || d->frameW != sd.Width || d->frameH != sd.Height)) {
-        release(d->iv);
-        release(d->vp);
-        release(d->en);
+        releaseProcessor(d);
         release(d->frame);
         D3D11_TEXTURE2D_DESC fd;
         memset(&fd, 0, sizeof fd);
@@ -387,7 +440,7 @@ int32_t mmdispw_enqueue(mmDispW *d, void *tex, int32_t *w, int32_t *h) {
         fd.Format = DXGI_FORMAT_NV12;
         fd.SampleDesc.Count = 1;
         fd.Usage = D3D11_USAGE_DEFAULT;
-        fd.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+        fd.BindFlags = 0; // copy target and video processor input only: no NV12 render target (optional on some GPUs)
         hr = d->dev->CreateTexture2D(&fd, nullptr, &d->frame);
         if (SUCCEEDED(hr)) {
             d->frameW = sd.Width;
@@ -410,7 +463,7 @@ int32_t mmdispw_render_to(mmDispW *d, void *target) {
     D3D11_TEXTURE2D_DESC td;
     t->GetDesc(&td);
     EnterCriticalSection(&d->cs);
-    HRESULT hr = d->frame ? blt(d, t, td.Width, td.Height) : E_UNEXPECTED;
+    HRESULT hr = d->frame ? blt(d, t, td.Width, td.Height, false) : E_UNEXPECTED;
     LeaveCriticalSection(&d->cs);
     return hr;
 }
@@ -420,6 +473,13 @@ void mmdispw_hold(mmDispW *d, int32_t on) {
         EnterCriticalSection(&d->cs);
     else
         LeaveCriticalSection(&d->cs);
+}
+
+void mmdispw_counts(mmDispW *d, int32_t *processors, int32_t *outputViews) {
+    EnterCriticalSection(&d->cs);
+    *processors = d->nProcessors;
+    *outputViews = d->nOutputViews;
+    LeaveCriticalSection(&d->cs);
 }
 
 int32_t mmdispw_presents(mmDispW *d) {
