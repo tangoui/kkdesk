@@ -473,34 +473,118 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   Widget _connectionOverlay() {
     final status = widget.session.status;
     final ended = status.phase == RemotePhase.ended;
-    return Center(
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: context.card,
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 18, 24, 13),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (!ended) const KLoader(radius: 11),
-              if (!ended) const SizedBox(height: 13),
-              Text(
-                ended
-                    ? (status.detail ?? '远程连接已断开')
-                    : (widget.computer.os != ComputerOS.unknown &&
-                              widget.computer.confirmOnHost
-                          ? '等待电脑确认…'
-                          : '正在连接…'),
-                style: TextStyle(color: context.ink, fontSize: 15),
+    final waiting =
+        widget.computer.os != ComputerOS.unknown &&
+        widget.computer.confirmOnHost;
+    final title = ended ? '连接已断开' : (waiting ? '等待电脑确认' : '正在连接');
+    final detail = ended
+        ? (status.detail ?? '远程连接已结束')
+        : (waiting ? '请在电脑上点「接受」' : '正在与电脑建立连接…');
+    return Positioned.fill(
+      key: const ValueKey('remote-connection-overlay'),
+      child: ColoredBox(
+        color: Colors.black.withValues(alpha: ended ? .55 : .35),
+        child: SafeArea(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 300),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: context.card,
+                    borderRadius: BorderRadius.circular(18),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x40000000),
+                        blurRadius: 30,
+                        offset: Offset(0, 12),
+                      ),
+                    ],
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 22, 20, 16),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (ended)
+                          Container(
+                            width: 46,
+                            height: 46,
+                            decoration: BoxDecoration(
+                              color: context.isDark
+                                  ? const Color(0xff3a2a1a)
+                                  : const Color(0xfffff3e0),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              CupertinoIcons.wifi_slash,
+                              size: 22,
+                              color: Color(0xfff08c00),
+                            ),
+                          )
+                        else
+                          const SizedBox(
+                            height: 46,
+                            child: Center(child: KLoader(radius: 13)),
+                          ),
+                        const SizedBox(height: 12),
+                        Text(
+                          title,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: context.ink,
+                            fontSize: 17,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 5),
+                        Text(
+                          ended ? '$detail\n${widget.computer.name}' : detail,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: context.muted,
+                            fontSize: 13,
+                            height: 1.45,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        if (ended)
+                          Row(
+                            children: [
+                              Expanded(
+                                child: KButton(
+                                  key: const ValueKey('remote-back'),
+                                  variant: KButtonVariant.secondary,
+                                  onTap: () => Navigator.pop(context, false),
+                                  label: '返回设备',
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: KButton(
+                                  key: const ValueKey('remote-reconnect'),
+                                  onTap: () => Navigator.pop(context, true),
+                                  label: '重新连接',
+                                ),
+                              ),
+                            ],
+                          )
+                        else
+                          SizedBox(
+                            width: double.infinity,
+                            child: KButton(
+                              variant: KButtonVariant.secondary,
+                              onTap: () => Navigator.pop(context, false),
+                              label: '取消',
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
               ),
-              KButton(
-                variant: KButtonVariant.text,
-                onTap: () => Navigator.pop(context),
-                label: ended ? '返回设备' : '取消',
-              ),
-            ],
+            ),
           ),
         ),
       ),
