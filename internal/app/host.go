@@ -31,6 +31,7 @@ import (
 	"github.com/tangoui/kkdesk/internal/inject"
 	"github.com/tangoui/kkdesk/internal/input"
 	"github.com/tangoui/kkdesk/internal/pairing"
+	"github.com/tangoui/kkdesk/internal/privacy"
 	"github.com/tangoui/kkdesk/internal/rendezvous"
 	"github.com/tangoui/kkdesk/internal/session"
 	"github.com/tangoui/kkdesk/internal/stats"
@@ -78,6 +79,9 @@ type HostConfig struct {
 	BitrateMbps             int // 0 = auto
 	Log                     io.Writer
 	AutoAccept              bool
+	PrivacyPolicy           config.PrivacyPolicy
+	LockAfterDisconnect     bool
+	privacyScreen           func() privacy.Screen
 	Remote                  rendezvous.Config
 	Pairing                 *pairing.Store
 	IdentityErr             error
@@ -126,7 +130,11 @@ type HostState struct {
 	PairingCancellation uint64
 	// ClipboardAccess: the clipboard is synced with the controller's (the
 	// 剪贴板 permission).
-	ClipboardAccess bool
+	ClipboardAccess     bool
+	PrivacyScreen       bool
+	PrivacyRequest      uint64
+	PrivacyDeadline     time.Time
+	LockAfterDisconnect bool
 }
 
 // Host accepts controllers and streams this screen to one at a time. Its
@@ -160,6 +168,7 @@ type Host struct {
 	mobile            mobileHostState
 	passwordGate      session.PasswordGate
 	passwordLockTimer *time.Timer
+	privacy           *hostPrivacy
 
 	fileAccess atomic.Bool // current 文件传输 permission
 	clipAccess atomic.Bool // current 剪贴板 permission
@@ -182,6 +191,9 @@ func NewHost(cfg HostConfig, notify func()) *Host {
 	}
 	if cfg.Rotate == "" {
 		cfg.Rotate = config.RotateNever
+	}
+	if cfg.privacyScreen == nil {
+		cfg.privacyScreen = privacy.NewScreen
 	}
 	h := &Host{cfg: cfg, notify: notify, addrs: LocalIPv4()}
 	h.remote.code = h.deviceCode()
@@ -461,6 +473,11 @@ func (h *Host) State() HostState {
 	s := HostState{Phase: h.phase, Addrs: h.addrs, Port: Port, Password: h.password, Err: h.errMsg, Notice: h.notice,
 		FileAccess: h.fileAccess.Load(), ClipboardAccess: h.clipAccess.Load(), Enabled: h.wantOn, PasswordSince: h.pwSince, Rotate: h.cfg.Rotate,
 		HasFixed: h.cfg.Fixed != "", AutoAccept: h.cfg.AutoAccept, PairingCancellation: h.mobile.cancellation}
+	if h.privacy != nil {
+		state := h.privacy.state()
+		s.PrivacyScreen, s.PrivacyRequest, s.PrivacyDeadline = state.on, state.request, state.deadline
+		s.LockAfterDisconnect = state.lockAfter
+	}
 	s.DeviceCode = h.remote.code
 	s.PasswordLockSeconds = int((h.passwordGate.Remaining(time.Now()) + time.Second - 1) / time.Second)
 	if h.remote.online {
@@ -829,6 +846,7 @@ func (h *Host) handle(p *session.Peer, listenCtx context.Context, remote bool, p
 		p.Close()
 		h.mu.Lock()
 		h.busy, h.peer, h.decide, h.fsrv = false, nil, nil, nil
+		h.privacy = nil
 		h.remotePeer = false
 		h.mobile.peerKey = ""
 		h.mobile.biometricEnrollment = false
@@ -882,6 +900,7 @@ func (h *Host) handle(p *session.Peer, listenCtx context.Context, remote bool, p
 	accepted = true
 	h.serveFiles(p)
 	if p.Mode() == session.ModeFiles {
+		p.OnPrivacy(func(session.PrivacyMessage) {})
 		h.mu.Lock()
 		h.phase, h.since = HostActive, time.Now()
 		h.mu.Unlock()
@@ -974,12 +993,28 @@ func (h *Host) stream(p *session.Peer) error {
 	vs.capt = capt
 	vs.mu.Unlock()
 	p.OnQuality(vs.setQuality)
+	requests := make(chan session.PrivacyMessage, 16)
+	h.mu.Lock()
+	ps := newHostPrivacy(h.cfg.PrivacyPolicy, h.cfg.privacyScreen(), nil,
+		func(status session.PrivacyStatus, detail string) {
+			_ = p.SendPrivacy(session.PrivacyMessage{Kind: session.PrivacyState, Status: status, Detail: detail})
+		}, h.notify)
+	h.privacy = ps
+	h.mu.Unlock()
+	p.OnPrivacy(func(m session.PrivacyMessage) {
+		select {
+		case requests <- m:
+		default:
+		}
+	})
 	tk := time.NewTicker(StatsSummaryInterval)
 loop:
 	for {
 		select {
 		case <-p.Done():
 			break loop
+		case m := <-requests:
+			ps.handle(p, m)
 		case <-accessibilityTick:
 			refreshAccessibility()
 		case <-tk.C:
@@ -987,6 +1022,8 @@ loop:
 		}
 	}
 	tk.Stop()
+	p.OnPrivacy(nil)
+	ps.close()
 	st := capt.Stats()
 	capt.Close() // no frame callbacks after this
 	log.Printf("kkdesk host: capture frames complete=%d idle=%d other=%d display-after-callback=%d resent=%d reopened=%d",

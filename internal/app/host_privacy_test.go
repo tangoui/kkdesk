@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/tangoui/kkdesk/internal/config"
+	"github.com/tangoui/kkdesk/internal/session"
 )
 
 type fakePrivacyScreen struct {
@@ -26,13 +27,13 @@ func (s *fakePrivacyScreen) Show(_ func([]uint32) error, exit func(error)) error
 func (s *fakePrivacyScreen) Hide() { s.shown = false }
 
 type privacyTestResult struct {
-	status privacyStatus
+	status session.PrivacyStatus
 	detail string
 }
 
 func testPrivacyScreen(policy config.PrivacyPolicy, screen *fakePrivacyScreen) (*hostPrivacy, *[]privacyTestResult) {
 	var results []privacyTestResult
-	p := newHostPrivacy(policy, screen, nil, func(status privacyStatus, detail string) {
+	p := newHostPrivacy(policy, screen, nil, func(status session.PrivacyStatus, detail string) {
 		results = append(results, privacyTestResult{status, detail})
 	}, func() {})
 	return p, &results
@@ -41,12 +42,12 @@ func testPrivacyScreen(policy config.PrivacyPolicy, screen *fakePrivacyScreen) (
 func TestHostPrivacyPolicy(t *testing.T) {
 	for _, tc := range []struct {
 		policy config.PrivacyPolicy
-		on     privacyStatus
+		on     session.PrivacyStatus
 		shown  bool
 	}{
-		{config.PrivacyDeny, privacyNotAllowed, false},
-		{config.PrivacyAsk, privacyWaiting, false},
-		{config.PrivacyAllow, privacyOn, true},
+		{config.PrivacyDeny, session.PrivacyNotAllowed, false},
+		{config.PrivacyAsk, session.PrivacyWaiting, false},
+		{config.PrivacyAllow, session.PrivacyOn, true},
 	} {
 		t.Run(string(tc.policy), func(t *testing.T) {
 			screen := &fakePrivacyScreen{}
@@ -56,7 +57,7 @@ func TestHostPrivacyPolicy(t *testing.T) {
 				t.Fatalf("enable: results = %v, shown = %v", *results, screen.shown)
 			}
 			p.set(false)
-			if len(*results) != 2 || (*results)[1].status != privacyOff || screen.shown || p.state().request != 0 {
+			if len(*results) != 2 || (*results)[1].status != session.PrivacyOff || screen.shown || p.state().request != 0 {
 				t.Fatalf("disable: state = %+v, results = %v, shown = %v", p.state(), *results, screen.shown)
 			}
 		})
@@ -76,7 +77,7 @@ func TestHostPrivacyConsentExpiresAndRejectsStaleAnswer(t *testing.T) {
 		}
 		time.Sleep(time.Second)
 		synctest.Wait()
-		if screen.shown || p.state().request != 0 || (*results)[1].status != privacyDenied {
+		if screen.shown || p.state().request != 0 || (*results)[1].status != session.PrivacyDenied {
 			t.Fatalf("expired request: state = %+v, results = %v", p.state(), *results)
 		}
 		p.set(true)
@@ -86,7 +87,7 @@ func TestHostPrivacyConsentExpiresAndRejectsStaleAnswer(t *testing.T) {
 			t.Fatal("stale answer changed a new request")
 		}
 		p.answer(second, true)
-		if !screen.shown || (*results)[len(*results)-1].status != privacyOn {
+		if !screen.shown || (*results)[len(*results)-1].status != session.PrivacyOn {
 			t.Fatal("answering the current request did not enable the screen")
 		}
 	})
@@ -97,11 +98,11 @@ func TestHostPrivacyLocalExitRequiresConsentAgain(t *testing.T) {
 	p, results := testPrivacyScreen(config.PrivacyAllow, screen)
 	p.set(true)
 	screen.exit(nil)
-	if screen.shown || (*results)[1].status != privacyLocalExit {
+	if screen.shown || (*results)[1].status != session.PrivacyLocalExit {
 		t.Fatalf("local exit: shown = %v, results = %v", screen.shown, *results)
 	}
 	p.set(true)
-	if screen.shown || (*results)[2].status != privacyWaiting {
+	if screen.shown || (*results)[2].status != session.PrivacyWaiting {
 		t.Fatalf("re-request: shown = %v, results = %v", screen.shown, *results)
 	}
 	p.set(false)
@@ -115,7 +116,7 @@ func TestHostPrivacyPolicyChange(t *testing.T) {
 		request := p.state().request
 		p.setPolicy(config.PrivacyDeny)
 		p.answer(request, true)
-		if screen.shown || p.state().request != 0 || (*results)[len(*results)-1].status != privacyNotAllowed {
+		if screen.shown || p.state().request != 0 || (*results)[len(*results)-1].status != session.PrivacyNotAllowed {
 			t.Fatalf("denying policy %s: state = %+v, results = %v", policy, p.state(), *results)
 		}
 	}
@@ -133,7 +134,7 @@ func TestHostPrivacyScreenFailure(t *testing.T) {
 	screen := &fakePrivacyScreen{err: errors.New("test failure")}
 	p, results := testPrivacyScreen(config.PrivacyAllow, screen)
 	p.set(true)
-	if p.state().on || len(*results) != 1 || (*results)[0] != (privacyTestResult{privacyUnsupported, "test failure"}) {
+	if p.state().on || len(*results) != 1 || (*results)[0] != (privacyTestResult{session.PrivacyUnsupported, "test failure"}) {
 		t.Fatalf("failed screen: state = %+v, results = %v", p.state(), *results)
 	}
 }

@@ -7,26 +7,16 @@ import (
 
 	"github.com/tangoui/kkdesk/internal/config"
 	"github.com/tangoui/kkdesk/internal/privacy"
+	"github.com/tangoui/kkdesk/internal/session"
 )
 
 const privacyConsentTimeout = 30 * time.Second
 
-type privacyStatus byte
-
-const (
-	privacyOff privacyStatus = iota
-	privacyOn
-	privacyWaiting
-	privacyDenied
-	privacyNotAllowed
-	privacyUnsupported
-	privacyLocalExit
-)
-
 type hostPrivacyState struct {
-	on       bool
-	request  uint64
-	deadline time.Time
+	on        bool
+	lockAfter bool
+	request   uint64
+	deadline  time.Time
 }
 
 // hostPrivacy serializes native operations off the main thread. The UI
@@ -36,7 +26,7 @@ type hostPrivacy struct {
 	policy  config.PrivacyPolicy
 	screen  privacy.Screen
 	exclude func([]uint32) error
-	report  func(privacyStatus, string)
+	report  func(session.PrivacyStatus, string)
 	notify  func()
 
 	current   atomic.Pointer[hostPrivacyState]
@@ -44,10 +34,11 @@ type hostPrivacy struct {
 	consent   *time.Timer
 	askAgain  bool
 	showID    uint64
+	closed    bool
 }
 
 func newHostPrivacy(policy config.PrivacyPolicy, screen privacy.Screen, exclude func([]uint32) error,
-	report func(privacyStatus, string), notify func()) *hostPrivacy {
+	report func(session.PrivacyStatus, string), notify func()) *hostPrivacy {
 	return &hostPrivacy{policy: policy, screen: screen, exclude: exclude, report: report, notify: notify}
 }
 
@@ -58,7 +49,8 @@ func (p *hostPrivacy) state() hostPrivacyState {
 	return hostPrivacyState{}
 }
 
-func (p *hostPrivacy) publish(state hostPrivacyState, status privacyStatus, detail string) {
+func (p *hostPrivacy) publish(state hostPrivacyState, status session.PrivacyStatus, detail string) {
+	state.lockAfter = p.state().lockAfter
 	p.current.Store(&state)
 	p.report(status, detail)
 	p.notify()
@@ -67,18 +59,21 @@ func (p *hostPrivacy) publish(state hostPrivacyState, status privacyStatus, deta
 func (p *hostPrivacy) set(on bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.closed {
+		return
+	}
 	state := p.state()
 	switch {
 	case !on:
 		p.cancelConsent()
 		p.hide()
-		p.publish(hostPrivacyState{}, privacyOff, "")
+		p.publish(hostPrivacyState{}, session.PrivacyOff, "")
 	case p.policy == config.PrivacyDeny:
-		p.publish(hostPrivacyState{}, privacyNotAllowed, "")
+		p.publish(hostPrivacyState{}, session.PrivacyNotAllowed, "")
 	case state.on:
-		p.report(privacyOn, "")
+		p.report(session.PrivacyOn, "")
 	case state.request != 0:
-		p.report(privacyWaiting, "")
+		p.report(session.PrivacyWaiting, "")
 	case p.policy == config.PrivacyAllow && !p.askAgain:
 		p.show()
 	default:
@@ -86,7 +81,7 @@ func (p *hostPrivacy) set(on bool) {
 		id := p.requestID
 		deadline := time.Now().Add(privacyConsentTimeout)
 		p.consent = time.AfterFunc(time.Until(deadline), func() { p.answer(id, false) })
-		p.publish(hostPrivacyState{request: id, deadline: deadline}, privacyWaiting, "")
+		p.publish(hostPrivacyState{request: id, deadline: deadline}, session.PrivacyWaiting, "")
 	}
 }
 
@@ -99,7 +94,7 @@ func (p *hostPrivacy) answer(id uint64, allow bool) {
 	}
 	p.cancelConsent()
 	if !allow || !time.Now().Before(state.deadline) {
-		p.publish(hostPrivacyState{}, privacyDenied, "")
+		p.publish(hostPrivacyState{}, session.PrivacyDenied, "")
 		return
 	}
 	p.show()
@@ -113,7 +108,7 @@ func (p *hostPrivacy) setPolicy(policy config.PrivacyPolicy) {
 	if policy == config.PrivacyDeny && (s.on || s.request != 0) {
 		p.cancelConsent()
 		p.hide()
-		p.publish(hostPrivacyState{}, privacyNotAllowed, "")
+		p.publish(hostPrivacyState{}, session.PrivacyNotAllowed, "")
 	}
 }
 
@@ -128,10 +123,10 @@ func (p *hostPrivacy) show() {
 	p.showID++
 	id := p.showID
 	if err := p.screen.Show(p.exclude, func(err error) { p.exited(id, err) }); err != nil {
-		p.publish(hostPrivacyState{}, privacyUnsupported, err.Error())
+		p.publish(hostPrivacyState{}, session.PrivacyUnsupported, err.Error())
 		return
 	}
-	p.publish(hostPrivacyState{on: true}, privacyOn, "")
+	p.publish(hostPrivacyState{on: true}, session.PrivacyOn, "")
 }
 
 func (p *hostPrivacy) hide() {
@@ -148,9 +143,35 @@ func (p *hostPrivacy) exited(id uint64, err error) {
 	}
 	p.hide()
 	if err != nil {
-		p.publish(hostPrivacyState{}, privacyUnsupported, err.Error())
+		p.publish(hostPrivacyState{}, session.PrivacyUnsupported, err.Error())
 		return
 	}
 	p.askAgain = true
-	p.publish(hostPrivacyState{}, privacyLocalExit, "")
+	p.publish(hostPrivacyState{}, session.PrivacyLocalExit, "")
+}
+
+func (p *hostPrivacy) handle(peer *session.Peer, m session.PrivacyMessage) {
+	switch m.Kind {
+	case session.PrivacyRequest:
+		p.set(m.Status == session.PrivacyOn)
+	case session.LockOnDisconnectRequest:
+		p.mu.Lock()
+		s := p.state()
+		s.lockAfter = m.Status == session.PrivacyOn
+		p.current.Store(&s)
+		p.mu.Unlock()
+		_ = peer.SendPrivacy(session.PrivacyMessage{Kind: session.LockOnDisconnectState, Status: m.Status})
+		p.notify()
+	case session.LockNowRequest:
+		_ = peer.SendPrivacy(session.PrivacyMessage{Kind: session.LockNowResult, Status: session.PrivacyUnsupported, Detail: "当前平台不支持锁屏"})
+	}
+}
+
+func (p *hostPrivacy) close() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.closed = true
+	p.cancelConsent()
+	p.hide()
+	p.current.Store(nil)
 }
