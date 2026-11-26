@@ -199,5 +199,8 @@ Stream<String> boundedLines(Stream<List<int>> bytes) async* {
       throw const FormatException('signaling message too long');
     }
   }
-  if (pending.isNotEmpty) yield utf8.decode(pending);
+  if (pending.isNotEmpty) {
+    final line = utf8.decode(pending);
+    yield line.endsWith('\r') ? line.substring(0, line.length - 1) : line;
+  }
 }

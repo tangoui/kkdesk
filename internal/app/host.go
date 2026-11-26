@@ -109,10 +109,10 @@ type HostState struct {
 	Since         time.Time // active: session start; pending: request time
 	// Request identifies the pending request; pass it to AcceptRequest or
 	// RejectRequest so a click cannot answer a request that replaced it.
-	Request uint64
-	Deadline      time.Time // pending: automatic rejection
-	Err           string    // last error or permission guidance
-	Notice        string    // informational message (e.g. last session ended)
+	Request  uint64
+	Deadline time.Time // pending: automatic rejection
+	Err      string    // last error or permission guidance
+	Notice   string    // informational message (e.g. last session ended)
 	// FilesOnly: the controller connected only to transfer files (no
 	// screen is shared).
 	FilesOnly bool
@@ -696,23 +696,35 @@ func (h *Host) RefreshPassword() {
 	h.notify()
 }
 
+// anyRequest answers whichever request is pending (Accept, Reject).
+const anyRequest = 0
+
 // Accept accepts whatever connection is pending.
-func (h *Host) Accept() { h.answer(0, true) }
+func (h *Host) Accept() { h.answer(anyRequest, true) }
 
 // Reject rejects whatever connection is pending.
-func (h *Host) Reject() { h.answer(0, false) }
+func (h *Host) Reject() { h.answer(anyRequest, false) }
 
 // AcceptRequest accepts the pending connection if it is still request id
-// (HostState.Request).
-func (h *Host) AcceptRequest(id uint64) { h.answer(id, true) }
+// (HostState.Request); 0 (no request shown) does nothing.
+func (h *Host) AcceptRequest(id uint64) {
+	if id != anyRequest {
+		h.answer(id, true)
+	}
+}
 
-// RejectRequest rejects the pending connection if it is still request id.
-func (h *Host) RejectRequest(id uint64) { h.answer(id, false) }
+// RejectRequest rejects the pending connection if it is still request id;
+// 0 does nothing.
+func (h *Host) RejectRequest(id uint64) {
+	if id != anyRequest {
+		h.answer(id, false)
+	}
+}
 
 // answer decides the pending request; id 0 means whichever is pending.
 func (h *Host) answer(id uint64, ok bool) {
 	h.mu.Lock()
-	if id != 0 && id != h.request {
+	if id != anyRequest && id != h.request {
 		h.mu.Unlock()
 		return
 	}

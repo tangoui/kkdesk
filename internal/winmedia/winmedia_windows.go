@@ -37,7 +37,8 @@ var dev struct {
 func ComInit() { C.mmwm_com_init() }
 
 // Device returns the process-wide ID3D11Device* and IMFDXGIDeviceManager*
-// (borrowed references, valid until the device is lost) and a generation
+// (borrowed references that are never released, so they stay valid even
+// after the device is lost and replaced) and a generation
 // number that changes whenever the device is re-created. The device is
 // created on first use; a removed device (driver update, TDR) is replaced.
 func Device() (device, manager uintptr, gen uint64, err error) {

@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -145,11 +146,18 @@ func run(o options) error {
 	// window instead of opening the same settings and port again (both would
 	// listen, and each would save its own copy of the settings over the
 	// other's). Claimed before the settings are read.
-	if wantsSingleInstance(o, os.Getenv("TANGO_DEV_ROLE")) {
-		dir, _ := config.Dir()
+	devRole := ""
+	if !releaseBuild { // production builds ignore tan dev's variable
+		devRole = os.Getenv("TANGO_DEV_ROLE")
+	}
+	if wantsSingleInstance(o, devRole) {
+		dir, err := config.Dir()
+		if err != nil {
+			dir = "." // where openStore falls back to
+		}
 		primary, err := single.Claim(a, single.Options{Key: singleInstanceKey(dir)})
 		if !primary {
-			log.Printf("kkdesk: already running; showing that window")
+			log.Printf("kkdesk: already running; handed over to it (%v)", err)
 			return nil
 		}
 		if err != nil {
@@ -396,6 +404,12 @@ func wantsSingleInstance(o options, devRole string) bool {
 // singleInstanceKey names the app instance of a configuration folder, so a
 // second instance with its own KKDESK_CONFIG_DIR still runs.
 func singleInstanceKey(configDir string) string {
+	if abs, err := filepath.Abs(configDir); err == nil {
+		configDir = abs
+	}
+	if runtime.GOOS == "windows" { // one folder, however it is spelled
+		configDir = strings.ToLower(configDir)
+	}
 	sum := sha256.Sum256([]byte(filepath.Clean(configDir)))
 	return "com.kkdesk.desktop-" + hex.EncodeToString(sum[:8])
 }
