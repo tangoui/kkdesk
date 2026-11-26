@@ -39,7 +39,13 @@ const pixelFormatNV12 = 0x34323076
 type darwinSession struct {
 	out    func(Frame)
 	handle cgo.Handle
-	w, h   int
+	w, h   int // guarded by mu after Start (a restart may change them)
+
+	// What the stream is started with, again on a restart.
+	maxWidth   int
+	excludeApp string
+	interval   int64 // ns; guarded by mu
+	rs         *restarter
 
 	// wall/machNs map SCStreamFrameInfoDisplayTime (mach absolute time in
 	// ns) to Go time: CaptureAt = wall + (displayNs - machNs).
@@ -64,30 +70,61 @@ func Start(opts Options, out func(Frame)) (Session, error) {
 	if fps <= 0 {
 		fps = 30
 	}
-	s := &darwinSession{out: out}
+	s := &darwinSession{out: out, maxWidth: opts.MaxWidth, excludeApp: opts.ExcludeApp,
+		interval: int64(minFrameInterval(fps))}
 	s.machNs = uint64(C.mmcap_now_ns())
 	s.wall = time.Now()
+	s.rs = &restarter{delays: []time.Duration{200 * time.Millisecond, time.Second, 2 * time.Second}, reopen: s.reopen}
 	s.handle = cgo.NewHandle(s)
 
-	cExclude := C.CString(opts.ExcludeApp)
+	ptr, w, h, err := s.start(s.interval)
+	if err != nil {
+		s.closed.Store(true)
+		s.handle.Delete()
+		return nil, err
+	}
+	s.ptr = ptr
+	s.w, s.h = w, h
+	return s, nil
+}
+
+// start starts a stream with the session's options.
+func (s *darwinSession) start(interval int64) (unsafe.Pointer, int, int, error) {
+	cExclude := C.CString(s.excludeApp)
 	defer C.free(unsafe.Pointer(cExclude))
 	var cw, ch C.int
 	var cerr *C.char
-	ptr := C.mmcap_start(C.int64_t(minFrameInterval(fps)), C.int(opts.MaxWidth), cExclude,
-		C.uintptr_t(s.handle), &cw, &ch, &cerr)
+	ptr := C.mmcap_start(C.int64_t(interval), C.int(s.maxWidth), cExclude, C.uintptr_t(s.handle), &cw, &ch, &cerr)
 	if ptr == nil {
-		s.closed.Store(true)
-		s.handle.Delete()
 		msg := "capture: start failed"
 		if cerr != nil {
 			msg = C.GoString(cerr)
 			C.free(unsafe.Pointer(cerr))
 		}
-		return nil, errors.New(msg)
+		return nil, 0, 0, errors.New(msg)
 	}
+	return ptr, int(cw), int(ch), nil
+}
+
+// reopen replaces a stream the system stopped with a new one (restarter).
+func (s *darwinSession) reopen() error {
+	s.mu.Lock()
+	old := s.ptr
+	s.ptr = nil
+	interval := s.interval
+	s.mu.Unlock()
+	if old != nil {
+		C.mmcap_stop(old)
+	}
+	ptr, w, h, err := s.start(interval)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
 	s.ptr = ptr
-	s.w, s.h = int(cw), int(ch)
-	return s, nil
+	s.w, s.h = w, h
+	s.mu.Unlock()
+	return nil
 }
 
 func (s *darwinSession) SetFPS(fps int) {
@@ -96,24 +133,31 @@ func (s *darwinSession) SetFPS(fps int) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.interval = int64(minFrameInterval(fps))
 	if s.ptr == nil {
 		return
 	}
-	C.mmcap_set_fps(s.ptr, C.int64_t(minFrameInterval(fps)))
+	C.mmcap_set_fps(s.ptr, C.int64_t(s.interval))
 }
 
-func (s *darwinSession) Size() (int, int) { return s.w, s.h }
+func (s *darwinSession) Size() (int, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w, s.h
+}
 
 func (s *darwinSession) Close() {
-	s.closed.Store(true)
+	if s.closed.Swap(true) {
+		return
+	}
+	s.rs.close() // a running restart finishes first; its stream is stopped below
 	s.mu.Lock()
 	ptr := s.ptr
 	s.ptr = nil
 	s.mu.Unlock()
-	if ptr == nil {
-		return
+	if ptr != nil { // nil when the last restart failed
+		C.mmcap_stop(ptr)
 	}
-	C.mmcap_stop(ptr)
 	s.handle.Delete()
 }
 
@@ -138,6 +182,15 @@ func mmcapGoFrame(handle C.uintptr_t, pixels C.uintptr_t, displayNs, arrivalNs C
 		CaptureAt: wall(capNs), ArrivedAt: wall(uint64(arrivalNs)), DisplayAt: wall(uint64(displayNs))})
 }
 
+//export mmcapGoStopped
+func mmcapGoStopped(handle C.uintptr_t, msg *C.char) {
+	s, ok := cgo.Handle(handle).Value().(*darwinSession)
+	if !ok || s.closed.Load() {
+		return
+	}
+	s.rs.trigger(C.GoString(msg))
+}
+
 //export mmcapGoStatus
 func mmcapGoStatus(handle C.uintptr_t, status C.int) {
 	s, ok := cgo.Handle(handle).Value().(*darwinSession)
@@ -153,7 +206,8 @@ func mmcapGoStatus(handle C.uintptr_t, status C.int) {
 }
 
 func (s *darwinSession) Stats() Stats {
-	return Stats{Complete: s.complete.Load(), Idle: s.idle.Load(), Other: s.other.Load(), Late: s.late.Load()}
+	return Stats{Complete: s.complete.Load(), Idle: s.idle.Load(), Other: s.other.Load(), Late: s.late.Load(),
+		Reopened: s.rs.reopened()}
 }
 
 //export mmcapScaledSize

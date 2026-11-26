@@ -131,7 +131,8 @@ type Stats struct {
 	// They are not included in Complete.
 	Resent uint64
 	// Reopened counts re-created duplications (Windows: access lost on
-	// mode change, UAC/lock screen, device loss).
+	// mode change, UAC/lock screen, device loss) or restarted streams
+	// (macOS: stopped by the system, e.g. around a screenshot).
 	Reopened uint64
 	// AcquireTotal sums the time spent in AcquireNextFrame calls that
 	// returned a new image (Windows; average = AcquireTotal/Complete).
