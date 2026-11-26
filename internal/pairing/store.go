@@ -119,7 +119,12 @@ func (s *Store) PublicKey() string   { return s.public }
 func (s *Store) Fingerprint() string { return s.fingerprint }
 
 func (s *Store) DeviceCode() string {
-	sum := sha256.Sum256([]byte(s.id))
+	public, _ := PublicKey(s.public)
+	return DeviceCode(public)
+}
+
+func DeviceCode(public []byte) string {
+	sum := sha256.Sum256([]byte(DeviceID(public)))
 	return "KD-" + base32.StdEncoding.EncodeToString(sum[:])[:12]
 }
 

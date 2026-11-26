@@ -17,7 +17,7 @@ const testPassword = "123456"
 // connect starts a Host on loopback and dials it, returning both peers.
 func connect(t *testing.T) (host, ctl *Peer) {
 	t.Helper()
-	h, err := Listen("127.0.0.1:0", testPassword)
+	h, err := listenForTest(t, "127.0.0.1:0", testPassword, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func connect(t *testing.T) (host, ctl *Peer) {
 }
 
 func TestBadPasswordThenGood(t *testing.T) {
-	h, err := Listen("127.0.0.1:0", testPassword)
+	h, err := listenForTest(t, "127.0.0.1:0", testPassword, "")
 	if err != nil {
 		t.Fatal(err)
 	}

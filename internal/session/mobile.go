@@ -2,7 +2,6 @@ package session
 
 import (
 	"context"
-	"errors"
 	"io"
 	"net"
 
@@ -31,9 +30,9 @@ func OpenMobileLAN(ctx context.Context, address string) (*MobileLAN, error) {
 		return nil, err
 	}
 	sc, close := newSigConn(ctx, conn)
-	if msg, err := sc.recv(); err != nil || msg.Nonce == "" {
+	if msg, err := sc.recv(); err != nil || msg.Version != lanVersion {
 		close()
-		return nil, errors.New("missing LAN challenge")
+		return nil, ErrHostSignature
 	}
 	return &MobileLAN{sc: sc, close: close}, nil
 }

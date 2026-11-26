@@ -388,6 +388,26 @@ class RealPairingService implements PairingService {
     final challenge = pair.challenge;
     final name = challenge['name'] as String?;
     final verifiedTarget = target.verified(pair.transcript.hostKey);
+    if (devices.matchingComputer(verifiedTarget) case final existing?) {
+      final previous = devices.target(existing.id)!;
+      try {
+        await devices._updateFromScan(
+          previous,
+          target.manual ? previous : verifiedTarget,
+          name,
+        );
+      } finally {
+        await pair.transport.close();
+      }
+      return PairRequest(
+        computer: existing,
+        server: target.server,
+        verificationCode: '',
+        statuses: Stream.value(PairStatus.alreadyPaired),
+        cancel: () {},
+        initialStatus: PairStatus.alreadyPaired,
+      );
+    }
     final computer = Computer(
       id: verifiedTarget.id,
       name: name == null || name.isEmpty ? 'kkdesk 电脑' : name,
@@ -438,12 +458,6 @@ class RealPairingService implements PairingService {
         if (cancelled) return;
         final status = switch (reply['status']) {
           'committed' => PairStatus.success,
-          'already_paired'
-              when devices.matchingComputer(verifiedTarget) != null =>
-            PairStatus.alreadyPaired,
-          'already_paired' => throw const PairFailure(
-            '电脑仍保留这台手机的旧配对，请先在电脑端「已配对手机」中移除后再扫码',
-          ),
           'busy' => throw const PairFailure('电脑正在处理另一个配对请求，请稍后再试'),
           'invalid' => throw const PairFailure('手机信息无效'),
           'rejected' => PairStatus.rejected,
@@ -452,7 +466,7 @@ class RealPairingService implements PairingService {
           final status => throw PairFailure('配对失败（${status ?? '无状态码'}）'),
         };
         if (status == PairStatus.success) {
-          if (approval == null || reply['nonce'] != approval) {
+          if (reply['nonce'] != (approval ?? pair.transcript.hostNonce)) {
             throw const PairTrustFailure('电脑配对确认无效');
           }
           final record = Computer(
@@ -463,13 +477,6 @@ class RealPairingService implements PairingService {
           );
           await devices.savePair(record, verifiedTarget);
           unawaited(devices.refresh());
-        } else if (status == PairStatus.alreadyPaired) {
-          final previous = devices.target(computer.id)!;
-          await devices._updateFromScan(
-            previous,
-            target.manual ? previous : verifiedTarget,
-            name,
-          );
         }
         if (!cancelled) states.add(status);
       } on TimeoutException {

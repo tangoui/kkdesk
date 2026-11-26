@@ -369,3 +369,29 @@ func TestFixedPasswordWhitespace(t *testing.T) {
 		t.Fatalf("repaired fixed password = %q", s.FixedPassword)
 	}
 }
+
+func TestConnectedPinsHostKeyOnce(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now()
+	first, firstUse, err := s.ConnectedWithHostKey("my-host", at, "key-a")
+	if err != nil || !firstUse {
+		t.Fatalf("first connection = %+v, %v, %v", first, firstUse, err)
+	}
+	if _, _, err := s.ConnectedWithHostKey("MY-HOST:21118", at, "key-b"); !errors.Is(err, ErrHostKeyChanged) {
+		t.Fatalf("competing first connection: %v", err)
+	}
+	s, err = Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.HostKey("MY-HOST:21118"); got != "key-a" {
+		t.Fatalf("saved identity = %q", got)
+	}
+	if d, firstUse, err := s.ConnectedWithHostKey("my-host", at, "key-a"); err != nil || firstUse || d.ID != first.ID {
+		t.Fatalf("reconnect = %+v, %v, %v", d, firstUse, err)
+	}
+}

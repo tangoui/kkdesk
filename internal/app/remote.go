@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"log"
 	"time"
 
 	"github.com/coder/websocket"
@@ -34,7 +33,7 @@ func (h *Host) SetRemote(cfg rendezvous.Config) {
 }
 
 func (h *Host) startRemoteLocked() {
-	if h.remote.cancel != nil || h.cfg.Remote.URL == "" {
+	if h.remote.cancel != nil || h.cfg.Remote.URL == "" || h.cfg.Pairing == nil {
 		return
 	}
 	if err := h.cfg.Remote.Validate(); err != nil {
@@ -124,42 +123,18 @@ func (h *Host) remoteOffers(ctx context.Context, cfg rendezvous.Config, conn *we
 func (h *Host) answerRemote(ctx context.Context, cfg rendezvous.Config, conn *websocket.Conn, req rendezvous.Offer) {
 	replyCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
-	h.mu.Lock()
-	busy := h.busy
-	h.mu.Unlock()
-	if busy {
-		_ = rendezvous.Reply(replyCtx, conn, req.ID, nil, "对方正在处理其他连接")
-		return
-	}
-	// A controller that proves the temporary or fixed password skips the
-	// confirmation like on the LAN (when 连接前需要确认 is off); a wrong
-	// password is refused like on the LAN. Without a password (an older
-	// controller) the user confirms.
-	h.mu.Lock()
-	passwords := []string{h.password, h.cfg.Fixed}
-	h.mu.Unlock()
-	var auth session.RemoteAuth
-	var authPW string
-	req.SDP.SDP, auth, authPW = session.VerifyRemoteOfferPassword(req.SDP.SDP, passwords...)
-	log.Printf("kkdesk host: cross-network request (%s, %s)", req.Mode, auth)
-	if auth == session.RemoteAuthWrong {
-		_ = rendezvous.Reply(replyCtx, conn, req.ID, nil, "密码错误")
-		return
-	}
-	passwordOK := auth == session.RemoteAuthOK
-	peer, answer, err := session.AnswerRemote(cfg, req)
+	peer, answer, transcript, err := session.AnswerRemote(cfg, req, h.cfg.Pairing)
 	if err != nil {
 		_ = rendezvous.Reply(replyCtx, conn, req.ID, nil, "被控端无法建立跨网连接")
 		return
 	}
-	peer.SetAuthPassword(authPW)
 	if err := rendezvous.Reply(replyCtx, conn, req.ID, answer, ""); err != nil {
 		peer.Close()
 		return
 	}
-	if err := peer.WaitReady(replyCtx); err != nil {
+	if err := peer.AcceptPassword(replyCtx, transcript, h.verifyPassword); err != nil {
 		peer.Close()
 		return
 	}
-	h.handle(peer, ctx, true, passwordOK, "", "")
+	h.handle(peer, ctx, true, "", "")
 }

@@ -7,7 +7,7 @@ import (
 )
 
 func TestSessionsRegistry(t *testing.T) {
-	h := NewHost(HostConfig{Addr: "127.0.0.1:0", Password: "123456", AutoAccept: true, Rotate: config.RotateNever}, nil)
+	h := NewHost(HostConfig{Pairing: testHostIdentity(t), Addr: "127.0.0.1:0", Password: "123456", AutoAccept: true, Rotate: config.RotateNever}, nil)
 	defer h.Close()
 	if err := h.SetEnabled(true); err != nil {
 		t.Fatal(err)

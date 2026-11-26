@@ -19,7 +19,7 @@ func TestHostRetriesWhenPortBusy(t *testing.T) {
 		t.Fatal(err)
 	}
 	addr := busy.Addr().String()
-	h := NewHost(HostConfig{Addr: addr, Password: "123456"}, nil)
+	h := NewHost(HostConfig{Pairing: testHostIdentity(t), Addr: addr, Password: "123456"}, nil)
 	defer h.Close()
 	if err := h.SetEnabled(true); err != nil {
 		t.Fatalf("SetEnabled with a busy port = %v, want nil (retrying)", err)
@@ -51,7 +51,7 @@ func TestHostRetryStopsWhenDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := NewHost(HostConfig{Addr: busy.Addr().String(), Password: "123456"}, nil)
+	h := NewHost(HostConfig{Pairing: testHostIdentity(t), Addr: busy.Addr().String(), Password: "123456"}, nil)
 	defer h.Close()
 	_ = h.SetEnabled(true)
 	_ = h.SetEnabled(false)
@@ -69,7 +69,7 @@ func TestHostStateEnabledWhileRetrying(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer busy.Close()
-	h := NewHost(HostConfig{Addr: busy.Addr().String(), Password: "123456"}, nil)
+	h := NewHost(HostConfig{Pairing: testHostIdentity(t), Addr: busy.Addr().String(), Password: "123456"}, nil)
 	defer h.Close()
 	if h.State().Enabled {
 		t.Fatal("a new host reports Enabled")

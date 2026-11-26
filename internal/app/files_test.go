@@ -15,7 +15,7 @@ import (
 // loopback: no capture starts, the host reports the mode, and turning the
 // 文件传输 permission off denies requests.
 func TestFilesOnlySession(t *testing.T) {
-	h := NewHost(HostConfig{Addr: "127.0.0.1:0", Password: "123456", AutoAccept: true}, nil)
+	h := NewHost(HostConfig{Pairing: testHostIdentity(t), Addr: "127.0.0.1:0", Password: "123456", AutoAccept: true}, nil)
 	if err := h.SetEnabled(true); err != nil {
 		t.Fatal(err)
 	}

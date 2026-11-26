@@ -4,6 +4,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import 'files/file_transfer_service.dart';
+import 'lan_auth.dart';
 import 'lan_session.dart';
 import 'mobile_services.dart';
 import 'pairing/transport.dart';
@@ -19,6 +20,7 @@ class LanRemoteSession extends ChangeNotifier implements RemoteSession {
 
   final String address;
   Future<FileTransferService> get files => _session.files;
+  String? get firstHostCode => _session.firstHostCode;
   final String _password;
   final _renderer = RTCVideoRenderer();
   late final LanSession _session = LanSession(
@@ -46,6 +48,8 @@ class LanRemoteSession extends ChangeNotifier implements RemoteSession {
     fps: _status.fps,
     detail: _status.detail,
     accessibilityDenied: _session.accessibilityDenied,
+    firstHostCode: firstHostCode,
+    identityChanged: _status.identityChanged,
   );
   @override
   double get aspectRatio =>
@@ -78,6 +82,7 @@ class LanRemoteSession extends ChangeNotifier implements RemoteSession {
         await _session.connectPaired(address, connect);
       } else {
         await _session.connect(address, _password);
+        if (!_closed && firstHostCode != null) notifyListeners();
       }
       if (_closed || status.phase != RemotePhase.connecting) return;
       _frameTimeout = Timer(firstFrameTimeout, () {
@@ -86,7 +91,9 @@ class LanRemoteSession extends ChangeNotifier implements RemoteSession {
       });
     } catch (error) {
       _onEnded(
-        error is PairFailure
+        error is LanAuthFailure
+            ? error.message
+            : error is PairFailure
             ? error.message
             : error is FormatException
             ? error.message
@@ -95,6 +102,7 @@ class LanRemoteSession extends ChangeNotifier implements RemoteSession {
             : _paired == null
             ? '无法连接电脑，请检查地址、密码和局域网连接。'
             : '无法连接已配对的电脑，请检查电脑和跨网服务是否在线。',
+        identityChanged: error is LanIdentityChanged ? error : null,
       );
     }
   }
@@ -130,11 +138,15 @@ class LanRemoteSession extends ChangeNotifier implements RemoteSession {
     }
   }
 
-  void _onEnded(String reason) {
+  void _onEnded(String reason, {LanIdentityChanged? identityChanged}) {
     if (_closed || status.phase == RemotePhase.ended) return;
     _stats?.cancel();
     _frameTimeout?.cancel();
-    _status = RemoteStatus(phase: RemotePhase.ended, detail: reason);
+    _status = RemoteStatus(
+      phase: RemotePhase.ended,
+      detail: reason,
+      identityChanged: identityChanged,
+    );
     notifyListeners();
   }
 

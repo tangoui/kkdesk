@@ -21,7 +21,10 @@ func (b *memBoard) get() string               { s, _ := b.ReadText(); return s }
 // peers connects a controller to a host over loopback.
 func peers(t *testing.T) (hp, cp *session.Peer) {
 	t.Helper()
-	ln, err := session.Listen("127.0.0.1:0", "123456")
+	var gate session.PasswordGate
+	ln, err := session.Listen("127.0.0.1:0", testHostIdentity(t), func(tx session.PasswordTranscript, proof []byte) (string, time.Duration) {
+		return gate.Check(time.Now(), tx, proof, "123456", "")
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +61,7 @@ func eventually(t *testing.T, what string, ok func() bool) {
 func TestClipboardSync(t *testing.T) {
 	hp, cp := peers(t)
 	hb, vb := &memBoard{text: "host before"}, &memBoard{text: "viewer before"}
-	h := NewHost(HostConfig{Addr: "127.0.0.1:0", Password: "123456", Clipboard: hb}, nil)
+	h := NewHost(HostConfig{Pairing: testHostIdentity(t), Addr: "127.0.0.1:0", Password: "123456", Clipboard: hb}, nil)
 	defer h.Close()
 	v := NewViewer(ViewerConfig{Addr: "192.0.2.1:21118", Clipboard: vb}, nil)
 	defer h.syncClipboard(hp)()
@@ -102,7 +105,7 @@ func TestClipboardSync(t *testing.T) {
 func TestClipboardSyncFilesOnly(t *testing.T) {
 	hp, cp := peers(t)
 	hb, vb := &memBoard{}, &memBoard{}
-	h := NewHost(HostConfig{Addr: "127.0.0.1:0", Password: "123456", Clipboard: hb}, nil)
+	h := NewHost(HostConfig{Pairing: testHostIdentity(t), Addr: "127.0.0.1:0", Password: "123456", Clipboard: hb}, nil)
 	defer h.Close()
 	defer h.syncClipboard(hp)()
 	v := NewViewer(ViewerConfig{Addr: "192.0.2.1:21118", FilesOnly: true, Clipboard: vb}, nil)

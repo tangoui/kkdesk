@@ -469,6 +469,7 @@ class _HomeState extends State<_Home> {
               ? () async => files ??= TransferConnection(
                   address: session.address,
                   service: await session.files,
+                  firstHostCode: session.firstHostCode,
                   reopen: reopenFiles,
                 )
               : null,

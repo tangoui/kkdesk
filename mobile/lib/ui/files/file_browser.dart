@@ -3,6 +3,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../../files/file_transfer_service.dart';
+import '../../lan_auth.dart';
 import '../common.dart';
 import 'media_upload.dart';
 import 'transfer_center.dart';
@@ -26,6 +27,7 @@ class _FileBrowserState extends State<FileBrowser> {
   bool _selecting = false;
   bool _submitting = false;
   String? _error;
+  LanIdentityChanged? _identityChanged;
 
   @override
   void initState() {
@@ -45,6 +47,7 @@ class _FileBrowserState extends State<FileBrowser> {
     setState(() {
       _busy = true;
       _error = null;
+      _identityChanged = null;
     });
     try {
       var connection = _connection;
@@ -75,7 +78,12 @@ class _FileBrowserState extends State<FileBrowser> {
         _listing = listing;
       });
     } catch (error) {
-      if (mounted) setState(() => _error = transferError(error));
+      if (mounted) {
+        setState(() {
+          _error = transferError(error);
+          _identityChanged = error is LanIdentityChanged ? error : null;
+        });
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -299,6 +307,14 @@ class _FileBrowserState extends State<FileBrowser> {
                 parent: listing.parent,
                 onTap: _busy ? null : _load,
               ),
+            if (_connection?.firstHostCode case final code?)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 5, 20, 8),
+                child: Text(
+                  '对方设备码 $code',
+                  style: TextStyle(color: context.muted),
+                ),
+              ),
             if (_error case final error?)
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 5, 20, 8),
@@ -307,12 +323,31 @@ class _FileBrowserState extends State<FileBrowser> {
                     Expanded(
                       child: Text(error, style: const TextStyle(color: red)),
                     ),
-                    KButton(
-                      label: '重试',
-                      compact: true,
-                      variant: KButtonVariant.secondary,
-                      onTap: _busy ? null : () => _load(listing?.path),
-                    ),
+                    if (_identityChanged case final identity?)
+                      KButton(
+                        label: '忘记这台电脑的身份',
+                        compact: true,
+                        variant: KButtonVariant.secondary,
+                        onTap: () async {
+                          if (await confirmForgetLanIdentity(
+                                context,
+                                identity,
+                              ) &&
+                              mounted) {
+                            setState(() {
+                              _identityChanged = null;
+                              _error = '已忘记电脑身份，可手动重连';
+                            });
+                          }
+                        },
+                      )
+                    else
+                      KButton(
+                        label: '重试',
+                        compact: true,
+                        variant: KButtonVariant.secondary,
+                        onTap: _busy ? null : () => _load(listing?.path),
+                      ),
                   ],
                 ),
               ),

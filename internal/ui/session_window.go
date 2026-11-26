@@ -182,6 +182,9 @@ func (w *sessionWin) strip(c *ui.Context, st app.ViewerState) {
 
 // phaseTags shows the session state next to the tab.
 func (w *sessionWin) phaseTags(c *ui.Context, st app.ViewerState) {
+	if st.FirstHostCode != "" && st.Phase != app.ViewerClosed {
+		ui.Tag(c, "对方设备码 "+st.FirstHostCode).Color("blue")
+	}
 	switch st.Phase {
 	case app.ViewerConnecting, app.ViewerWaiting:
 		ui.Tag(c, "等待对方确认…").Color("processing")

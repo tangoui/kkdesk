@@ -31,7 +31,7 @@ func closeAndWait(t *testing.T, h *Host, v *Viewer) {
 }
 
 func TestHostFixedPassword(t *testing.T) {
-	h := NewHost(HostConfig{Addr: "127.0.0.1:0", Password: "123456", AutoAccept: true, Rotate: config.RotateNever}, nil)
+	h := NewHost(HostConfig{Pairing: testHostIdentity(t), Addr: "127.0.0.1:0", Password: "123456", AutoAccept: true, Rotate: config.RotateNever}, nil)
 	defer h.Close()
 	h.SetFixedPassword("fixedpw1")
 	if err := h.SetEnabled(true); err != nil {
@@ -63,7 +63,7 @@ func TestHostFixedPassword(t *testing.T) {
 }
 
 func TestHostSessionPermissionsResetToDefaults(t *testing.T) {
-	h := NewHost(HostConfig{Addr: "127.0.0.1:0", Password: "123456",
+	h := NewHost(HostConfig{Pairing: testHostIdentity(t), Addr: "127.0.0.1:0", Password: "123456",
 		DisableSessionClipboard: true, DisableSessionFiles: true}, nil)
 	defer h.Close()
 	if err := h.SetEnabled(true); err != nil {
@@ -106,7 +106,7 @@ func TestHostSessionPermissionsResetToDefaults(t *testing.T) {
 func TestHostRotatesAfterSession(t *testing.T) {
 	var mu sync.Mutex
 	var saved []string
-	h := NewHost(HostConfig{Addr: "127.0.0.1:0", Password: "123456", AutoAccept: true, Rotate: config.RotateAfterSession,
+	h := NewHost(HostConfig{Pairing: testHostIdentity(t), Addr: "127.0.0.1:0", Password: "123456", AutoAccept: true, Rotate: config.RotateAfterSession,
 		OnPassword: func(p config.TempPassword) { mu.Lock(); saved = append(saved, p.Password); mu.Unlock() }}, nil)
 	defer h.Close()
 	if err := h.SetEnabled(true); err != nil {
@@ -154,7 +154,7 @@ func TestHostRotatesAfterSession(t *testing.T) {
 
 func TestHostTimedRotation(t *testing.T) {
 	old := time.Now().Add(-13 * time.Hour)
-	h := NewHost(HostConfig{Addr: "127.0.0.1:0", Password: "123456", PasswordSince: old, Rotate: config.Rotate24h}, nil)
+	h := NewHost(HostConfig{Pairing: testHostIdentity(t), Addr: "127.0.0.1:0", Password: "123456", PasswordSince: old, Rotate: config.Rotate24h}, nil)
 	defer h.Close()
 	if h.State().Password != "123456" {
 		t.Fatal("rotated before 24 h")
@@ -163,7 +163,7 @@ func TestHostTimedRotation(t *testing.T) {
 	if s := h.State(); s.Password == "123456" || time.Since(s.PasswordSince) > time.Minute {
 		t.Fatalf("not rotated when due: %+v", s)
 	}
-	h2 := NewHost(HostConfig{Addr: "127.0.0.1:0", Password: "123456", PasswordSince: time.Now().Add(-25 * time.Hour), Rotate: config.Rotate24h}, nil)
+	h2 := NewHost(HostConfig{Pairing: testHostIdentity(t), Addr: "127.0.0.1:0", Password: "123456", PasswordSince: time.Now().Add(-25 * time.Hour), Rotate: config.Rotate24h}, nil)
 	defer h2.Close()
 	if h2.State().Password == "123456" {
 		t.Fatal("an expired saved password was kept at start")
@@ -173,7 +173,7 @@ func TestHostTimedRotation(t *testing.T) {
 // Changing the port restarts the listener only: the running session goes
 // on, the old port stops accepting, the new one accepts.
 func TestHostSetAddrKeepsSession(t *testing.T) {
-	h := NewHost(HostConfig{Addr: "127.0.0.1:0", Password: "123456", AutoAccept: true, Rotate: config.RotateNever}, nil)
+	h := NewHost(HostConfig{Pairing: testHostIdentity(t), Addr: "127.0.0.1:0", Password: "123456", AutoAccept: true, Rotate: config.RotateNever}, nil)
 	defer h.Close()
 	if err := h.SetEnabled(true); err != nil {
 		t.Fatal(err)
@@ -220,7 +220,7 @@ func TestHostSetAddrKeepsSession(t *testing.T) {
 }
 
 func TestHostConfirmSetting(t *testing.T) {
-	h := NewHost(HostConfig{Addr: "127.0.0.1:0", Password: "123456", Rotate: config.RotateNever}, nil)
+	h := NewHost(HostConfig{Pairing: testHostIdentity(t), Addr: "127.0.0.1:0", Password: "123456", Rotate: config.RotateNever}, nil)
 	defer h.Close()
 	if err := h.SetEnabled(true); err != nil {
 		t.Fatal(err)
@@ -250,7 +250,7 @@ func TestHostConfirmSetting(t *testing.T) {
 // Turning remote control off cancels a LAN request still waiting for the
 // user: a late 接受 must not start the session.
 func TestHostDisableCancelsPendingLAN(t *testing.T) {
-	h := NewHost(HostConfig{Addr: "127.0.0.1:0", Password: "123456", Rotate: config.RotateNever}, nil)
+	h := NewHost(HostConfig{Pairing: testHostIdentity(t), Addr: "127.0.0.1:0", Password: "123456", Rotate: config.RotateNever}, nil)
 	defer h.Close()
 	if err := h.SetEnabled(true); err != nil {
 		t.Fatal(err)
@@ -276,7 +276,7 @@ func TestHostDisableCancelsPendingLAN(t *testing.T) {
 // A connection let in by its password alone is refused when that password
 // changed while it was being set up.
 func TestHostPasswordCurrent(t *testing.T) {
-	h := NewHost(HostConfig{Addr: "127.0.0.1:0", Password: "123456", Fixed: "fixed-pass-1", Rotate: config.RotateNever}, nil)
+	h := NewHost(HostConfig{Pairing: testHostIdentity(t), Addr: "127.0.0.1:0", Password: "123456", Fixed: "fixed-pass-1", Rotate: config.RotateNever}, nil)
 	defer h.Close()
 	check := func(pw string, want bool) {
 		t.Helper()
@@ -300,7 +300,7 @@ func TestHostPasswordCurrent(t *testing.T) {
 
 // A connection that stalls in the handshake does not hold up the next one.
 func TestHostStalledHandshakeDoesNotBlock(t *testing.T) {
-	h := NewHost(HostConfig{Addr: "127.0.0.1:0", Password: "123456", Rotate: config.RotateNever}, nil)
+	h := NewHost(HostConfig{Pairing: testHostIdentity(t), Addr: "127.0.0.1:0", Password: "123456", Rotate: config.RotateNever}, nil)
 	defer h.Close()
 	if err := h.SetEnabled(true); err != nil {
 		t.Fatal(err)

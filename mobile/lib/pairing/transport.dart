@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart';
 import 'package:cryptography/cryptography.dart';
 
 import 'pinned_tls.dart';
+import '../lan_auth.dart';
 import 'protocol.dart';
 
 class PairFailure implements Exception {
@@ -74,10 +75,11 @@ class PairTransport {
     );
     try {
       final greeting = await _next(messages, timeout);
-      if (greeting['nonce'] is! String) throw const PairFailure('局域网信令无效');
-    } catch (_) {
+      requireLanV2(greeting);
+    } catch (error) {
       socket.destroy();
       await messages.cancel();
+      if (error is LanAuthFailure) throw PairFailure(error.message);
       rethrow;
     }
     return PairTransport._(

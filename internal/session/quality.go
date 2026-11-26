@@ -46,17 +46,25 @@ func (p *Peer) OnQuality(f func(Quality)) {
 }
 
 func (p *Peer) handleQuality(b []byte) {
+	p.receiveQuality(b, false)
+}
+
+func (p *Peer) savePendingQuality(b []byte) {
+	p.receiveQuality(b, true)
+}
+
+func (p *Peer) receiveQuality(b []byte, pendingOnly bool) {
 	if len(b) != 7 || !p.isHost {
 		return
 	}
 	q := Quality{BitrateBps: int(binary.BigEndian.Uint32(b[1:])), FPS: int(binary.BigEndian.Uint16(b[5:]))}
 	p.mu.Lock()
 	f := p.onQuality
-	if f == nil {
-		p.pendingQuality = &q // the latest request wins
+	if f == nil || pendingOnly {
+		p.pendingQuality = &q
 	}
 	p.mu.Unlock()
-	if f != nil {
+	if f != nil && !pendingOnly {
 		f(q)
 	}
 }

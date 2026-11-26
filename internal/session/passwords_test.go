@@ -36,7 +36,7 @@ func tryDial(t *testing.T, h *Host, pw string) (dialErr, acceptErr error) {
 }
 
 func TestTemporaryAndFixedPasswords(t *testing.T) {
-	h, err := Listen("127.0.0.1:0", "123456", "fixed-pass-1")
+	h, err := listenForTest(t, "127.0.0.1:0", "123456", "fixed-pass-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,38 +51,10 @@ func TestTemporaryAndFixedPasswords(t *testing.T) {
 	}
 }
 
-func TestSetPasswordsInvalidatesOld(t *testing.T) {
-	h, err := Listen("127.0.0.1:0", "123456", "fixed-pass-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer h.Close()
-	h.SetPasswords("123456", "fixed-pass-2")
-	if d, a := tryDial(t, h, "fixed-pass-1"); !errors.Is(d, ErrBadPassword) || !errors.Is(a, ErrBadPassword) {
-		t.Fatalf("old fixed password: dial %v, accept %v", d, a)
-	}
-	for _, pw := range []string{"123456", "fixed-pass-2"} {
-		if d, a := tryDial(t, h, pw); d != nil || a != nil {
-			t.Fatalf("password %q: dial %v, accept %v", pw, d, a)
-		}
-	}
-	// Clearing the fixed password leaves only the temporary one.
-	h.SetPasswords("654321", "")
-	if d, _ := tryDial(t, h, "fixed-pass-2"); !errors.Is(d, ErrBadPassword) {
-		t.Fatalf("cleared fixed password: dial %v", d)
-	}
-	if d, _ := tryDial(t, h, ""); !errors.Is(d, ErrBadPassword) {
-		t.Fatalf("empty password must never match: dial %v", d)
-	}
-	if d, a := tryDial(t, h, "654321"); d != nil || a != nil {
-		t.Fatalf("new temporary password: dial %v, accept %v", d, a)
-	}
-}
-
 // A port probe (connect, close) is reported as ErrProbe, not as an error
 // worth logging.
 func TestProbeConnection(t *testing.T) {
-	h, err := Listen("127.0.0.1:0", "123456")
+	h, err := listenForTest(t, "127.0.0.1:0", "123456", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +109,7 @@ func TestQualityBeforeOnQuality(t *testing.T) {
 // The accepted peer remembers which password it proved, so the app can
 // refuse it if that password changed before the session was let in.
 func TestPeerRemembersItsPassword(t *testing.T) {
-	h, err := Listen("127.0.0.1:0", "123456", "fixed-pass-1")
+	h, err := listenForTest(t, "127.0.0.1:0", "123456", "fixed-pass-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +139,7 @@ func TestPeerRemembersItsPassword(t *testing.T) {
 // A signaling message larger than maxSignalMsg is refused instead of being
 // buffered whole.
 func TestOversizedSignalMessage(t *testing.T) {
-	h, err := Listen("127.0.0.1:0", "123456")
+	h, err := listenForTest(t, "127.0.0.1:0", "123456", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +158,7 @@ func TestOversizedSignalMessage(t *testing.T) {
 	defer c.Close()
 	go func() {
 		// An endless string inside one JSON value.
-		_, _ = c.Write([]byte(`{"mac":"`))
+		_, _ = c.Write([]byte(`{"sdp":"`))
 		chunk := make([]byte, 64<<10)
 		for i := range chunk {
 			chunk[i] = 'A'

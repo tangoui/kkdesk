@@ -76,6 +76,9 @@ func (m *Main) hostCard(c *ui.Context, hs app.HostState) {
 				}, layout.Gap(4), layout.Middle())
 			}
 		}, layout.Gap(4), layout.PadVH(12, 0))
+		if hs.RemoteCode == "" && hs.DeviceCode != "" {
+			ui.Text(c, "本机设备码 "+hs.DeviceCode).Size(12).Secondary()
+		}
 		m.remoteDeviceCode(c, hs)
 		hline(c)
 		// 临时密码
@@ -128,6 +131,9 @@ func (m *Main) hostCard(c *ui.Context, hs app.HostState) {
 		m.permissions(c)
 		if st := hostStatus(hs); st != "" {
 			ui.Text(c, st).Size(12).Tertiary()
+		}
+		if hs.PasswordLockSeconds > 0 {
+			ui.Alert(c, "warning", fmt.Sprintf("多次密码错误，已暂停接受密码连接 %d 秒", hs.PasswordLockSeconds)).ShowIcon(true).Show()
 		}
 		if hs.Err != "" {
 			ui.Alert(c, "warning", hs.Err).ShowIcon(true).Show()

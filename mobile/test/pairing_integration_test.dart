@@ -46,98 +46,118 @@ void main() {
     expect(devices.target(target.id)?.code, isEmpty);
   });
 
-  test(
-    'repeat QR updates only authenticated metadata without claiming the invite',
-    () async {
-      FlutterSecureStorage.setMockInitialValues({});
-      final host = await Ed25519().newKeyPairFromSeed(Uint8List(32));
-      final public = (await host.extractPublicKey()).bytes;
-      final id = desktopID(public);
-      final hostKey = encodePairBytes(public);
-      final fingerprintValue = fingerprint(public);
-      final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
-      addTearDown(server.close);
-      final exchange = Completer<void>();
-      server.listen((socket) async {
-        try {
-          socket.writeln('{"nonce":"legacy"}');
-          final frames = StreamIterator(
-            socket
-                .cast<List<int>>()
-                .transform(utf8.decoder)
-                .transform(const LineSplitter()),
-          );
+  for (final saveDuringScan in [false, true]) {
+    test(
+      saveDuringScan
+          ? 'repeat QR refreshes the route if a matched pairing is saved during the scan'
+          : 'repeat QR updates only authenticated metadata without claiming the invite',
+      () async {
+        FlutterSecureStorage.setMockInitialValues({});
+        final host = await Ed25519().newKeyPairFromSeed(Uint8List(32));
+        final public = (await host.extractPublicKey()).bytes;
+        final id = desktopID(public);
+        final hostKey = encodePairBytes(public);
+        final fingerprintValue = fingerprint(public);
+        final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(server.close);
+        final exchange = Completer<void>();
+        server.listen((socket) async {
           try {
-            expect(await frames.moveNext(), isTrue);
-            final hello =
-                (jsonDecode(frames.current) as PairMessage)['mobile']
-                    as PairMessage;
-            final tx = PairTranscript(
-              purpose: 'pair',
-              clientNonce: hello['nonce'] as String,
-              hostNonce: encodePairBytes(randomPairBytes(32)),
-              clientKey: hello['publicKey'] as String,
-              hostKey: hostKey,
+            socket.writeln('{"version":2}');
+            final frames = StreamIterator(
+              socket
+                  .cast<List<int>>()
+                  .transform(utf8.decoder)
+                  .transform(const LineSplitter()),
             );
-            final challenge = await tx.sign(host, {
-              'type': 'challenge',
-              'publicKey': hostKey,
-              'nonce': tx.hostNonce,
-              'name': '新电脑名称',
-              'os': 'darwin',
-            });
-            socket.writeln(jsonEncode({'mobile': challenge}));
-            await socket.flush();
-            expect(await frames.moveNext(), isFalse);
-            exchange.complete();
+            try {
+              expect(await frames.moveNext(), isTrue);
+              final hello =
+                  (jsonDecode(frames.current) as PairMessage)['mobile']
+                      as PairMessage;
+              final tx = PairTranscript(
+                purpose: 'pair',
+                clientNonce: hello['nonce'] as String,
+                hostNonce: encodePairBytes(randomPairBytes(32)),
+                clientKey: hello['publicKey'] as String,
+                hostKey: hostKey,
+              );
+              final challenge = await tx.sign(host, {
+                'type': 'challenge',
+                'publicKey': hostKey,
+                'nonce': tx.hostNonce,
+                'name': '新电脑名称',
+                'os': 'darwin',
+              });
+              socket.writeln(jsonEncode({'mobile': challenge}));
+              await socket.flush();
+              expect(await frames.moveNext(), isFalse);
+              exchange.complete();
+            } finally {
+              await frames.cancel();
+            }
+          } catch (error, trace) {
+            exchange.completeError(error, trace);
           } finally {
-            await frames.cancel();
+            socket.destroy();
           }
-        } catch (error, trace) {
-          exchange.completeError(error, trace);
-        } finally {
-          socket.destroy();
-        }
-      });
-      final address = '127.0.0.1:${server.port}';
-      final input = Uri(
-        scheme: 'kkdesk',
-        host: 'pair',
-        queryParameters: {
-          'v': '1',
-          'id': id,
-          'fp': fingerprintValue,
-          'c': 'T5PM62LR52NUFR43D3VCXWRTXA',
-          'lan': address,
-          's': 'https://example.test',
-          't': 'test-server-token-with-32-characters',
-        },
-      );
-      final devices = PairedDevices(PairNetwork(PairCredentials()));
-      addTearDown(devices.dispose);
-      final oldTarget = PairTarget(
-        id: id,
-        code: '',
-        fingerprint: fingerprintValue,
-        lan: const ['127.0.0.1:1'],
-        hostKey: hostKey,
-      );
-      await devices.savePair(
-        Computer(id: id, name: '旧电脑名称', os: ComputerOS.mac),
-        oldTarget,
-      );
-      final service = RealPairingService(devices);
-      expect(
-        await (await service.begin(input.toString())).statuses.single,
-        PairStatus.alreadyPaired,
-      );
-      await exchange.future.timeout(const Duration(seconds: 4));
-      expect(devices.computers.single.name, '新电脑名称');
-      expect(devices.target(id)?.server, 'https://example.test');
-      expect(devices.target(id)?.lan, [address]);
-      expect(devices.target(id)?.code, isEmpty);
-    },
-  );
+        });
+        final address = '127.0.0.1:${server.port}';
+        final input = Uri(
+          scheme: 'kkdesk',
+          host: 'pair',
+          queryParameters: {
+            'v': '1',
+            'id': id,
+            'fp': fingerprintValue,
+            'c': 'T5PM62LR52NUFR43D3VCXWRTXA',
+            'lan': address,
+            's': 'https://203.0.113.12:8443',
+            't': 'test-server-token-with-32-characters',
+            'pk': data('values')['serverPin'] as String,
+          },
+        );
+        final devices = PairedDevices(PairNetwork(PairCredentials()));
+        addTearDown(devices.dispose);
+        final oldTarget = PairTarget(
+          id: id,
+          code: '',
+          fingerprint: fingerprintValue,
+          lan: const ['127.0.0.1:1'],
+          server: 'https://old.example.test',
+          token: 'old-server-token-with-32-characters',
+          hostKey: hostKey,
+        );
+        Future<void> saveExistingPairing() => devices.savePair(
+          Computer(id: id, name: '旧电脑名称', os: ComputerOS.mac),
+          oldTarget,
+        );
+        if (!saveDuringScan) await saveExistingPairing();
+        final service = RealPairingService(
+          devices,
+          phoneInfo: () async {
+            await saveExistingPairing();
+            return (name: '手机', model: '测试');
+          },
+        );
+        expect(
+          await (await service.begin(input.toString())).statuses.single,
+          PairStatus.alreadyPaired,
+        );
+        await exchange.future.timeout(const Duration(seconds: 4));
+        expect(devices.computers.single.name, '新电脑名称');
+        expect(devices.target(id)?.server, 'https://203.0.113.12:8443');
+        expect(
+          devices.target(id)?.token,
+          'test-server-token-with-32-characters',
+        );
+        expect(devices.target(id)?.serverKey, data('values')['serverPin']);
+        expect(devices.target(id)?.hostKey, hostKey);
+        expect(devices.target(id)?.lan, [address]);
+        expect(devices.target(id)?.code, isEmpty);
+      },
+    );
+  }
 
   test(
     'matches Go QR, verification code and signatures byte for byte',
@@ -333,6 +353,9 @@ void main() {
     'manual',
     'manual-wrong',
     'lost-commit',
+    'recovered',
+    'manual-recovered',
+    'wrong-recovery-nonce',
     'already_paired',
     'manual-already-paired',
     'busy',
@@ -351,6 +374,8 @@ void main() {
         addTearDown(server.close);
         final manual = outcome.startsWith('manual');
         final alreadyPaired = outcome == 'manual-already-paired';
+        final recovered = outcome.endsWith('recovered');
+        final wrongRecovery = outcome == 'wrong-recovery-nonce';
         final success = outcome == 'ok' || outcome == 'manual';
         final lostCommit = outcome == 'lost-commit';
         final invite = manual
@@ -372,7 +397,7 @@ void main() {
           }
 
           try {
-            socket.writeln('{"nonce":"legacy"}');
+            socket.writeln('{"version":2}');
             final hello = await read();
             final transcript = PairTranscript(
               purpose: hello['purpose'] as String,
@@ -397,7 +422,7 @@ void main() {
               }),
             );
             await socket.flush();
-            if (outcome == 'manual-wrong') {
+            if (outcome == 'manual-wrong' || alreadyPaired) {
               expect(await frames.moveNext(), isFalse);
               pairDone.complete();
               return;
@@ -416,7 +441,10 @@ void main() {
             }
             expect(jsonEncode(request), isNot(contains(invite)));
             expect(request['code'], transcript.codeProof(invite));
-            if (outcome != 'expired' && !alreadyPaired) {
+            if (outcome != 'expired' &&
+                !alreadyPaired &&
+                !recovered &&
+                !wrongRecovery) {
               send(
                 await transcript.sign(host, {
                   'type': 'result',
@@ -471,6 +499,18 @@ void main() {
                 );
                 await socket.flush();
               }
+            } else if (recovered || wrongRecovery) {
+              send(
+                await transcript.sign(host, {
+                  'type': 'result',
+                  'status': 'committed',
+                  'nonce': recovered
+                      ? transcript.hostNonce
+                      : encodePairBytes(randomPairBytes(32)),
+                  'bypass': true,
+                }),
+              );
+              await socket.flush();
             } else {
               send(
                 await transcript.sign(host, {
@@ -493,9 +533,10 @@ void main() {
             id: desktopID(public),
             fingerprint: fingerprint(public),
             code: '',
-            lan: const [],
+            lan: const ['127.0.0.1:1'],
             server: 'https://existing.example.test',
             token: 'existing-server-token-with-32-characters',
+            serverKey: data('values')['serverPin'] as String,
             hostKey: encodePairBytes(public),
           );
           await devices.savePair(
@@ -531,7 +572,15 @@ void main() {
           );
         } else {
           final request = await service.begin(input);
-          if (lostCommit) {
+          if (recovered) {
+            expect(await request.statuses.single, PairStatus.success);
+            expect(devices.computers.single.confirmOnHost, isFalse);
+          } else if (wrongRecovery) {
+            await expectLater(
+              request.statuses.toList(),
+              throwsA(isA<PairTrustFailure>()),
+            );
+          } else if (lostCommit) {
             await expectLater(
               request.statuses.toList(),
               throwsA(isA<SocketException>()),
@@ -539,12 +588,13 @@ void main() {
           } else if (alreadyPaired) {
             expect(await request.statuses.single, PairStatus.alreadyPaired);
             expect(devices.computers.single.name, '测试电脑');
-            expect(
-              devices.target(desktopID(public))?.server,
-              'https://existing.example.test',
-            );
+            final saved = devices.target(desktopID(public))!;
+            expect(saved.server, 'https://existing.example.test');
+            expect(saved.token, 'existing-server-token-with-32-characters');
+            expect(saved.serverKey, data('values')['serverPin']);
+            expect(saved.lan, ['127.0.0.1:1']);
           } else if (const {
-                'already_paired': '电脑仍保留这台手机的旧配对，请先在电脑端「已配对手机」中移除后再扫码',
+                'already_paired': '配对失败（already_paired）',
                 'busy': '电脑正在处理另一个配对请求，请稍后再试',
                 'invalid': '手机信息无效',
                 'future_status': '配对失败（future_status）',
@@ -565,7 +615,10 @@ void main() {
           }
         }
         await pairDone.future.timeout(const Duration(seconds: 5));
-        expect(devices.computers, hasLength(success || alreadyPaired ? 1 : 0));
+        expect(
+          devices.computers,
+          hasLength(success || alreadyPaired || recovered ? 1 : 0),
+        );
         if (success) {
           expect(devices.computers.single.id, desktopID(public));
         }

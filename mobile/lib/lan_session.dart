@@ -8,6 +8,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import 'files/file_transfer_service.dart';
 import 'files/lan_file_transfer_service.dart';
+import 'lan_auth.dart';
 import 'lan_protocol.dart';
 import 'pairing/transport.dart';
 
@@ -56,8 +57,11 @@ class LanSession {
   PairTransport? _pairTransport;
   Completer<bool>? _negotiated;
   bool relay = false;
+  String? firstHostCode;
+  _LanPasswordExchange? _passwordExchange;
 
   bool get inputReady =>
+      _passwordExchange == null &&
       _input?.state == RTCDataChannelState.RTCDataChannelOpen;
 
   Future<FileTransferService> get files async {
@@ -71,21 +75,15 @@ class LanSession {
     String password, {
     LanSessionMode mode = LanSessionMode.desktop,
   }) async {
-    final endpoint = Uri.tryParse('tcp://$address');
-    if (endpoint == null ||
-        endpoint.host.isEmpty ||
-        endpoint.userInfo.isNotEmpty ||
-        endpoint.path.isNotEmpty ||
-        endpoint.hasQuery ||
-        endpoint.hasFragment ||
-        (endpoint.hasPort && (endpoint.port < 1 || endpoint.port > 65535))) {
-      throw const FormatException('请输入电脑地址，可附加端口');
-    }
+    final endpoint = passwordLanEndpoint(address);
+    final identities = LanIdentities();
+    final exchange = _LanPasswordExchange();
+    _passwordExchange = exchange;
 
     try {
       final socket = await Socket.connect(
         endpoint.host,
-        endpoint.hasPort ? endpoint.port : 21118,
+        endpoint.port,
         timeout: _exchangeTimeout,
       );
       if (_closed) {
@@ -100,23 +98,43 @@ class LanSession {
             .transform(const LineSplitter()),
       );
       try {
-        final nonce = await _receive(messages);
-        _send(socket, {
-          'mac': challengeMac(password, nonce['nonce'] as String),
-        });
-        final auth = await _receive(messages);
-        if (auth['ok'] != true) throw StateError('电脑拒绝了连接密码');
+        requireLanV2(await _receive(messages));
         final peer = await _offer(mode, address);
-        final local = await peer.getLocalDescription();
-        _send(socket, {'sdp': local!.toMap(), 'mode': mode.name});
+        final local = (await peer.getLocalDescription())!;
+        final offer = local.sdp!;
+        _send(socket, {'sdp': local.toMap(), 'mode': mode.name});
         final reply = await _receive(messages);
-        final answer = reply['sdp'] as Map<String, dynamic>;
-        if (answer['type'] != 'answer') {
-          throw const FormatException('电脑返回了无效的应答');
+        final sdp = reply['sdp'];
+        if (sdp is! Map<String, dynamic> ||
+            sdp['type'] != 'answer' ||
+            sdp['sdp'] is! String) {
+          throw invalidLanIdentity;
         }
-        await peer.setRemoteDescription(
-          RTCSessionDescription(answer['sdp'] as String, 'answer'),
+        final answer = sdp['sdp'] as String;
+        final key = await verifyLanAnswer(
+          offer,
+          answer,
+          reply['hostKey'],
+          reply['hostSig'],
         );
+        await identities.check(endpoint, key);
+        if (_closed) throw const LanAuthFailure('连接已取消');
+        await peer.setRemoteDescription(
+          RTCSessionDescription(answer, 'answer'),
+        );
+        await exchange.authenticate(lanPasswordProof(password, offer, answer));
+        if (_closed) throw const LanAuthFailure('连接已取消');
+        firstHostCode = await identities.remember(endpoint, key);
+        if (exchange.ended case final reason?) throw LanAuthFailure(reason);
+        _files = LanFileTransferService(exchange.files, address);
+        _passwordExchange = null;
+        _startClock(exchange.meta);
+        if (exchange.accessibility case final granted?) {
+          _setAccessibilityDenied(!granted);
+        }
+        if (exchange.track case final track?) {
+          _publishTrack(track.streams.first, track.track.id);
+        }
         if (mode == LanSessionMode.files) await files;
         if (mode == LanSessionMode.desktop && _measure && !_closed) {
           _stats = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -207,12 +225,14 @@ class LanSession {
       throw StateError('连接已取消');
     }
     _peer = peer;
+    final exchange = _passwordExchange;
     peer.onTrack = (event) {
       if (!_closed && event.track.kind == 'video' && event.streams.isNotEmpty) {
-        onStream(event.streams.first);
-        if (_measure && Platform.isIOS) {
-          unawaited(_startFrameProbe(event.track.id));
+        if (_passwordExchange != null) {
+          exchange!.track = event;
+          return;
         }
+        _publishTrack(event.streams.first, event.track.id);
       }
     };
     peer.onConnectionState = (state) {
@@ -225,6 +245,8 @@ class LanSession {
         case RTCPeerConnectionState.RTCPeerConnectionStateClosed:
           if (_negotiated case final pending? when !pending.isCompleted) {
             pending.complete(false);
+          } else if (_passwordExchange != null) {
+            exchange!.stop('远程连接已断开');
           } else if (!_closed) {
             unawaited(_files?.close());
             onEnded('远程连接已断开');
@@ -248,19 +270,21 @@ class LanSession {
       'files',
       RTCDataChannelInit()..ordered = true,
     );
-    final files = LanFileTransferService(filesChannel, address);
-    if (_closed) {
-      await files.close();
-      throw StateError('连接已取消');
+    if (exchange != null) {
+      exchange
+        ..channels = [_move!, _input!, meta, filesChannel]
+        ..meta = meta
+        ..files = filesChannel;
+    } else {
+      _files = LanFileTransferService(filesChannel, address);
     }
-    _files = files;
+    if (_closed) throw const LanAuthFailure('连接已取消');
     meta.onDataChannelState = (state) {
       _ping?.cancel();
-      if (state == RTCDataChannelState.RTCDataChannelOpen && !_closed) {
-        unawaited(_sendBinary(meta, _clock.ping()));
-        _ping = Timer.periodic(const Duration(seconds: 1), (_) {
-          unawaited(_sendBinary(meta, _clock.ping()));
-        });
+      if (state == RTCDataChannelState.RTCDataChannelOpen &&
+          _passwordExchange == null &&
+          !_closed) {
+        _startClock(meta);
       }
     };
     meta.onMessage = (message) {
@@ -272,9 +296,12 @@ class LanSession {
         return;
       }
       final bytes = message.binary;
+      if (_passwordExchange != null) {
+        exchange!.receive(bytes);
+        return;
+      }
       if (bytes[0] == 0x62) {
-        final reason = utf8.decode(bytes.sublist(1), allowMalformed: true);
-        onEnded(reason.isEmpty ? '电脑已结束连接' : reason);
+        onEnded(_byeReason(bytes));
       } else if (decodeAccessibility(bytes) case final granted?) {
         _setAccessibilityDenied(!granted);
       } else if (_measure && bytes[0] == 0x63 && bytes.length == 13) {
@@ -312,6 +339,19 @@ class LanSession {
       }
     }
     return peer;
+  }
+
+  void _publishTrack(MediaStream stream, String? trackId) {
+    onStream(stream);
+    if (_measure && Platform.isIOS) unawaited(_startFrameProbe(trackId));
+  }
+
+  void _startClock(RTCDataChannel meta) {
+    _ping?.cancel();
+    unawaited(_sendBinary(meta, _clock.ping()));
+    _ping = Timer.periodic(const Duration(seconds: 1), (_) {
+      unawaited(_sendBinary(meta, _clock.ping()));
+    });
   }
 
   Future<void> _startFrameProbe(String? trackId) async {
@@ -414,7 +454,9 @@ class LanSession {
   }
 
   Future<void> _sendBinary(RTCDataChannel? channel, Uint8List data) async {
-    if (_closed || channel?.state != RTCDataChannelState.RTCDataChannelOpen) {
+    if (_closed ||
+        _passwordExchange != null ||
+        channel?.state != RTCDataChannelState.RTCDataChannelOpen) {
       return;
     }
     try {
@@ -433,6 +475,7 @@ class LanSession {
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
+    _passwordExchange?.stop('连接已取消');
     _socket?.destroy();
     if (_negotiated case final pending? when !pending.isCompleted) {
       pending.complete(false);
@@ -442,6 +485,62 @@ class LanSession {
     _stats?.cancel();
     await _resetPeer();
     if (_frameProbe) await _probeChannel.invokeMethod<void>('stopFrameProbe');
+  }
+}
+
+String _byeReason(Uint8List bytes) {
+  final reason = utf8.decode(bytes.sublist(1), allowMalformed: true);
+  return reason.isEmpty ? '电脑已结束连接' : reason;
+}
+
+class _LanPasswordExchange {
+  static const _open = RTCDataChannelState.RTCDataChannelOpen;
+  static const _closed = RTCDataChannelState.RTCDataChannelClosed;
+  late final List<RTCDataChannel> channels;
+  late final RTCDataChannel meta;
+  late final RTCDataChannel files;
+  final _reply = Completer<LanAuthResult?>();
+  String? ended;
+  RTCTrackEvent? track;
+  bool? accessibility;
+
+  Future<void> authenticate(Uint8List proof) async {
+    try {
+      await Future.wait(
+        channels.map((channel) async {
+          if (channel.state == _open) return;
+          if (channel.state == _closed ||
+              await channel.stateChangeStream.firstWhere(
+                    (state) => state == _open || state == _closed,
+                  ) !=
+                  _open) {
+            throw const LanAuthFailure('无法建立 WebRTC 数据通道');
+          }
+        }),
+      ).timeout(_exchangeTimeout);
+      if (ended case final reason?) throw LanAuthFailure(reason);
+      await meta.send(RTCDataChannelMessage.fromBinary(proof));
+      final result = await _reply.future.timeout(_exchangeTimeout);
+      if (result == null) throw LanAuthFailure(ended ?? '电脑已结束连接');
+      if (result.failure case final failure?) throw LanAuthFailure(failure);
+    } on TimeoutException {
+      throw const LanAuthFailure('密码验证超时，请两边都升级到最新版');
+    }
+  }
+
+  void receive(Uint8List bytes) {
+    if (bytes[0] == 0x62) {
+      stop(_byeReason(bytes));
+    } else if (LanAuthResult.decode(bytes) case final result?) {
+      if (!_reply.isCompleted) _reply.complete(result);
+    } else if (decodeAccessibility(bytes) case final granted?) {
+      accessibility = granted;
+    }
+  }
+
+  void stop(String reason) {
+    ended ??= reason;
+    if (!_reply.isCompleted) _reply.complete(null);
   }
 }
 

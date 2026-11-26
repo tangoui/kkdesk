@@ -17,7 +17,7 @@ func TestMobileFileHost(t *testing.T) {
 	if address == "" || password == "" {
 		t.Skip("set KKDESK_FILE_TEST_LISTEN and KKDESK_FILE_TEST_PASSWORD to run the device test host")
 	}
-	host, err := Listen(address, password)
+	host, err := listenForTest(t, address, password, "")
 	if err != nil {
 		t.Fatal(err)
 	}

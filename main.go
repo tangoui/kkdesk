@@ -140,9 +140,9 @@ func run(o options) error {
 	hcfg := hostConfig(o, store, logw)
 	identity, identityErr := pairing.Open(filepath.Dir(store.Path()))
 	if identityErr != nil {
-		log.Printf("kkdesk: desktop identity: %v", identityErr)
+		log.Printf("kkdesk: desktop identity in %s: %v", filepath.Dir(store.Path()), identityErr)
 	}
-	hcfg.Pairing = identity
+	hcfg.Pairing, hcfg.IdentityErr = identity, identityErr
 	if !o.host { // measurement runs leave the clipboard alone
 		hcfg.Clipboard = board
 	}
@@ -214,7 +214,7 @@ func run(o options) error {
 		}
 		settings := store.Settings()
 		viewer = app.NewViewer(app.ViewerConfig{Addr: o.connect, Password: o.password, ViewOnly: o.viewOnly, FilesOnly: o.files, Log: logw,
-			Remote: rendezvous.Config{URL: settings.RemoteURL, Token: settings.RemoteToken, PublicKey: settings.RemotePublicKey}, Clipboard: board}, nil)
+			Remote: rendezvous.Config{URL: settings.RemoteURL, Token: settings.RemoteToken, PublicKey: settings.RemotePublicKey}, Clipboard: board, Devices: store}, nil)
 		go func() {
 			if err := viewer.Connect(context.Background()); err != nil {
 				fmt.Fprintln(os.Stderr, "kkdesk:", err)
