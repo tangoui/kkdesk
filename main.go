@@ -10,7 +10,9 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -28,6 +30,7 @@ import (
 	"github.com/tangoui/tango"
 	"github.com/tangoui/tango/service/updater"
 	"github.com/tangoui/tango/service/updater/updateui"
+	"github.com/tangoui/tango/sys/single"
 	"github.com/tangoui/tango/uihost"
 
 	"github.com/tangoui/kkdesk/internal/app"
@@ -136,6 +139,24 @@ func run(o options) error {
 			m.Invalidate()
 		}
 	}
+	quit := true // closing the last window quits, on macOS too
+	a := tango.New(tango.Options{Name: "kkdesk", ID: "com.kkdesk.desktop", QuitOnLastClose: &quit})
+	// One app per configuration folder: a second launch shows the running
+	// window instead of opening the same settings and port again (both would
+	// listen, and each would save its own copy of the settings over the
+	// other's). Claimed before the settings are read.
+	if wantsSingleInstance(o, os.Getenv("TANGO_DEV_ROLE")) {
+		dir, _ := config.Dir()
+		primary, err := single.Claim(a, single.Options{Key: singleInstanceKey(dir)})
+		if !primary {
+			log.Printf("kkdesk: already running; showing that window")
+			return nil
+		}
+		if err != nil {
+			log.Printf("kkdesk: single instance: %v", err)
+		}
+	}
+
 	store := openStore()
 	board := &appui.Clipboard{} // the app is set once it exists
 	hcfg := hostConfig(o, store, logw)
@@ -179,8 +200,6 @@ func run(o options) error {
 		}
 	}
 
-	quit := true // closing the last window quits, on macOS too
-	a := tango.New(tango.Options{Name: "kkdesk", ID: "com.kkdesk.desktop", QuitOnLastClose: &quit})
 	board.SetApp(a)
 
 	// Self-update: builds made by tan build, started normally (not the
@@ -365,4 +384,18 @@ func redactArgs(args []string) []string {
 		}
 	}
 	return out
+}
+
+// wantsSingleInstance reports whether this launch is the app itself (not a
+// -host or -connect measurement run, nor a tan dev worker, where old and new
+// workers overlap during a reload).
+func wantsSingleInstance(o options, devRole string) bool {
+	return !o.host && o.connect == "" && devRole == ""
+}
+
+// singleInstanceKey names the app instance of a configuration folder, so a
+// second instance with its own KKDESK_CONFIG_DIR still runs.
+func singleInstanceKey(configDir string) string {
+	sum := sha256.Sum256([]byte(filepath.Clean(configDir)))
+	return "com.kkdesk.desktop-" + hex.EncodeToString(sum[:8])
 }
