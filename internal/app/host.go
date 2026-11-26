@@ -1179,12 +1179,30 @@ func (v *videoSender) encoded(nal []byte, captureAt time.Time, keyframe bool) {
 	v.rec.Frame(stats.FrameTimes{Seq: v.seq.Add(1), Capture: captureAt, Encoded: encodedAt, Sent: sentAt})
 }
 
+// Bounds on what a controller may ask for (the viewer offers up to 144 fps
+// and 30 Mbps); the wire allows up to 4 Gbps and 65535 fps, and encoders
+// take int32 bitrates.
+const (
+	maxFPS     = 144
+	minBitrate = 500_000
+	maxBitrate = 100_000_000
+)
+
+// clampQuality bounds a quality request from the controller; 0 bitrate
+// means automatic, 0 fps leaves the frame rate unchanged.
+func clampQuality(q session.Quality) session.Quality {
+	if q.BitrateBps <= 0 {
+		q.BitrateBps = AutoBitrate
+	}
+	q.BitrateBps = max(minBitrate, min(q.BitrateBps, maxBitrate))
+	q.FPS = min(q.FPS, maxFPS)
+	return q
+}
+
 // setQuality applies the controller's quality choice.
 func (v *videoSender) setQuality(q session.Quality) {
+	q = clampQuality(q)
 	bps := q.BitrateBps
-	if bps <= 0 {
-		bps = AutoBitrate
-	}
 	v.mu.Lock()
 	v.bps = bps
 	if v.enc != nil {

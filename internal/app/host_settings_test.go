@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/tangoui/kkdesk/internal/config"
+	"github.com/tangoui/kkdesk/internal/session"
 )
 
 // dialFiles connects a files-only viewer and returns it, or the error.
@@ -369,5 +370,18 @@ func TestHandshakeLimiter(t *testing.T) {
 	}
 	if _, ok := l.acquire("10.0.0.1"); ok {
 		t.Fatal("double release freed two slots")
+	}
+}
+
+func TestClampQuality(t *testing.T) {
+	for _, tc := range []struct{ in, want session.Quality }{
+		{session.Quality{BitrateBps: 0, FPS: 0}, session.Quality{BitrateBps: AutoBitrate, FPS: 0}},
+		{session.Quality{BitrateBps: 8_000_000, FPS: 60}, session.Quality{BitrateBps: 8_000_000, FPS: 60}},
+		{session.Quality{BitrateBps: 4_294_967_295, FPS: 65535}, session.Quality{BitrateBps: maxBitrate, FPS: maxFPS}},
+		{session.Quality{BitrateBps: 10, FPS: 1}, session.Quality{BitrateBps: minBitrate, FPS: 1}},
+	} {
+		if got := clampQuality(tc.in); got != tc.want {
+			t.Errorf("clampQuality(%+v) = %+v, want %+v", tc.in, got, tc.want)
+		}
 	}
 }
