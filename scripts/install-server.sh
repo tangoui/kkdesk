@@ -108,12 +108,11 @@ else
 fi
 
 if [[ -z $binary && $server != "$installed_binary" ]]; then
-  # Build the published server revision that introduced -config and /healthz.
-  # A local build can be supplied with --binary.
-  revision=v0.0.0-20261125062302-3f73b60f4e2a
-  if [[ $mode == --ip ]]; then
-    revision=main
-  fi
+  # Build a fixed, published server revision (never a moving branch: this
+  # runs as root and installs a service). It has -config, /healthz, pinned
+  # public keys for --ip and the phone rendezvous. A local build can be
+  # supplied with --binary.
+  revision=v0.0.0-20261126095043-94eec7a60356
   if [[ $(go version 2>/dev/null || true) =~ go1\.([0-9]+) ]] && (( BASH_REMATCH[1] >= 27 )); then
     go_bin=$(command -v go)
   else
