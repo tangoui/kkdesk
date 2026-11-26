@@ -233,6 +233,7 @@ func TestTrustedViewerIgnoresRemotePause(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first connection: %v", err)
 	}
+	waitFor(t, "accepted session", func() bool { return h.State().Phase == HostActive })
 	p.Close()
 	waitIdle(t, h)
 	if !trust.ViewerTrusted(trustKeyOf(t, me, h)) {
@@ -387,22 +388,38 @@ func TestViewerTrustNeedsAcceptanceAndEndsOnFailure(t *testing.T) {
 	}
 	code := h.State().RemoteCode
 	me := testHostIdentity(t)
-	go func() {
-		waitFor(t, "request", func() bool { return h.State().Phase == HostPending })
-		h.Reject()
+	rejected := make(chan bool, 1)
+	go func() { // the host user rejects the request (no t.Fatal off the test goroutine)
+		for ctx.Err() == nil {
+			if h.State().Phase == HostPending {
+				h.Reject()
+				rejected <- true
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		rejected <- false
 	}()
-	if p, err := session.DialRemoteAs(ctx, cfg, code, session.ModeFiles, "good", me); err == nil {
-		p.Close()
+	// The dial returns once the password is checked; the host user decides
+	// after that, so keep the connection open until the rejection.
+	p, err := session.DialRemoteAs(ctx, cfg, code, session.ModeFiles, "good", me)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if !<-rejected {
+		t.Fatal("the request never reached the confirmation")
+	}
+	p.Close()
 	waitIdle(t, h)
 	if trust.ViewerTrusted(trustKeyOf(t, me, h)) {
 		t.Fatal("a rejected controller was trusted")
 	}
 	h.SetAutoAccept(true)
-	p, err := session.DialRemoteAs(ctx, cfg, code, session.ModeFiles, "good", me)
+	p, err = session.DialRemoteAs(ctx, cfg, code, session.ModeFiles, "good", me)
 	if err != nil {
 		t.Fatal(err)
 	}
+	waitFor(t, "accepted session", func() bool { return h.State().Phase == HostActive })
 	p.Close()
 	waitIdle(t, h)
 	key := trustKeyOf(t, me, h)
