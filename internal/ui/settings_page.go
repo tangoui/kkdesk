@@ -48,7 +48,8 @@ func (s *settingsState) init(st config.Settings) {
 var settingsNav = []ui.MenuItem{
 	{Key: "security", Label: "安全"},
 	{Key: "quality", Label: "画质"},
-	{Key: "network", Label: "网络"},
+	{Key: "network", Label: "局域网"},
+	{Key: "remote", Label: "跨网连接"},
 	{Key: "general", Label: "通用"},
 }
 
@@ -126,6 +127,8 @@ func (m *Main) settingsPage(c *ui.Context, hs app.HostState) {
 						m.qualitySettings(c, f)
 					case "network":
 						m.networkSettings(c, f, hs)
+					case "remote":
+						m.remoteSettings(c, f, hs)
 					case "general":
 						m.generalSettings(c, f)
 					default:
@@ -288,8 +291,6 @@ func (m *Main) networkSettings(c *ui.Context, f *ui.FormW, hs app.HostState) {
 			}
 		}, layout.Gap(4), layout.Padding(insets(5, 0, 0, 0)))
 	})
-	helpGap(c)
-	m.remoteSettings(c, f)
 }
 
 // applyPort saves the port and restarts the listener on it.

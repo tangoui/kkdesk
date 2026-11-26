@@ -341,6 +341,13 @@ class _HomeState extends State<_Home> {
           detail: '${request.computer.name} 已加入设备列表',
           kind: KNoticeKind.success,
         );
+      } else if (result == PairStatus.alreadyPaired) {
+        for (final computer in _services.devices.computers) {
+          if (computer.id == request.computer.id) {
+            await _connect(computer);
+            break;
+          }
+        }
       } else if (result != null) {
         await _scan();
       }

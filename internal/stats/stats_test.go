@@ -453,3 +453,24 @@ func TestLast(t *testing.T) {
 		t.Fatalf("Last = %+v, want %+v", got, s)
 	}
 }
+
+// A capture time from a broken clock (the year 1754 from an overflowed
+// encoder timestamp, or one in the future) gives no latency: one bad frame
+// must not show 272 years.
+func TestImplausibleLatencyIgnored(t *testing.T) {
+	r := newRecorderAt(&bytes.Buffer{}, "viewer", nil, t0)
+	shown := t0.Add(100 * time.Millisecond)
+	clk := Clock{Remote: true, Synced: true}
+	r.Frame(FrameTimes{Seq: 1, Capture: shown.Add(-40 * time.Millisecond), Presented: shown, Clock: clk})
+	r.Frame(FrameTimes{Seq: 2, Capture: time.Date(1754, 8, 30, 0, 0, 0, 0, time.UTC), Presented: shown, Clock: clk})
+	r.Frame(FrameTimes{Seq: 3, Capture: shown.Add(5 * time.Second), Presented: shown, Clock: clk})
+	r.Frame(FrameTimes{Seq: 4, Capture: time.Date(1754, 8, 30, 0, 0, 0, 0, time.UTC), Presented: shown, Clock: clk})
+	r.Frame(FrameTimes{Seq: 5, Capture: time.Date(1754, 8, 30, 0, 0, 0, 0, time.UTC), Presented: shown, Clock: clk})
+	sec, err := r.Flush(t0.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sec.LatencyP50 != 40*time.Millisecond {
+		t.Fatalf("latency p50 %v, want 40ms from the one sane frame", sec.LatencyP50)
+	}
+}

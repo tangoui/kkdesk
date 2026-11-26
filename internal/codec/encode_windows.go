@@ -277,7 +277,7 @@ func (e *mfEncoder) pull(in *mfInst) int32 {
 	captureAt := time.Now()
 	if o.hasTime != 0 {
 		e.clockMu.Lock()
-		captureAt = e.clock.lookup(int64(o.sampleTime))
+		captureAt = e.clock.at(int64(o.sampleTime), captureAt)
 		e.clockMu.Unlock()
 	}
 	e.outputs.Add(1)

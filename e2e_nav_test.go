@@ -112,6 +112,12 @@ func TestE2ENav(t *testing.T) {
 	}
 	accessibilityEntry(true)
 	nav := func(page string) { t.Helper(); w.Find(a11y.RoleMenuItem, page).Click() }
+	shot(w, "page-connect.png")
+	w.Find(a11y.RoleRadio, "跨网").Click()
+	w.Find(a11y.RoleTextbox, "跨网设备码").Wait()
+	shot(w, "page-connect-remote.png")
+	w.Find(a11y.RoleRadio, "局域网").Click()
+	w.Find(a11y.RoleTextbox, "对方地址").Wait()
 	dump := func(what string) { t.Helper(); t.Logf("%s:\n%s", what, w.Dump()) }
 
 	// The temporary password is saved in the configuration.
@@ -241,7 +247,7 @@ func TestE2ENav(t *testing.T) {
 
 	// The port moves to 21919: the host listens there, not on 21918.
 	nav("设置")
-	w.Find(a11y.RoleMenuItem, "网络").Click()
+	w.Find(a11y.RoleMenuItem, "局域网").Click()
 	w.Find(a11y.RoleSpinButton, "监听端口").SetValue("21919")
 	w.Find(a11y.RoleButton, "应用").Click()
 	w.FindContains(a11y.RoleNone, "端口 21919").Wait()
@@ -257,6 +263,9 @@ func TestE2ENav(t *testing.T) {
 		setting.WithoutState(a11y.Checked).Wait()
 	}
 	shot(w, "page-settings.png")
+	w.Find(a11y.RoleMenuItem, "跨网连接").Click()
+	w.FindContains(a11y.RoleNone, "未配置").Wait()
+	shot(w, "page-settings-remote.png")
 
 	// Dark theme, saved.
 	w.Find(a11y.RoleMenuItem, "通用").Click()

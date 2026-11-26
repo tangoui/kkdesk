@@ -23,6 +23,122 @@ PairMessage data(String name) =>
     jsonDecode(fixture('$name.json')) as PairMessage;
 
 void main() {
+  test('repeat QR works offline with the saved identity', () async {
+    FlutterSecureStorage.setMockInitialValues({});
+    final devices = PairedDevices(PairNetwork(PairCredentials()));
+    addTearDown(devices.dispose);
+    final input = Uri.parse(fixture('uri.txt'));
+    final target = PairTarget.parse(input.toString());
+    final hostKey = data('values')['hostKey'] as String;
+    await devices.savePair(
+      Computer(id: target.id, name: '已有的电脑', os: ComputerOS.mac),
+      target.verified(hostKey),
+    );
+    final service = RealPairingService(
+      devices,
+      phoneInfo: () async => throw StateError('repeat QR requested phone info'),
+    );
+    final request = await service.begin(input.toString());
+    expect(request.computer.name, '已有的电脑');
+    expect(request.verificationCode, isEmpty);
+    expect((await request.statuses.single).name, 'alreadyPaired');
+    expect(devices.computers, hasLength(1));
+    expect(devices.target(target.id)?.code, isEmpty);
+  });
+
+  test(
+    'repeat QR updates only authenticated metadata without claiming the invite',
+    () async {
+      FlutterSecureStorage.setMockInitialValues({});
+      final host = await Ed25519().newKeyPairFromSeed(Uint8List(32));
+      final public = (await host.extractPublicKey()).bytes;
+      final id = desktopID(public);
+      final hostKey = encodePairBytes(public);
+      final fingerprintValue = fingerprint(public);
+      final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+      final exchange = Completer<void>();
+      server.listen((socket) async {
+        try {
+          socket.writeln('{"nonce":"legacy"}');
+          final frames = StreamIterator(
+            socket
+                .cast<List<int>>()
+                .transform(utf8.decoder)
+                .transform(const LineSplitter()),
+          );
+          try {
+            expect(await frames.moveNext(), isTrue);
+            final hello =
+                (jsonDecode(frames.current) as PairMessage)['mobile']
+                    as PairMessage;
+            final tx = PairTranscript(
+              purpose: 'pair',
+              clientNonce: hello['nonce'] as String,
+              hostNonce: encodePairBytes(randomPairBytes(32)),
+              clientKey: hello['publicKey'] as String,
+              hostKey: hostKey,
+            );
+            final challenge = await tx.sign(host, {
+              'type': 'challenge',
+              'publicKey': hostKey,
+              'nonce': tx.hostNonce,
+              'name': '新电脑名称',
+              'os': 'darwin',
+            });
+            socket.writeln(jsonEncode({'mobile': challenge}));
+            await socket.flush();
+            expect(await frames.moveNext(), isFalse);
+            exchange.complete();
+          } finally {
+            await frames.cancel();
+          }
+        } catch (error, trace) {
+          exchange.completeError(error, trace);
+        } finally {
+          socket.destroy();
+        }
+      });
+      final address = '127.0.0.1:${server.port}';
+      final input = Uri(
+        scheme: 'kkdesk',
+        host: 'pair',
+        queryParameters: {
+          'v': '1',
+          'id': id,
+          'fp': fingerprintValue,
+          'c': 'T5PM62LR52NUFR43D3VCXWRTXA',
+          'lan': address,
+          's': 'https://example.test',
+          't': 'test-server-token-with-32-characters',
+        },
+      );
+      final devices = PairedDevices(PairNetwork(PairCredentials()));
+      addTearDown(devices.dispose);
+      final oldTarget = PairTarget(
+        id: id,
+        code: '',
+        fingerprint: fingerprintValue,
+        lan: const ['127.0.0.1:1'],
+        hostKey: hostKey,
+      );
+      await devices.savePair(
+        Computer(id: id, name: '旧电脑名称', os: ComputerOS.mac),
+        oldTarget,
+      );
+      final service = RealPairingService(devices);
+      expect(
+        await (await service.begin(input.toString())).statuses.single,
+        PairStatus.alreadyPaired,
+      );
+      await exchange.future.timeout(const Duration(seconds: 4));
+      expect(devices.computers.single.name, '新电脑名称');
+      expect(devices.target(id)?.server, 'https://example.test');
+      expect(devices.target(id)?.lan, [address]);
+      expect(devices.target(id)?.code, isEmpty);
+    },
+  );
+
   test(
     'matches Go QR, verification code and signatures byte for byte',
     () async {
@@ -217,6 +333,11 @@ void main() {
     'manual',
     'manual-wrong',
     'lost-commit',
+    'already_paired',
+    'manual-already-paired',
+    'busy',
+    'invalid',
+    'future_status',
   ]) {
     test(
       'signed LAN pairing state $outcome saves only an accepted computer',
@@ -229,6 +350,7 @@ void main() {
         final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
         addTearDown(server.close);
         final manual = outcome.startsWith('manual');
+        final alreadyPaired = outcome == 'manual-already-paired';
         final success = outcome == 'ok' || outcome == 'manual';
         final lostCommit = outcome == 'lost-commit';
         final invite = manual
@@ -294,7 +416,7 @@ void main() {
             }
             expect(jsonEncode(request), isNot(contains(invite)));
             expect(request['code'], transcript.codeProof(invite));
-            if (outcome != 'expired') {
+            if (outcome != 'expired' && !alreadyPaired) {
               send(
                 await transcript.sign(host, {
                   'type': 'result',
@@ -353,7 +475,7 @@ void main() {
               send(
                 await transcript.sign(host, {
                   'type': 'result',
-                  'status': outcome,
+                  'status': alreadyPaired ? 'already_paired' : outcome,
                 }),
               );
               await socket.flush();
@@ -366,6 +488,21 @@ void main() {
         });
         final devices = PairedDevices(PairNetwork(PairCredentials()));
         addTearDown(devices.dispose);
+        if (alreadyPaired) {
+          final pairedTarget = PairTarget(
+            id: desktopID(public),
+            fingerprint: fingerprint(public),
+            code: '',
+            lan: const [],
+            server: 'https://existing.example.test',
+            token: 'existing-server-token-with-32-characters',
+            hostKey: encodePairBytes(public),
+          );
+          await devices.savePair(
+            Computer(id: pairedTarget.id, name: '旧名称', os: ComputerOS.mac),
+            pairedTarget,
+          );
+        }
         final service = RealPairingService(
           devices,
           phoneInfo: () async => (name: '手机', model: '测试'),
@@ -399,6 +536,26 @@ void main() {
               request.statuses.toList(),
               throwsA(isA<SocketException>()),
             );
+          } else if (alreadyPaired) {
+            expect(await request.statuses.single, PairStatus.alreadyPaired);
+            expect(devices.computers.single.name, '测试电脑');
+            expect(
+              devices.target(desktopID(public))?.server,
+              'https://existing.example.test',
+            );
+          } else if (const {
+                'already_paired': '电脑仍保留这台手机的旧配对，请先在电脑端「已配对手机」中移除后再扫码',
+                'busy': '电脑正在处理另一个配对请求，请稍后再试',
+                'invalid': '手机信息无效',
+                'future_status': '配对失败（future_status）',
+              }[outcome]
+              case final message?) {
+            await expectLater(
+              request.statuses.toList(),
+              throwsA(
+                isA<PairFailure>().having((e) => e.message, 'message', message),
+              ),
+            );
           } else {
             expect((await request.statuses.toList()).last, switch (outcome) {
               'ok' || 'manual' => PairStatus.success,
@@ -408,7 +565,7 @@ void main() {
           }
         }
         await pairDone.future.timeout(const Duration(seconds: 5));
-        expect(devices.computers, hasLength(success ? 1 : 0));
+        expect(devices.computers, hasLength(success || alreadyPaired ? 1 : 0));
         if (success) {
           expect(devices.computers.single.id, desktopID(public));
         }

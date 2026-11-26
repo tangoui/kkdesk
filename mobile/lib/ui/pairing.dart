@@ -9,6 +9,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../mobile_services.dart';
 import '../pairing/protocol.dart' show lanEndpoint;
+import '../pairing/transport.dart' show PairFailure;
 import 'common.dart';
 
 class ScanPage extends StatefulWidget {
@@ -646,9 +647,10 @@ class PairVerification extends StatelessWidget {
   @override
   Widget build(BuildContext context) => StreamBuilder<PairStatus>(
     stream: request.statuses,
-    initialData: PairStatus.waiting,
+    initialData: request.initialStatus,
     builder: (context, snapshot) {
-      final status = snapshot.hasError ? PairStatus.timedOut : snapshot.data!;
+      final error = snapshot.error;
+      final status = snapshot.hasError ? PairStatus.failed : snapshot.data!;
       final (title, message, icon, color) = switch (status) {
         PairStatus.waiting => (
           '配对这台电脑？',
@@ -661,6 +663,18 @@ class PairVerification extends StatelessWidget {
           '这台电脑已加入设备列表。',
           CupertinoIcons.check_mark_circled_solid,
           green,
+        ),
+        PairStatus.alreadyPaired => (
+          '已配对这台电脑',
+          null,
+          CupertinoIcons.check_mark_circled_solid,
+          green,
+        ),
+        PairStatus.failed => (
+          '配对失败',
+          error is PairFailure ? error.message : '无法完成配对，请重试。',
+          CupertinoIcons.xmark_circle_fill,
+          red,
         ),
         PairStatus.rejected => (
           '配对被拒绝',
@@ -683,6 +697,7 @@ class PairVerification extends StatelessWidget {
       };
       final waiting = status == PairStatus.waiting;
       final success = status == PairStatus.success;
+      final alreadyPaired = status == PairStatus.alreadyPaired;
       return Column(
         children: [
           Stack(
@@ -753,12 +768,14 @@ class PairVerification extends StatelessWidget {
               ],
             ),
           ],
-          const SizedBox(height: 12),
-          Text(
-            message,
-            textAlign: TextAlign.center,
-            style: TextStyle(color: context.muted, height: 1.55),
-          ),
+          if (message != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: context.muted, height: 1.55),
+            ),
+          ],
           const SizedBox(height: 20),
           if (waiting)
             Container(
@@ -783,7 +800,20 @@ class PairVerification extends StatelessWidget {
                 ],
               ),
             )
-          else
+          else if (alreadyPaired) ...[
+            SizedBox(
+              width: double.infinity,
+              child: KButton(
+                onTap: () => Navigator.pop(context, PairStatus.alreadyPaired),
+                label: '连接',
+              ),
+            ),
+            KButton(
+              onTap: () => Navigator.pop(context),
+              label: '完成',
+              variant: KButtonVariant.text,
+            ),
+          ] else
             SizedBox(
               width: double.infinity,
               child: KButton(
@@ -791,7 +821,7 @@ class PairVerification extends StatelessWidget {
                 label: success ? '完成' : '重新扫码',
               ),
             ),
-          if (!success)
+          if (!success && !alreadyPaired)
             KButton(
               onTap: () => Navigator.pop(context),
               label: '取消',

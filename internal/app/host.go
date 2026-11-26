@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -365,12 +366,36 @@ func (h *Host) syncClipboard(p *session.Peer) (stop func()) {
 
 // NewPassword returns a random 6-digit password.
 func NewPassword() string {
-	n, err := rand.Int(rand.Reader, big.NewInt(1_000_000))
-	if err != nil {
-		panic(err)
+	for {
+		b := make([]byte, passwordLen)
+		for i := range b {
+			n, err := rand.Int(rand.Reader, big.NewInt(int64(len(passwordAlphabet))))
+			if err != nil {
+				panic(err)
+			}
+			b[i] = passwordAlphabet[n.Int64()]
+		}
+		pw := string(b)
+		// Draw again until digits, upper- and lowercase are all present
+		// (uniform over the passwords that mix all three).
+		if strings.ContainsAny(pw, passwordDigits) && strings.ContainsAny(pw, passwordUpper) &&
+			strings.ContainsAny(pw, passwordLower) {
+			return pw
+		}
 	}
-	return fmt.Sprintf("%06d", n.Int64())
 }
+
+// Temporary passwords: passwordLen characters mixing digits, upper- and
+// lowercase letters, without the look-alikes 0 O o 1 l I so a password read
+// aloud or copied by hand stays right (56 characters: about 3e10
+// passwords instead of the 1e6 of six digits).
+const (
+	passwordLen      = 6
+	passwordDigits   = "23456789"
+	passwordUpper    = "ABCDEFGHJKLMNPQRSTUVWXYZ"
+	passwordLower    = "abcdefghijkmnpqrstuvwxyz"
+	passwordAlphabet = passwordDigits + passwordUpper + passwordLower
+)
 
 // LocalIPv4 lists the IPv4 addresses of the interfaces that are up,
 // excluding loopback, the most reachable first (see rankAddrs).
@@ -519,7 +544,7 @@ func (h *Host) startLocked() error {
 			}
 		}
 		if err != nil {
-			h.errMsg = fmt.Sprintf("端口 %d 被系统保留，也没能找到其他可用端口，请在「设置 › 网络」里换一个端口", port)
+			h.errMsg = fmt.Sprintf("端口 %d 被系统保留，也没能找到其他可用端口，请在「设置 › 局域网」里换一个端口", port)
 			return err
 		}
 		got := ln.Addr().(*net.TCPAddr).Port

@@ -57,7 +57,7 @@ func TestE2ERemote(t *testing.T) {
 			w.Find(a11y.RoleButton, "稍后").Click()
 		}
 		w.Find(a11y.RoleMenuItem, "设置").Click()
-		w.Find(a11y.RoleMenuItem, "网络").Click()
+		w.Find(a11y.RoleMenuItem, "跨网连接").Click()
 		w.Find(a11y.RoleTextbox, "跨网服务地址").SetValue(server.URL)
 		w.Find(a11y.RoleTextbox, "跨网服务器公钥").SetValue(publicKey)
 		w.Find(a11y.RoleTextbox, "跨网服务密钥").SetValue(token)
