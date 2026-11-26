@@ -39,9 +39,13 @@ func TestLANV2GreetingAndSignedAnswer(t *testing.T) {
 	}
 	sc, closeSignal := newSigConn(ctx, conn)
 	defer closeSignal()
-	var greeting map[string]int
-	if err := sc.dec.Decode(&greeting); err != nil || len(greeting) != 1 || greeting["version"] != 2 {
-		t.Fatalf("greeting = %v, %v", greeting, err)
+	var greeting struct {
+		Version int    `json:"version"`
+		HostKey string `json:"hostKey"`
+	}
+	// The greeting names the host's key (for the first-connection check).
+	if err := sc.dec.Decode(&greeting); err != nil || greeting.Version != 2 || greeting.HostKey != identity.PublicKey() {
+		t.Fatalf("greeting = %+v, %v", greeting, err)
 	}
 	controller, err := newPeer(false, true, ModeFiles)
 	if err != nil {

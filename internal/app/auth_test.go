@@ -254,3 +254,58 @@ func TestTrustedViewerIgnoresRemotePause(t *testing.T) {
 	}
 	p.Close()
 }
+
+// On a first connection to an address the user checks the device code before
+// anything derived from the password is sent; declining sends nothing.
+func TestViewerConfirmsFirstHostBeforeProof(t *testing.T) {
+	store, err := config.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	host := NewHost(HostConfig{Addr: "127.0.0.1:0", Password: "good", Pairing: testHostIdentity(t), AutoAccept: true}, nil)
+	defer host.Close()
+	if err := host.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	address := host.ListenAddr()
+	var asked []string
+	answer := false
+	dial := func() (*Viewer, error) {
+		v := NewViewer(ViewerConfig{Addr: address, Password: "good", FilesOnly: true, Devices: store,
+			ConfirmHost: func(_ context.Context, addr, code string) bool {
+				mu.Lock()
+				defer mu.Unlock()
+				asked = append(asked, code)
+				return answer
+			}}, nil)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return v, v.Connect(ctx)
+	}
+	if v, err := dial(); err == nil {
+		v.Close()
+		t.Fatal("connected although the user declined the device code")
+	}
+	if len(asked) != 1 || asked[0] != host.State().DeviceCode {
+		t.Fatalf("asked %q, want the host's device code %q once", asked, host.State().DeviceCode)
+	}
+	if s := host.State(); s.PasswordLockSeconds != 0 {
+		t.Fatalf("a declined first connection still tried the password: %+v", s)
+	}
+	answer = true
+	v, err := dial()
+	if err != nil {
+		t.Fatalf("after confirming: %v", err)
+	}
+	closeAndWait(t, host, v)
+	asked = nil
+	v, err = dial()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer v.Close()
+	if len(asked) != 0 {
+		t.Fatalf("asked again for a known host: %q", asked)
+	}
+}

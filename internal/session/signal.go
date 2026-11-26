@@ -169,7 +169,11 @@ func (h *Host) Handshake(ctx context.Context, c net.Conn) (*Peer, error) {
 		}
 	}()
 
-	if err := sc.send(sigMsg{Version: lanVersion}); err != nil {
+	// The greeting names our key, so a controller connecting for the first
+	// time can have the user check the device code before it sends anything
+	// derived from the password (ProbeHostKey). The answer's signature still
+	// proves the key.
+	if err := sc.send(sigMsg{Version: lanVersion, HostKey: h.identity.PublicKey()}); err != nil {
 		return nil, err
 	}
 	if first := time.Now().Add(firstMessageWait); first.Before(sc.deadline) {
@@ -224,6 +228,31 @@ func (h *Host) Handshake(ctx context.Context, c net.Conn) (*Peer, error) {
 		return nil, err
 	}
 	return p, nil
+}
+
+// ProbeHostKey reads the key a host names in its greeting and hangs up
+// before sending anything: the host treats it as a probe. "" means the host
+// is too old to name it. The key is only a claim until a dial with it as
+// DialOptions.ExpectedHostKey checks the host's signature.
+func ProbeHostKey(ctx context.Context, addr string) (string, error) {
+	var d net.Dialer
+	c, err := d.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return "", err
+	}
+	sc, done := newSigConn(ctx, c)
+	defer done()
+	m, err := sc.recv()
+	if err != nil {
+		return "", err
+	}
+	if m.Version != lanVersion {
+		return "", ErrHostSignature
+	}
+	if _, ok := pairing.PublicKey(m.HostKey); !ok {
+		return "", nil
+	}
+	return m.HostKey, nil
 }
 
 // Dial connects to a host and authenticates over WebRTC as the controller.

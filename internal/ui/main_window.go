@@ -101,6 +101,7 @@ type Main struct {
 	pairingCancellation uint64
 
 	mu         sync.Mutex
+	hostCheck  *hostCheck // a first-connection device-code check, if any
 	connecting bool
 	connErr    string
 	connFrom   string // page that started the connection
@@ -211,7 +212,9 @@ func (m *Main) page(c *ui.Context) {
 			}
 		}, layout.Grow(1)).Bg(th.BgLayout)
 	}, layout.Grow(1))
-	if request := m.o.Host.PairingRequest(); request != nil {
+	if m.hostCheckDialog(c) {
+		// the user is checking a device code for a connection they started
+	} else if request := m.o.Host.PairingRequest(); request != nil {
 		m.pairingConfirm(c, request)
 	} else if hs.Phase == app.HostPending {
 		m.confirm(c, hs)
@@ -308,7 +311,7 @@ func (m *Main) connect(addr, pw, mode string) {
 	filesOnly := mode == modeTransfer
 	st := m.o.Store.Settings()
 	v := app.NewViewer(app.ViewerConfig{Addr: addr, Password: pw, ViewOnly: viewOnly, FilesOnly: filesOnly, Log: m.o.ViewerLog,
-		Clipboard: m.clipboard(), Devices: m.o.Store, Identity: m.o.Host.Identity(),
+		Clipboard: m.clipboard(), Devices: m.o.Store, Identity: m.o.Host.Identity(), ConfirmHost: m.confirmHost,
 		FPS: st.FPS, BitrateBps: st.BitrateMbps * 1_000_000,
 		Remote: rendezvous.Config{URL: st.RemoteURL, Token: st.RemoteToken, PublicKey: st.RemotePublicKey}}, nil)
 	go func() {

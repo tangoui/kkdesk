@@ -34,6 +34,12 @@ const maxDiagLogs = 20
 
 // ViewerConfig configures a Viewer.
 type ViewerConfig struct {
+	// ConfirmHost, if set, is asked before the first connection to a LAN
+	// address (no key remembered for it): it shows the device code the host
+	// names so the user can compare it with the host's screen, and returns
+	// whether to go on. Nothing derived from the password is sent before.
+	// It may block for as long as the user takes (ctx ends it).
+	ConfirmHost func(ctx context.Context, addr, code string) bool
 	// Identity, if set, is proved to hosts so they recognize this controller
 	// (see Host ViewerTrust).
 	Identity *pairing.Store
@@ -193,10 +199,42 @@ func (v *Viewer) Files() *files.Client {
 	return v.files
 }
 
+// ErrHostNotConfirmed is returned when the user did not confirm the device
+// code of a host connected to for the first time.
+var ErrHostNotConfirmed = errors.New("已取消：没有确认对方的设备码")
+
+// confirmWait bounds the probe that reads a host's key before asking.
+const confirmWait = 5 * time.Second
+
+// confirmFirstHost asks the user to check the device code of a LAN host
+// that has no remembered key, before any password proof is sent: a
+// stranger answering at that address would otherwise get one proof to guess
+// the password from offline. It returns the confirmed key to expect. Hosts
+// too old to name their key, and failed probes, fall back to the plain dial
+// (which remembers the key after it connects).
+func (v *Viewer) confirmFirstHost(ctx context.Context, isRemote bool) (string, error) {
+	if isRemote || v.cfg.ConfirmHost == nil || v.cfg.Devices == nil || v.cfg.Devices.HostKey(v.cfg.Addr) != "" {
+		return "", nil
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, confirmWait)
+	key, err := session.ProbeHostKey(probeCtx, v.cfg.Addr)
+	cancel()
+	if err != nil || key == "" {
+		return "", nil
+	}
+	public, _ := pairing.PublicKey(key)
+	if !v.cfg.ConfirmHost(ctx, v.cfg.Addr, pairing.DeviceCode(public)) {
+		return "", ErrHostNotConfirmed
+	}
+	return key, nil
+}
+
 // Connect dials the host. It blocks until the session is established or
 // fails; on failure the state is ViewerClosed with a user-facing Err.
 func (v *Viewer) Connect(ctx context.Context) error {
 	isRemote := rendezvous.IsCode(v.cfg.Addr)
+	// Before the dial timeout: the user may take a while to check the code.
+	confirmedKey, confirmErr := v.confirmFirstHost(ctx, isRemote)
 	dialTimeout := DialTimeout
 	if isRemote {
 		dialTimeout = 45 * time.Second
@@ -221,7 +259,14 @@ func (v *Viewer) Connect(ctx context.Context) error {
 		if v.cfg.Devices != nil {
 			opts.ExpectedHostKey = v.cfg.Devices.HostKey(v.cfg.Addr)
 		}
-		p, err = session.DialWithOptions(ctx, v.cfg.Addr, v.cfg.Password, opts)
+		if opts.ExpectedHostKey == "" {
+			opts.ExpectedHostKey = confirmedKey
+		}
+		if confirmErr != nil {
+			err = confirmErr
+		} else {
+			p, err = session.DialWithOptions(ctx, v.cfg.Addr, v.cfg.Password, opts)
+		}
 		if err == nil && v.cfg.Devices != nil {
 			var first bool
 			_, first, err = v.cfg.Devices.ConnectedWithHostKey(v.cfg.Addr, time.Now(), p.HostKey())

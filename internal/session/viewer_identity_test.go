@@ -70,3 +70,31 @@ func TestViewerClaimBoundToTranscript(t *testing.T) {
 		t.Fatalf("a short claim was accepted: %q", got)
 	}
 }
+
+// A controller can learn a host's key before sending any password proof, to
+// have the user check the device code first.
+func TestProbeHostKey(t *testing.T) {
+	hostID, err := pairing.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, err := Listen("127.0.0.1:0", hostID, func(string, string, PasswordTranscript, []byte) (string, time.Duration) {
+		t.Error("a probe reached password verification")
+		return "", 0
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	accepted := make(chan error, 1)
+	go func() { _, err := host.Accept(ctx); accepted <- err }()
+	key, err := ProbeHostKey(ctx, host.Addr().String())
+	if err != nil || key != hostID.PublicKey() {
+		t.Fatalf("ProbeHostKey = %q, %v; want the host's key", key, err)
+	}
+	if err := <-accepted; err != ErrProbe {
+		t.Fatalf("host saw the probe as %v, want ErrProbe", err)
+	}
+}
