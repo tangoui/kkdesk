@@ -349,3 +349,23 @@ func TestDirOverride(t *testing.T) {
 		t.Fatalf("Dir %q", d)
 	}
 }
+
+// The connect page trims what is typed, so a fixed password cannot start
+// or end with whitespace; one saved before this rule is trimmed on load.
+func TestFixedPasswordWhitespace(t *testing.T) {
+	if err := ValidFixedPassword(" abcdefgh"); err == nil {
+		t.Fatal("leading space accepted")
+	}
+	if err := ValidFixedPassword("abcdefgh\t"); err == nil {
+		t.Fatal("trailing tab accepted")
+	}
+	if err := ValidFixedPassword("abcd efgh"); err != nil {
+		t.Fatalf("inner space refused: %v", err)
+	}
+	s := Defaults()
+	s.FixedPassword = " abcdefgh "
+	s.repair()
+	if s.FixedPassword != "abcdefgh" {
+		t.Fatalf("repaired fixed password = %q", s.FixedPassword)
+	}
+}
