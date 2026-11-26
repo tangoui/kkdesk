@@ -17,7 +17,7 @@ func (m *Main) remoteDeviceCode(c *ui.Context, hs app.HostState) {
 	switch {
 	case hs.RemoteCode != "":
 		ui.Column(c, func() {
-			ui.Text(c, "本机跨网设备码").Size(12).Tertiary()
+			ui.Text(c, "本机跨网设备码（不在同一个网络时用）").Size(12).Tertiary()
 			ui.Row(c, func() {
 				mono(c, hs.RemoteCode, 18, text.Semibold, c.Theme.Text)
 				ui.Spacer(c)

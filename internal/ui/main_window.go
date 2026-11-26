@@ -45,7 +45,9 @@ const ModeTransfer = modeTransfer
 
 // Form is the persisted content of the 控制其他电脑 form.
 type Form struct {
-	PeerAddr string
+	Via      string // viaLAN (default) or viaRemote: which tab of the form
+	PeerAddr string // 局域网: the other computer's address
+	PeerCode string // 跨网: the other computer's device code
 	Password string
 	Mode     string   // modeControl (default), modeView or modeTransfer
 	Recent   []Recent // successful connections, newest first
