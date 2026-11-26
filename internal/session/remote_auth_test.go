@@ -19,24 +19,24 @@ func TestRemoteOfferAuth(t *testing.T) {
 	if strings.Contains(signed, "k7Pm4x") {
 		t.Fatal("the password itself is in the SDP")
 	}
-	clean, ok := VerifyRemoteOffer(signed, "other-password", "k7Pm4x")
-	if !ok || clean != testOfferSDP {
-		t.Fatalf("verify = %v, clean SDP changed:\n%q", ok, clean)
+	clean, auth := VerifyRemoteOffer(signed, "other-password", "k7Pm4x")
+	if auth != RemoteAuthOK || clean != testOfferSDP {
+		t.Fatalf("verify = %v, clean SDP changed:\n%q", auth, clean)
 	}
-	if _, ok := VerifyRemoteOffer(signed, "K7Pm4x"); ok {
-		t.Fatal("case-insensitive match")
+	if _, auth := VerifyRemoteOffer(signed, "K7Pm4x"); auth != RemoteAuthWrong {
+		t.Fatalf("case-insensitive match: %v", auth)
 	}
-	if _, ok := VerifyRemoteOffer(signed, "", ""); ok {
-		t.Fatal("empty passwords accepted")
+	if _, auth := VerifyRemoteOffer(signed, "", ""); auth != RemoteAuthWrong {
+		t.Fatalf("empty passwords: %v", auth)
 	}
 	// Any change to the offer (another fingerprint) breaks the proof.
 	tampered := strings.Replace(signed, "AA:BB", "AA:CC", 1)
-	if _, ok := VerifyRemoteOffer(tampered, "k7Pm4x"); ok {
-		t.Fatal("tampered offer accepted")
+	if _, auth := VerifyRemoteOffer(tampered, "k7Pm4x"); auth != RemoteAuthWrong {
+		t.Fatalf("tampered offer: %v", auth)
 	}
-	// No proof: not authenticated, SDP unchanged.
-	if clean, ok := VerifyRemoteOffer(testOfferSDP, "k7Pm4x"); ok || clean != testOfferSDP {
-		t.Fatalf("unsigned offer: %v %q", ok, clean)
+	// No proof (an older controller): SDP unchanged.
+	if clean, auth := VerifyRemoteOffer(testOfferSDP, "k7Pm4x"); auth != RemoteAuthNone || clean != testOfferSDP {
+		t.Fatalf("unsigned offer: %v %q", auth, clean)
 	}
 	// No password given: nothing is added.
 	if got := signRemoteOffer(testOfferSDP, ""); got != testOfferSDP {
