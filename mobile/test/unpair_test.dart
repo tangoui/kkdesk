@@ -57,7 +57,7 @@ void main() {
                 socket.writeln(jsonEncode({'mobile': message}));
 
             try {
-              socket.writeln('{"nonce":"legacy"}');
+              socket.writeln('{"version":2}');
               final hello = await read();
               expect(hello['purpose'], 'unpair');
               final transcript = PairTranscript(

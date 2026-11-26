@@ -60,6 +60,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   _Panel? _panel;
   String? _caption;
   bool _accessibilityNoticeDismissed = false;
+  bool _shownHostCode = false;
   bool _keyboard = false;
   bool _imeWasVisible = false;
   bool _draggingBall = false;
@@ -133,6 +134,14 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   void _sessionChanged() {
     if (!mounted) return;
     final status = widget.session.status;
+    if (status.phase != RemotePhase.ended &&
+        !_shownHostCode &&
+        status.firstHostCode != null) {
+      _shownHostCode = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) KNotice.show(context, '对方设备码 ${status.firstHostCode}');
+      });
+    }
     if (status.phase == RemotePhase.connected) {
       _connectedAt ??= DateTime.now();
       _connectedClock.start();
@@ -548,6 +557,21 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                             height: 1.45,
                           ),
                         ),
+                        if (status.identityChanged case final identity?)
+                          KButton(
+                            label: '忘记这台电脑的身份',
+                            variant: KButtonVariant.text,
+                            onTap: () async {
+                              final pageContext = context;
+                              if (await confirmForgetLanIdentity(
+                                    pageContext,
+                                    identity,
+                                  ) &&
+                                  pageContext.mounted) {
+                                Navigator.pop(pageContext, false);
+                              }
+                            },
+                          ),
                         const SizedBox(height: 16),
                         if (ended)
                           Row(

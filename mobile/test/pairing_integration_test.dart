@@ -60,7 +60,7 @@ void main() {
       final exchange = Completer<void>();
       server.listen((socket) async {
         try {
-          socket.writeln('{"nonce":"legacy"}');
+          socket.writeln('{"version":2}');
           final frames = StreamIterator(
             socket
                 .cast<List<int>>()
@@ -377,7 +377,7 @@ void main() {
           }
 
           try {
-            socket.writeln('{"nonce":"legacy"}');
+            socket.writeln('{"version":2}');
             final hello = await read();
             final transcript = PairTranscript(
               purpose: hello['purpose'] as String,

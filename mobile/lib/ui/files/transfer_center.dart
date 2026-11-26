@@ -7,9 +7,11 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../files/file_transfer_service.dart';
+import '../../lan_auth.dart';
 import '../../lan_session.dart';
 
 String transferError(Object? error) {
+  if (error is LanAuthFailure) return error.message;
   if (error is SocketException) return '无法连接电脑，请检查地址和网络';
   if (error is FormatException) return '电脑地址或连接响应无效';
   if (error is StateError) return '连接被拒绝，请检查密码和电脑端确认';
@@ -43,12 +45,14 @@ class TransferConnection {
   TransferConnection({
     required this.address,
     required this.service,
+    this.firstHostCode,
     this.onClose,
     this.reopen,
   });
 
   final String address;
   final FileTransferService service;
+  final String? firstHostCode;
   final Future<void> Function()? onClose;
   final Future<TransferConnection> Function()? reopen;
   bool closed = false;
@@ -193,6 +197,7 @@ class TransferCenter extends ChangeNotifier {
         final connection = TransferConnection(
           address: address,
           service: await session.files,
+          firstHostCode: session.firstHostCode,
           onClose: session.close,
           reopen: () => _connect(address, dial),
         );

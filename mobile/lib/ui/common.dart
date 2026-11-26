@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+import '../lan_auth.dart';
 import '../mobile_services.dart';
 
 import 'kit/kit.dart';
@@ -166,4 +167,27 @@ Future<void> renameComputer(
     initial: computer.name,
   );
   if (name != null) await devices.rename(computer.id, name);
+}
+
+Future<bool> confirmForgetLanIdentity(
+  BuildContext context,
+  LanIdentityChanged identity,
+) async {
+  final confirmed = await kConfirm(
+    context,
+    title: '忘记这台电脑的身份',
+    message: '只有确认对方重装了 kkdesk 时才这样做，否则可能连到冒充的电脑。',
+    confirm: '忘记身份',
+    danger: true,
+  );
+  if (confirmed != true || !context.mounted) return false;
+  try {
+    await identity.forget();
+    return true;
+  } catch (_) {
+    if (context.mounted) {
+      KNotice.show(context, '无法忘记这台电脑的身份', kind: KNoticeKind.error);
+    }
+    return false;
+  }
 }

@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'activity_history.dart';
 import 'computer_os.dart';
+import 'lan_auth.dart';
 import 'lan_remote_session.dart';
 import 'touch_controller.dart';
 
@@ -131,6 +132,8 @@ class RemoteStatus {
     this.fps,
     this.detail,
     this.accessibilityDenied = false,
+    this.firstHostCode,
+    this.identityChanged,
   });
 
   final RemotePhase phase;
@@ -139,6 +142,8 @@ class RemoteStatus {
   final int? fps;
   final String? detail;
   final bool accessibilityDenied;
+  final String? firstHostCode;
+  final LanIdentityChanged? identityChanged;
 }
 
 abstract interface class RemoteSession implements Listenable {

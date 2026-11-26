@@ -1,13 +1,4 @@
-import 'dart:convert';
 import 'dart:typed_data';
-
-import 'package:crypto/crypto.dart';
-
-String challengeMac(String password, String nonce) {
-  final bytes = base64Decode(nonce);
-  if (bytes.length != 32) throw const FormatException('无效的密码验证请求');
-  return base64Encode(Hmac(sha256, utf8.encode(password)).convert(bytes).bytes);
-}
 
 Uint8List mouseMove(double x, double y) =>
     _position(1, 9, x, y).buffer.asUint8List();
