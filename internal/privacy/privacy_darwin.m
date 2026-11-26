@@ -6,6 +6,7 @@
 #include "_cgo_export.h"
 
 @interface PrivacyPanel : NSPanel
+@property(nonatomic, strong) NSTextField *message;
 @end
 
 @implementation PrivacyPanel
@@ -19,6 +20,7 @@
 @property(nonatomic) EventHandlerRef hotkeyHandler;
 @property(nonatomic, strong) id displayObserver;
 @property(nonatomic, strong) NSMutableDictionary<NSNumber *, PrivacyPanel *> *panels;
+@property(nonatomic) int countdown;
 @end
 
 @implementation PrivacyScreen
@@ -50,6 +52,7 @@ void *mmprivacy_new(uintptr_t handle, int *status) {
         @autoreleasepool {
             PrivacyScreen *screen = [PrivacyScreen new];
             screen.handle = handle;
+            screen.countdown = -1;
             screen.panels = [NSMutableDictionary dictionary];
             EventTypeSpec spec = {kEventClassKeyboard, kEventHotKeyPressed};
             EventHandlerRef handler = NULL;
@@ -137,6 +140,12 @@ uint32_t *mmprivacy_prepare(void *ptr, size_t *count) {
     return ids;
 }
 
+static NSString *coverMessage(int countdown) {
+    if (countdown < 0) return @"正在被远程控制，屏幕已隐藏。\n按 ⌃⌥⌘P 结束隐私屏";
+    if (countdown == 0) return @"正在锁屏…";
+    return [NSString stringWithFormat:@"连接已断开，%d 秒后锁屏\n按 ⌃⌥⌘P 取消锁屏并结束隐私屏", countdown];
+}
+
 void mmprivacy_show(void *ptr) {
     onMain(^{
         @autoreleasepool {
@@ -147,8 +156,8 @@ void mmprivacy_show(void *ptr) {
                 }
                 panel.backgroundColor = NSColor.blackColor;
                 panel.alphaValue = 254.0 / 255.0;
-                NSTextField *label = [NSTextField wrappingLabelWithString:
-                   @"正在被远程控制，屏幕已隐藏。\n按 ⌃⌥⌘P 结束隐私屏"];
+                NSTextField *label = [NSTextField wrappingLabelWithString:coverMessage(screen.countdown)];
+                panel.message = label;
                 label.alignment = NSTextAlignmentCenter;
                 label.font = [NSFont systemFontOfSize:24];
                 label.textColor = NSColor.whiteColor;
@@ -159,6 +168,18 @@ void mmprivacy_show(void *ptr) {
                     [label.centerYAnchor constraintEqualToAnchor:panel.contentView.centerYAnchor],
                     [label.widthAnchor constraintLessThanOrEqualToAnchor:panel.contentView.widthAnchor multiplier:0.9],
                 ]];
+            }
+        }
+    });
+}
+
+void mmprivacy_countdown(void *ptr, int seconds) {
+    onMain(^{
+        @autoreleasepool {
+            PrivacyScreen *screen = (__bridge PrivacyScreen *)ptr;
+            screen.countdown = seconds;
+            for (PrivacyPanel *panel in screen.panels.allValues) {
+                panel.message.stringValue = coverMessage(seconds);
             }
         }
     });

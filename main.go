@@ -330,6 +330,8 @@ func hostConfig(o options, store *config.Store, logw io.Writer) app.HostConfig {
 		BitrateMbps:             st.BitrateMbps,
 		Log:                     logw,
 		AutoAccept:              o.autoAccept || !st.Confirm,
+		PrivacyPolicy:           st.Privacy,
+		LockAfterDisconnect:     st.LockAfterDisconnect,
 		Remote:                  rendezvous.Config{URL: st.RemoteURL, Token: st.RemoteToken, PublicKey: st.RemotePublicKey},
 		DisableSessionClipboard: !st.AllowSessionClipboard,
 		DisableSessionFiles:     !st.AllowSessionFiles,

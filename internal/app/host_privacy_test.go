@@ -12,9 +12,10 @@ import (
 )
 
 type fakePrivacyScreen struct {
-	shown bool
-	exit  func(error)
-	err   error
+	shown     bool
+	exit      func(error)
+	err       error
+	countdown atomic.Int32
 }
 
 func (s *fakePrivacyScreen) Show(_ func([]uint32) error, exit func(error)) error {
@@ -26,6 +27,8 @@ func (s *fakePrivacyScreen) Show(_ func([]uint32) error, exit func(error)) error
 }
 
 func (s *fakePrivacyScreen) Hide() { s.shown = false }
+
+func (s *fakePrivacyScreen) SetLockCountdown(seconds int) { s.countdown.Store(int32(seconds)) }
 
 type privacyTestResult struct {
 	status session.PrivacyStatus
@@ -169,10 +172,16 @@ func TestHostDisconnectLockGrace(t *testing.T) {
 					if time.Until(deadline) != time.Minute || !p.state().on || locks.Load() != 0 {
 						t.Fatalf("started grace with deadline %v, shown %v, locks %d", deadline, p.state().on, locks.Load())
 					}
+					if screen.countdown.Load() != 60 {
+						t.Fatal("screen did not display the initial grace countdown")
+					}
 					time.Sleep(59 * time.Second)
 					synctest.Wait()
 					if locks.Load() != 0 || !p.state().on {
 						t.Fatal("grace ended early")
+					}
+					if seconds := screen.countdown.Load(); seconds != 1 {
+						t.Fatalf("screen countdown after 59 seconds = %d", seconds)
 					}
 					switch action {
 					case "reconnect":

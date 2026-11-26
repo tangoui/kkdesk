@@ -7,6 +7,7 @@
 void *mmprivacy_new(uintptr_t handle, int *status);
 uint32_t *mmprivacy_prepare(void *screen, size_t *count);
 void mmprivacy_show(void *screen);
+void mmprivacy_countdown(void *screen, int seconds);
 void mmprivacy_close(void *screen);
 
 const char *mmprivacy_lock(void);

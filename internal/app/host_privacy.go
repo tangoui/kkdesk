@@ -12,6 +12,8 @@ import (
 
 const privacyConsentTimeout = 30 * time.Second
 
+var privacyRequestID atomic.Uint64
+
 type hostPrivacyState struct {
 	on        bool
 	lockAfter bool
@@ -30,7 +32,6 @@ type hostPrivacy struct {
 	notify  func()
 
 	current     atomic.Pointer[hostPrivacyState]
-	requestID   uint64
 	consent     *time.Timer
 	askAgain    bool
 	showID      uint64
@@ -80,8 +81,7 @@ func (p *hostPrivacy) set(on bool) {
 	case p.policy == config.PrivacyAllow && !p.askAgain:
 		p.show()
 	default:
-		p.requestID++
-		id := p.requestID
+		id := privacyRequestID.Add(1)
 		deadline := time.Now().Add(privacyConsentTimeout)
 		p.consent = time.AfterFunc(time.Until(deadline), func() { p.answer(id, false) })
 		p.publish(hostPrivacyState{request: id, deadline: deadline}, session.PrivacyWaiting, "")
@@ -104,14 +104,53 @@ func (p *hostPrivacy) answer(id uint64, allow bool) {
 }
 
 func (p *hostPrivacy) setPolicy(policy config.PrivacyPolicy) {
+	p.updatePolicy(func() config.PrivacyPolicy { return policy })
+}
+
+func (p *hostPrivacy) updatePolicy(policy func() config.PrivacyPolicy) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.policy = policy
+	p.policy = policy()
 	s := p.state()
-	if policy == config.PrivacyDeny && (s.on || s.request != 0) {
+	if p.policy == config.PrivacyDeny && (s.on || s.request != 0) {
 		p.cancelConsent()
 		p.hide()
 		p.publish(hostPrivacyState{}, session.PrivacyNotAllowed, "")
+	}
+}
+
+// SetPrivacyPolicy changes permission for the current and future sessions.
+func (h *Host) SetPrivacyPolicy(policy config.PrivacyPolicy) {
+	h.mu.Lock()
+	h.cfg.PrivacyPolicy = policy
+	active, grace := h.privacy, h.grace
+	h.mu.Unlock()
+	currentPolicy := func() config.PrivacyPolicy {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return h.cfg.PrivacyPolicy
+	}
+	if active != nil {
+		go active.updatePolicy(currentPolicy)
+	}
+	if grace != nil && grace.session != active {
+		go grace.session.updatePolicy(currentPolicy)
+	}
+}
+
+func (h *Host) SetAutoLockAfterDisconnect(on bool) {
+	h.mu.Lock()
+	h.cfg.LockAfterDisconnect = on
+	h.mu.Unlock()
+	h.notify()
+}
+
+func (h *Host) AnswerPrivacy(id uint64, allow bool) {
+	h.mu.Lock()
+	p := h.privacy
+	h.mu.Unlock()
+	if p != nil {
+		go p.answer(id, allow)
 	}
 }
 
@@ -224,6 +263,7 @@ type privacyGrace struct {
 	session *hostPrivacy
 	until   time.Time
 	timer   *time.Timer
+	done    chan struct{}
 }
 
 func (h *Host) endDesktopPrivacy(p *hostPrivacy, graceful bool) {
@@ -238,7 +278,7 @@ func (h *Host) endDesktopPrivacy(p *hostPrivacy, graceful bool) {
 		return
 	}
 
-	g := &privacyGrace{session: p, until: time.Now().Add(lockGracePeriod)}
+	g := &privacyGrace{session: p, until: time.Now().Add(lockGracePeriod), done: make(chan struct{})}
 	p.mu.Lock()
 	p.closed = true
 	p.detached.Store(true)
@@ -247,12 +287,38 @@ func (h *Host) endDesktopPrivacy(p *hostPrivacy, graceful bool) {
 	s := p.state()
 	s.request, s.deadline = 0, time.Time{}
 	p.current.Store(&s)
+	if s.on {
+		p.screen.SetLockCountdown(int(lockGracePeriod / time.Second))
+	}
 	p.mu.Unlock()
 	h.mu.Lock()
 	h.grace = g
 	h.mu.Unlock()
 	g.timer = time.AfterFunc(time.Until(g.until), func() { h.finishGrace(g, true) })
+	if s.on {
+		go g.countDown()
+	}
 	h.notify()
+}
+
+func (g *privacyGrace) countDown() {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-g.done:
+			return
+		case <-ticker.C:
+			p := g.session
+			p.mu.Lock()
+			if !p.state().on {
+				p.mu.Unlock()
+				return
+			}
+			p.screen.SetLockCountdown(max(0, int((time.Until(g.until)+time.Second-1)/time.Second)))
+			p.mu.Unlock()
+		}
+	}
 }
 
 func (h *Host) finishDesktopPrivacy(p *hostPrivacy, lock bool) {
@@ -277,6 +343,7 @@ func (h *Host) finishGrace(expected *privacyGrace, lock bool) {
 		return
 	}
 	g.timer.Stop()
+	close(g.done)
 	h.grace = nil
 	h.mu.Unlock()
 	h.finishDesktopPrivacy(g.session, lock)

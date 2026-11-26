@@ -10,6 +10,7 @@ extern "C" {
 void *mmprivacyw_open(uintptr_t *window, unsigned long *error);
 unsigned long mmprivacyw_run(void *screen);
 void mmprivacyw_stop(uintptr_t window);
+void mmprivacyw_countdown(uintptr_t window, int seconds);
 unsigned long mmprivacyw_lock(void);
 unsigned long mmprivacyw_locked(int *locked);
 

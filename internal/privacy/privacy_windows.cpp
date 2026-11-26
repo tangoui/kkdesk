@@ -4,6 +4,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cwchar>
 #include <memory>
 #include <vector>
 #include "privacy_windows.h"
@@ -11,15 +12,18 @@
 static const wchar_t className[] = L"KKDeskPrivacyScreen";
 static constexpr UINT stopMessage = WM_APP + 1;
 static constexpr UINT rebuildMessage = WM_APP + 2;
+static constexpr UINT countdownMessage = WM_APP + 3;
 static constexpr UINT_PTR topmostTimer = 1;
 static constexpr int exitHotkey = 1;
 static constexpr DWORD excludeFromCapture = 0x11;
+static const wchar_t countdownProperty[] = L"KKDeskLockCountdown";
 
 struct WindowsScreen {
     HWND control = nullptr;
     std::vector<HWND> covers;
     DWORD error = ERROR_SUCCESS;
     bool shortcut = false;
+    int countdown = -1;
 
     ~WindowsScreen() {
         for (HWND cover : covers) DestroyWindow(cover);
@@ -70,6 +74,9 @@ static DWORD rebuild(WindowsScreen &screen) {
         return list.error == ERROR_SUCCESS ? ERROR_NOT_SUPPORTED : list.error;
     }
     for (HWND window : list.windows) {
+        if (screen.countdown >= 0) {
+            SetPropW(window, countdownProperty, reinterpret_cast<HANDLE>(static_cast<INT_PTR>(screen.countdown + 1)));
+        }
         if (!SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0,
                           SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW)) {
             DWORD error = GetLastError();
@@ -93,7 +100,15 @@ static void paintCover(HWND hwnd) {
     HGDIOBJ old = font ? SelectObject(dc, font) : nullptr;
     SetTextColor(dc, RGB(255, 255, 255));
     SetBkMode(dc, TRANSPARENT);
-    const wchar_t text[] = L"正在被远程控制，屏幕已隐藏。\n按 Ctrl+Alt+Shift+P 结束隐私屏";
+    int countdown = static_cast<int>(reinterpret_cast<INT_PTR>(GetPropW(hwnd, countdownProperty))) - 1;
+    wchar_t graceText[128];
+    const wchar_t *text = L"正在被远程控制，屏幕已隐藏。\n按 Ctrl+Alt+Shift+P 结束隐私屏";
+    if (countdown == 0) {
+        text = L"正在锁屏…";
+    } else if (countdown > 0) {
+        std::swprintf(graceText, 128, L"连接已断开，%d 秒后锁屏\n按 Ctrl+Alt+Shift+P 取消锁屏并结束隐私屏", countdown);
+        text = graceText;
+    }
     RECT textBounds = rect;
     DrawTextW(dc, text, -1, &textBounds, DT_CENTER | DT_WORDBREAK | DT_CALCRECT);
     rect.top += std::max<LONG>(0, (rect.bottom - rect.top - (textBounds.bottom - textBounds.top)) / 2);
@@ -135,6 +150,13 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wparam, LPARA
     case rebuildMessage:
         screen->error = rebuild(*screen);
         if (screen->error != ERROR_SUCCESS) PostQuitMessage(0);
+        return 0;
+    case countdownMessage:
+        screen->countdown = static_cast<int>(wparam);
+        for (HWND cover : screen->covers) {
+            SetPropW(cover, countdownProperty, reinterpret_cast<HANDLE>(static_cast<INT_PTR>(screen->countdown + 1)));
+            InvalidateRect(cover, nullptr, FALSE);
+        }
         return 0;
     case WM_TIMER: {
         HWND top = GetTopWindow(nullptr);
@@ -194,6 +216,10 @@ unsigned long mmprivacyw_run(void *ptr) {
 
 void mmprivacyw_stop(uintptr_t window) {
     PostMessageW(reinterpret_cast<HWND>(window), stopMessage, 0, 0);
+}
+
+void mmprivacyw_countdown(uintptr_t window, int seconds) {
+    PostMessageW(reinterpret_cast<HWND>(window), countdownMessage, static_cast<WPARAM>(seconds), 0);
 }
 
 #include <wtsapi32.h>

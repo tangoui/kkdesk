@@ -82,6 +82,14 @@ func (s *darwinScreen) Hide() {
 	}
 }
 
+func (s *darwinScreen) SetLockCountdown(seconds int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ptr != nil {
+		C.mmprivacy_countdown(s.ptr, C.int(seconds))
+	}
+}
+
 //export mmprivacyDarwinEvent
 func mmprivacyDarwinEvent(handle C.uintptr_t, displayChanged C.int) {
 	h := cgo.Handle(handle)

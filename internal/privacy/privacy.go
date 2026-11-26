@@ -15,9 +15,12 @@ var ErrUnsupported = errors.New("当前平台不支持隐私屏")
 type Screen interface {
 	Show(exclude func([]uint32) error, exited func(error)) error
 	Hide()
+	SetLockCountdown(seconds int)
 }
 
 type unsupportedScreen struct{}
+
+func (unsupportedScreen) SetLockCountdown(int) {}
 
 func (unsupportedScreen) Show(func([]uint32) error, func(error)) error { return ErrUnsupported }
 func (unsupportedScreen) Hide()                                        {}

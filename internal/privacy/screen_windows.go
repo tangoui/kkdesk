@@ -93,6 +93,12 @@ func (s *windowsScreen) Hide() {
 	s.window, s.done = 0, nil
 }
 
+func (s *windowsScreen) SetLockCountdown(seconds int) {
+	if s.window != 0 {
+		C.mmprivacyw_countdown(s.window, C.int(seconds))
+	}
+}
+
 func NewLocker() Locker {
 	return confirmedLocker{
 		request: func() error {
