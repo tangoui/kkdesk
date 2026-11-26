@@ -33,7 +33,8 @@ func TestConnectTarget(t *testing.T) {
 	}{
 		{"lan", Form{Via: viaLAN, PeerAddr: " 192.168.1.20 ", Password: " 123456 "}, "192.168.1.20", "123456", true},
 		{"lan empty", Form{Via: viaLAN}, "", "", false},
-		{"remote", Form{Via: viaRemote, PeerCode: " kd-abcd2345efgh ", Password: "123456"}, "KD-ABCD2345EFGH", "", true},
+		{"remote", Form{Via: viaRemote, PeerCode: " kd-abcd2345efgh ", Password: " k7Pm4x "}, "KD-ABCD2345EFGH", "k7Pm4x", true},
+		{"remote without password", Form{Via: viaRemote, PeerCode: "KD-ABCD2345EFGH"}, "KD-ABCD2345EFGH", "", true},
 		{"remote not a code", Form{Via: viaRemote, PeerCode: "192.168.1.20"}, "", "", false},
 		{"remote ignores the LAN address", Form{Via: viaRemote, PeerAddr: "192.168.1.20"}, "", "", false},
 	} {

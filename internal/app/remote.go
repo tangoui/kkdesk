@@ -130,6 +130,13 @@ func (h *Host) answerRemote(ctx context.Context, cfg rendezvous.Config, conn *we
 		_ = rendezvous.Reply(replyCtx, conn, req.ID, nil, "对方正在处理其他连接")
 		return
 	}
+	// A controller that proves the temporary or fixed password skips the
+	// confirmation like on the LAN (when 连接前需要确认 is off).
+	h.mu.Lock()
+	passwords := []string{h.password, h.cfg.Fixed}
+	h.mu.Unlock()
+	var passwordOK bool
+	req.SDP.SDP, passwordOK = session.VerifyRemoteOffer(req.SDP.SDP, passwords...)
 	peer, answer, err := session.AnswerRemote(cfg, req)
 	if err != nil {
 		_ = rendezvous.Reply(replyCtx, conn, req.ID, nil, "被控端无法建立跨网连接")
@@ -143,5 +150,5 @@ func (h *Host) answerRemote(ctx context.Context, cfg rendezvous.Config, conn *we
 		peer.Close()
 		return
 	}
-	h.handle(peer, ctx, "", "")
+	h.handle(peer, ctx, passwordOK, "", "")
 }

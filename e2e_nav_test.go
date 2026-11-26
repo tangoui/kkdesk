@@ -139,7 +139,10 @@ func TestE2ENav(t *testing.T) {
 		w.Find(a11y.RoleTextbox, "临时密码").SetValue(pw)
 		w.Find(a11y.RoleRadio, "传文件").Click()
 		w.Find(a11y.RoleButton, "连接").Click()
-		w.FindContains(a11y.RoleButton, "接受").Click()
+		accept := w.FindContains(a11y.RoleButton, "接受")
+		accept.Wait()
+		shot(w, "dialog-confirm.png")
+		accept.Click()
 		return app.Window("文件传输 - 127.0.0.1:21918")
 	}
 

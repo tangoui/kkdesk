@@ -83,10 +83,7 @@ func (m *Main) confirm(c *ui.Context, hs app.HostState) {
 			}, layout.Gap(2), layout.Grow(1), layout.MinW(0))
 		}, layout.Gap(12), layout.Middle())
 	}).Footer(func() {
-		ui.Row(c, func() {
-			reject = ui.Button(c, "拒绝").AutoInsertSpace(false).Clicked()
-			accept = ui.Button(c, fmt.Sprintf("接受（%d）", left)).Primary().Clicked()
-		}, layout.Gap(8), layout.JustifyContent(layout.JustifyEnd))
+		reject, accept = confirmFooter(c, "拒绝", "接受", "自动拒绝", left)
 	}).Body(func() {
 		ui.Column(c, func() {
 			ui.Alert(c, "warning", warn).ShowIcon(true).Show()

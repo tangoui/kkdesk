@@ -2,7 +2,7 @@ name: Release
 
 # Pushing a tag vX.Y.Z (equal to "version" in tan.json) builds kkdesk for
 # macOS (Apple silicon and Intel, ad-hoc signed), Windows (x64) and Linux (x64 and
-# arm64) plus kkdesk-server, signs the update manifest (latest.json, with
+# arm64), plus kkdesk-server and an Android APK. It signs the update manifest (latest.json, with
 # binary patches from the previous release) and publishes a GitHub release.
 # Clients find it at releases/latest/download/latest.json (internal/update).
 #
@@ -123,8 +123,15 @@ jobs:
           name: build-linux-${{ matrix.arch }}
           path: linux-build.tar.gz
 
+  android:
+    needs: version
+    uses: ./.github/workflows/android.yml
+    secrets:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+
   publish:
-    needs: [version, macos, windows, linux]
+    needs: [version, macos, windows, linux, android]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -159,7 +166,7 @@ jobs:
           [ -f "docs/releases/$VERSION.md" ] && notes=(-notes "@docs/releases/$VERSION.md")
           tan release-manifest -build build -o release $PREV_ARGS \
             -url "https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/" "${notes[@]}"
-          cp server/*.tar.gz release/
+          cp server/*.tar.gz artifacts/build-android/*.apk release/
           (cd release && sha256sum * > SHA256SUMS)
           ls -la release
       - name: Publish the release

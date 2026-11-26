@@ -4,6 +4,9 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+val releaseKeystore = providers.environmentVariable("KKDESK_ANDROID_KEYSTORE").orNull
+val releasePassword = providers.environmentVariable("KKDESK_ANDROID_KEYSTORE_PASSWORD").orNull
+
 android {
     namespace = "com.kkdesk.kkdesk_mobile"
     compileSdk = flutter.compileSdkVersion
@@ -29,11 +32,23 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        if (releaseKeystore != null) {
+            create("release") {
+                storeFile = file(releaseKeystore)
+                storeType = "PKCS12"
+                storePassword = requireNotNull(releasePassword) {
+                    "KKDESK_ANDROID_KEYSTORE_PASSWORD is required when a release keystore is configured"
+                }
+                keyAlias = "kkdesk"
+                keyPassword = storePassword
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
 }
