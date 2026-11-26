@@ -747,8 +747,8 @@ func (h *Host) Close() {
 // instead of queuing. Only one session runs at a time all the same
 // (handle's busy check).
 const (
-	maxHandshakes      = 32
-	maxHandshakesPerIP = 2
+	maxHandshakes      = 64
+	maxHandshakesPerIP = 4 // a viewer's session, file window and probe at once
 )
 
 func (h *Host) acceptLoop(ctx context.Context, ln *session.Host) {
@@ -769,7 +769,7 @@ func (h *Host) acceptLoop(ctx context.Context, ln *session.Host) {
 		if host, _, err := net.SplitHostPort(ip); err == nil {
 			ip = host
 		}
-		release, ok := limit.acquire(ip)
+		release, ok := limit.acquire(session.SourceKey(ip)) // an IPv6 /64 counts once
 		if !ok {
 			_ = c.Close()
 			continue

@@ -193,3 +193,69 @@ func TestPasswordGateBoundsSources(t *testing.T) {
 		t.Fatalf("gate tracks %d sources, want at most %d", n, maxGateSources)
 	}
 }
+
+// Flooding the gate with new sources cannot evict (and so unpause) a source
+// that is paused or failed recently.
+func TestPasswordGateFloodDoesNotUnpause(t *testing.T) {
+	var gate PasswordGate
+	now := time.Unix(1000, 0)
+	tx := NewPasswordTranscript("offer", "answer")
+	for range 5 {
+		gate.Check(now, "lan:192.0.2.1", tx, tx.Proof("wrong"), "temporary", "")
+	}
+	for i := range 3 * maxGateSources {
+		gate.Check(now, fmt.Sprintf("lan:10.1.%d.%d", i/256, i%256), tx, tx.Proof("wrong"), "temporary", "")
+	}
+	if _, remaining := gate.Check(now, "lan:192.0.2.1", tx, tx.Proof("temporary"), "temporary", ""); remaining == 0 {
+		t.Fatal("a flood of other sources unpaused a paused source")
+	}
+}
+
+// Failures fade (halve per quiet period) rather than vanish at once.
+func TestPasswordFailuresFade(t *testing.T) {
+	var gate PasswordGate
+	now := time.Unix(1000, 0)
+	tx := NewPasswordTranscript("offer", "answer")
+	for range 4 {
+		gate.Check(now, "remote", tx, tx.Proof("wrong"), "temporary", "")
+	}
+	now = now.Add(16 * time.Minute) // 4 → 2
+	for range 3 {
+		gate.Check(now, "remote", tx, tx.Proof("wrong"), "temporary", "")
+	}
+	if gate.Remaining(now) == 0 {
+		t.Fatal("4 old + 3 new failures did not pause: old failures were forgotten entirely")
+	}
+}
+
+// Past a total failure budget per hour, any source that has failed is
+// paused, while sources that never failed still get in.
+func TestPasswordGateGlobalBudget(t *testing.T) {
+	var gate PasswordGate
+	now := time.Unix(1000, 0)
+	tx := NewPasswordTranscript("offer", "answer")
+	gate.Check(now, "lan:192.0.2.9", tx, tx.Proof("wrong"), "temporary", "")
+	for i := range globalFailBudget {
+		gate.Check(now, fmt.Sprintf("lan:10.2.0.%d", i), tx, tx.Proof("wrong"), "temporary", "")
+	}
+	if _, remaining := gate.Check(now, "lan:192.0.2.9", tx, tx.Proof("temporary"), "temporary", ""); remaining == 0 {
+		t.Fatal("a source that failed before was let through past the hourly budget")
+	}
+	if got, remaining := gate.Check(now, "lan:192.0.2.50", tx, tx.Proof("temporary"), "temporary", ""); got != "temporary" || remaining != 0 {
+		t.Fatalf("a source that never failed = %q, %s; want accepted", got, remaining)
+	}
+}
+
+func TestSourceKeyGroupsIPv6Prefixes(t *testing.T) {
+	for _, tc := range []struct{ ip, want string }{
+		{"192.0.2.7", "lan:192.0.2.7"},
+		{"2001:db8:1:2:aaaa::1", "lan:2001:db8:1:2::/64"},
+		{"2001:db8:1:2:bbbb::9", "lan:2001:db8:1:2::/64"},
+		{"::1", "lan:::/64"},
+		{"not-an-ip", "lan:not-an-ip"},
+	} {
+		if got := SourceKey(tc.ip); got != tc.want {
+			t.Errorf("SourceKey(%q) = %q, want %q", tc.ip, got, tc.want)
+		}
+	}
+}

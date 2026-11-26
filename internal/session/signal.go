@@ -152,8 +152,9 @@ func (h *Host) AcceptConn(ctx context.Context) (net.Conn, error) {
 }
 
 // firstMessageWait bounds how long a new connection may stay silent: the
-// controller sends its offer after gathering ICE candidates (gatherWait).
-const firstMessageWait = gatherWait + 2*time.Second
+// controller sends its offer after gathering ICE candidates (gatherWait here,
+// 8 s on the phone), with room for slow machines.
+const firstMessageWait = 20 * time.Second
 
 // Handshake authenticates a connection from AcceptConn and returns the
 // peer; it closes c on failure. A phone's pairing exchange is handed to the
@@ -175,6 +176,9 @@ func (h *Host) Handshake(ctx context.Context, c net.Conn) (*Peer, error) {
 	}
 	m, err := sc.recv()
 	_ = c.SetReadDeadline(sc.deadline)
+	if ctx.Err() != nil { // restoring the deadline may have undone the cancel
+		return nil, ctx.Err()
+	}
 	if err != nil {
 		if closedEarly(err) {
 			return nil, ErrProbe
@@ -210,7 +214,7 @@ func (h *Host) Handshake(ctx context.Context, c net.Conn) (*Peer, error) {
 		return nil, err
 	}
 	done()
-	source := "lan:" + hostOnly(c.RemoteAddr())
+	source := SourceKey(hostOnly(c.RemoteAddr()))
 	check := func(tx PasswordTranscript, proof []byte) (string, time.Duration) { return h.verify(source, tx, proof) }
 	if err := p.AcceptPassword(ctx, NewPasswordTranscript(m.SDP.SDP, answer.SDP), check); err != nil {
 		p.Close()

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -74,39 +75,66 @@ func (t PasswordTranscript) Proof(password string) []byte {
 	return mac.Sum(nil)
 }
 
-// PasswordGate rate-limits password attempts per source: a LAN address, or
-// all cross-network requests together. A source that keeps failing pauses
-// only itself, so a stranger cannot lock everyone else out; failures are
-// forgotten after a quiet spell, and Reset (a new password) lifts every
-// pause.
+// PasswordGate rate-limits password attempts per source: a LAN address (an
+// IPv6 /64, see SourceKey), or all cross-network requests together. A source
+// that keeps failing pauses only itself, so a stranger cannot lock everyone
+// else out. Failures halve after each quiet spell, and Reset (a new
+// password) lifts every pause.
+//
+// Many addresses must not multiply an attacker's guesses either: records
+// that are paused or failed recently are never evicted (new sources share
+// one overflow record once the table is full), and past globalFailBudget
+// failures an hour every source that has failed is paused, while sources
+// that never failed still get in.
 type PasswordGate struct {
-	mu      sync.Mutex
-	sources map[string]*gateSource
+	mu       sync.Mutex
+	sources  map[string]*gateSource
+	overflow gateSource  // shared by new sources while the table is full
+	recent   []time.Time // failures within the last hour, oldest first
 }
 
 type gateSource struct {
 	failures int
 	until    time.Time // paused until
-	last     time.Time // latest failure
+	last     time.Time // latest failure (or decay step)
 }
 
 const (
-	// gateForget is how long a source's failures are remembered after its
-	// latest one (once any pause has ended).
+	// gateForget is the quiet spell after which a source's failures halve.
 	gateForget = 15 * time.Minute
 	// maxGateSources bounds the sources remembered at once.
 	maxGateSources = 256
+	// globalFailBudget is how many failures an hour (all sources together)
+	// pass before every source that has failed is paused.
+	globalFailBudget = 60
+	globalWindow     = time.Hour
 )
+
+// SourceKey is the gate source of a LAN client address: the IPv4 address,
+// or the /64 prefix of an IPv6 address (one host can have any address in
+// its /64).
+func SourceKey(ip string) string {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		return "lan:" + ip
+	}
+	addr = addr.Unmap()
+	if addr.Is4() {
+		return "lan:" + addr.String()
+	}
+	prefix, _ := addr.Prefix(64)
+	return "lan:" + prefix.String()
+}
 
 // Remaining returns the longest pause still running for any source.
 func (g *PasswordGate) Remaining(now time.Time) time.Duration {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	var longest time.Duration
+	longest := g.overflow.until.Sub(now)
 	for _, s := range g.sources {
 		longest = max(longest, s.until.Sub(now))
 	}
-	return longest
+	return max(0, longest)
 }
 
 // Reset forgets every failure and lifts every pause (the password changed,
@@ -114,7 +142,7 @@ func (g *PasswordGate) Remaining(now time.Time) time.Duration {
 func (g *PasswordGate) Reset() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.sources = nil
+	g.sources, g.overflow, g.recent = nil, gateSource{}, nil
 }
 
 func (g *PasswordGate) sourceCount() int {
@@ -123,11 +151,36 @@ func (g *PasswordGate) sourceCount() int {
 	return len(g.sources)
 }
 
-func (s *gateSource) stale(now time.Time) bool {
-	return !now.Before(s.until) && now.Sub(s.last) > gateForget
+// decay halves the failures once per quiet gateForget after the latest
+// failure and after any pause (time spent paused is not quiet time).
+func (s *gateSource) decay(now time.Time) {
+	if s.until.After(s.last) {
+		if now.Before(s.until) {
+			return
+		}
+		s.last = s.until
+	}
+	for s.failures > 0 && now.Sub(s.last) >= gateForget {
+		s.failures /= 2
+		s.last = s.last.Add(gateForget)
+	}
 }
 
-// track returns the record for source, making room if needed. g.mu is held.
+// record returns source's record, or nil if it has none. g.mu is held.
+func (g *PasswordGate) record(now time.Time, source string) *gateSource {
+	s := g.sources[source]
+	if s == nil {
+		return nil
+	}
+	s.decay(now)
+	if s.failures == 0 && !now.Before(s.until) {
+		delete(g.sources, source)
+		return nil
+	}
+	return s
+}
+
+// track returns the record to count a failure of source in. g.mu is held.
 func (g *PasswordGate) track(now time.Time, source string) *gateSource {
 	if s := g.sources[source]; s != nil {
 		return s
@@ -136,24 +189,28 @@ func (g *PasswordGate) track(now time.Time, source string) *gateSource {
 		g.sources = map[string]*gateSource{}
 	}
 	if len(g.sources) >= maxGateSources {
-		for k, s := range g.sources {
-			if s.stale(now) {
-				delete(g.sources, k)
-			}
+		for k := range g.sources {
+			g.record(now, k) // drops records that have faded out
 		}
 	}
-	for len(g.sources) >= maxGateSources { // still full: drop the oldest
-		oldest := ""
-		for k, s := range g.sources {
-			if oldest == "" || s.last.Before(g.sources[oldest].last) {
-				oldest = k
-			}
-		}
-		delete(g.sources, oldest)
+	if len(g.sources) >= maxGateSources {
+		g.overflow.decay(now)
+		return &g.overflow
 	}
 	s := &gateSource{}
 	g.sources[source] = s
 	return s
+}
+
+// recentFailures drops failures older than the window and counts the rest.
+// g.mu is held.
+func (g *PasswordGate) recentFailures(now time.Time) int {
+	i := 0
+	for i < len(g.recent) && now.Sub(g.recent[i]) >= globalWindow {
+		i++
+	}
+	g.recent = g.recent[i:]
+	return len(g.recent)
 }
 
 // Check returns the matched password, or the time until source's pause ends.
@@ -161,12 +218,21 @@ func (g *PasswordGate) track(now time.Time, source string) *gateSource {
 func (g *PasswordGate) Check(now time.Time, source string, transcript PasswordTranscript, proof []byte, temporary, fixed string) (string, time.Duration) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if s := g.sources[source]; s != nil {
+	s := g.record(now, source)
+	if s == nil && len(g.sources) >= maxGateSources {
+		g.overflow.decay(now)
+		if g.overflow.failures > 0 || now.Before(g.overflow.until) {
+			s = &g.overflow
+		}
+	}
+	if s != nil {
 		if remaining := s.until.Sub(now); remaining > 0 {
 			return "", remaining
 		}
-		if s.stale(now) {
-			delete(g.sources, source)
+		if g.recentFailures(now) >= globalFailBudget {
+			// Too many failures overall: sources that have failed wait for
+			// the oldest of them to leave the window.
+			return "", g.recent[0].Add(globalWindow).Sub(now)
 		}
 	}
 	tempOK := hmac.Equal(proof, transcript.Proof(temporary))
@@ -178,16 +244,22 @@ func (g *PasswordGate) Check(now time.Time, source string, transcript PasswordTr
 		matched = fixed
 	}
 	if matched != "" {
-		delete(g.sources, source)
+		if s != nil && s != &g.overflow {
+			delete(g.sources, source)
+		}
 		return matched, 0
 	}
 
-	s := g.track(now, source)
+	s = g.track(now, source)
 	s.failures = min(s.failures+1, 10)
 	s.last = now
 	if s.failures >= 5 {
 		delay := (30 * time.Second) << (s.failures - 5)
 		s.until = now.Add(min(delay, 15*time.Minute))
+	}
+	g.recentFailures(now)
+	if len(g.recent) < 4*globalFailBudget { // bounded; only the count matters
+		g.recent = append(g.recent, now)
 	}
 	return "", 0
 }
