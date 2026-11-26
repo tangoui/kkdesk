@@ -171,3 +171,55 @@ func TestPeerDropsApplicationTrafficBeforePassword(t *testing.T) {
 	case <-time.After(150 * time.Millisecond):
 	}
 }
+
+func TestPasswordPeerRequiresFourDistinctChannels(t *testing.T) {
+	host, err := newPeer(true, true, ModeFiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.Close()
+	host.requirePassword()
+	ctl, err := newPeer(false, true, ModeFiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ctl.Close()
+
+	opened := make(chan struct{}, 4)
+	for _, label := range []string{labelMeta, labelMeta, labelMeta, labelMeta} {
+		channel, err := ctl.pc.CreateDataChannel(label, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		channel.OnOpen(func() { opened <- struct{}{} })
+	}
+	offer, err := ctl.pc.CreateOffer(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local, err := ctl.setLocalAndGather(offer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer, err := host.answer(*local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ctl.pc.SetRemoteDescription(*answer); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for range 4 {
+		select {
+		case <-opened:
+		case <-ctx.Done():
+			t.Fatal("data channels did not open")
+		}
+	}
+	select {
+	case <-host.ready:
+		t.Fatal("duplicate channels satisfied the password peer's readiness")
+	case <-time.After(150 * time.Millisecond):
+	}
+}

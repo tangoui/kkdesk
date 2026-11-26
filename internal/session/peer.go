@@ -212,14 +212,19 @@ func newConfiguredPeer(isHost, loopback bool, mode Mode, config webrtc.Configura
 // controller: right after creating it).
 func (p *Peer) attach(dc *webrtc.DataChannel) {
 	p.mu.Lock()
+	var slot **webrtc.DataChannel
 	switch dc.Label() {
 	case labelMove:
-		p.dcMove = dc
+		slot = &p.dcMove
 	case labelInput:
-		p.dcInput = dc
+		slot = &p.dcInput
 	case labelMeta:
-		p.dcMeta = dc
+		slot = &p.dcMeta
 	case labelFiles:
+		if p.files != nil {
+			p.mu.Unlock()
+			return
+		}
 		fc := newFileChannel(dc, p.passwordPending)
 		p.files = fc
 		p.mu.Unlock()
@@ -231,6 +236,11 @@ func (p *Peer) attach(dc *webrtc.DataChannel) {
 		p.mu.Unlock()
 		return
 	}
+	if *slot != nil {
+		p.mu.Unlock()
+		return
+	}
+	*slot = dc
 	p.mu.Unlock()
 
 	dc.OnOpen(p.channelOpened)
