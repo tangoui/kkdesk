@@ -391,7 +391,11 @@ class RealPairingService implements PairingService {
     if (devices.matchingComputer(verifiedTarget) case final existing?) {
       final previous = devices.target(existing.id)!;
       try {
-        await devices._updateFromScan(previous, previous, name);
+        await devices._updateFromScan(
+          previous,
+          target.manual ? previous : verifiedTarget,
+          name,
+        );
       } finally {
         await pair.transport.close();
       }
