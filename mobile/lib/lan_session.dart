@@ -302,7 +302,14 @@ class LanSession {
     await peer.setLocalDescription(offer);
     if (peer.iceGatheringState !=
         RTCIceGatheringState.RTCIceGatheringStateComplete) {
-      await gather.future.timeout(const Duration(seconds: 8));
+      try {
+        await gather.future.timeout(const Duration(seconds: 8));
+      } on TimeoutException {
+        // Gathering may never complete: on a phone the loopback and VPN
+        // interfaces keep retrying STUN/TURN they cannot reach. Offer what
+        // has been gathered (the relay and server-reflexive candidates are
+        // usually ready within a second) instead of failing.
+      }
     }
     return peer;
   }
