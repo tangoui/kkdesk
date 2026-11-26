@@ -328,6 +328,9 @@ func (w *filesWin) toolbar(c *ui.Context) {
 			}, layout.Gap(6), layout.Middle(), layout.PadVH(1, 8)).
 				Bg(th.Success.Bg).Border(1, th.Success.Border).Radius(th.RadiusSM)
 		}
+		if st.FirstHostCode != "" && st.Phase != app.ViewerClosed {
+			ui.Tag(c, "对方设备码 "+st.FirstHostCode).Color("blue")
+		}
 		ui.Spacer(c)
 		if ui.Button(c, "上传 →").AutoInsertSpace(false).Disabled(!up).Clicked() {
 			w.enqueueLocked(true, w.local.selected(), w.remote.path)

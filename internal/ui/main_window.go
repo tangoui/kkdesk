@@ -308,8 +308,8 @@ func (m *Main) connect(addr, pw, mode string) {
 	filesOnly := mode == modeTransfer
 	st := m.o.Store.Settings()
 	v := app.NewViewer(app.ViewerConfig{Addr: addr, Password: pw, ViewOnly: viewOnly, FilesOnly: filesOnly, Log: m.o.ViewerLog,
-		Clipboard: m.clipboard(),
-		FPS:       st.FPS, BitrateBps: st.BitrateMbps * 1_000_000,
+		Clipboard: m.clipboard(), Devices: m.o.Store,
+		FPS: st.FPS, BitrateBps: st.BitrateMbps * 1_000_000,
 		Remote: rendezvous.Config{URL: st.RemoteURL, Token: st.RemoteToken, PublicKey: st.RemotePublicKey}}, nil)
 	go func() {
 		err := v.Connect(context.Background())
@@ -324,9 +324,6 @@ func (m *Main) connect(addr, pw, mode string) {
 			return
 		}
 		if !rendezvous.IsCode(addr) {
-			if _, err := m.o.Store.Connected(v.Addr(), time.Now()); err != nil {
-				log.Printf("kkdesk: address book: %v", err)
-			}
 			m.syncProbeTargets()
 		}
 		m.o.App.Post(func() {

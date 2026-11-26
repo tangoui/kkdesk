@@ -15,10 +15,11 @@ const DefaultGroup = "我的电脑"
 
 // Errors of the address book.
 var (
-	ErrDuplicate   = errors.New("config: already exists")
-	ErrNotFound    = errors.New("config: no such device")
-	ErrInvalidAddr = errors.New("config: invalid address")
-	ErrEmptyName   = errors.New("config: empty name")
+	ErrDuplicate      = errors.New("config: already exists")
+	ErrNotFound       = errors.New("config: no such device")
+	ErrInvalidAddr    = errors.New("config: invalid address")
+	ErrEmptyName      = errors.New("config: empty name")
+	ErrHostKeyChanged = errors.New("config: host key changed")
 )
 
 // Device is one entry of 我的设备.
@@ -30,6 +31,7 @@ type Device struct {
 	OS            string    `json:"os,omitempty"`
 	LastConnected time.Time `json:"lastConnected,omitzero"`
 	Note          string    `json:"note,omitempty"`
+	HostKey       string    `json:"hostKey,omitempty"`
 }
 
 // fill gives an entry its default name and group.
@@ -127,25 +129,70 @@ func (s *Store) AddGroup(name string) error {
 	return s.saveLocked()
 }
 
+// HostKey returns the remembered host identity for the normalized address.
+func (s *Store) HostKey(addr string) string {
+	n := NormalizeAddr(addr)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if i := s.addressIndexLocked(n); i >= 0 {
+		return s.f.Devices[i].HostKey
+	}
+	return ""
+}
+
+func (s *Store) addressIndexLocked(normalized string) int {
+	return slices.IndexFunc(s.f.Devices, func(d Device) bool { return d.Addr == normalized })
+}
+
 // Connected records a successful connection to addr: the entry with that
 // address gets the time, or a new entry is added (named after the
 // address, in DefaultGroup).
 func (s *Store) Connected(addr string, at time.Time) (Device, error) {
+	d, _, err := s.ConnectedWithHostKey(addr, at, "")
+	return d, err
+}
+
+// ConnectedWithHostKey records a successful LAN connection and pins the
+// authenticated key. A competing connection cannot replace an existing pin.
+func (s *Store) ConnectedWithHostKey(addr string, at time.Time, key string) (device Device, first bool, err error) {
 	n := NormalizeAddr(addr)
 	if n == "" {
-		return Device{}, ErrInvalidAddr
+		return Device{}, false, ErrInvalidAddr
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	i := slices.IndexFunc(s.f.Devices, func(d Device) bool { return d.Addr == n })
-	if i < 0 {
+	i := s.addressIndexLocked(n)
+	existing := i >= 0
+	var previous Device
+	if existing {
+		previous = s.f.Devices[i]
+		if key != "" && previous.HostKey != "" && key != previous.HostKey {
+			return Device{}, false, ErrHostKeyChanged
+		}
+	} else {
 		d := Device{ID: s.newIDLocked(), Addr: n}
 		d.fill()
 		s.f.Devices = append(s.f.Devices, d)
 		i = len(s.f.Devices) - 1
 	}
-	s.f.Devices[i].LastConnected = at
-	return s.f.Devices[i], s.saveLocked()
+	d := &s.f.Devices[i]
+	first = key != "" && d.HostKey == ""
+	if first {
+		d.HostKey = key
+	}
+	d.LastConnected = at
+	device = *d
+	if err := s.saveLocked(); err != nil {
+		if key != "" {
+			if existing {
+				*d = previous
+			} else {
+				s.f.Devices = s.f.Devices[:i]
+			}
+		}
+		return device, false, err
+	}
+	return device, first, nil
 }
 
 // AddDevice adds an entry by hand. An address already in the book is
@@ -185,7 +232,7 @@ func (s *Store) UpdateDevice(id string, fn func(*Device)) error {
 	}
 	d := s.f.Devices[i]
 	fn(&d)
-	d.ID, d.Addr = s.f.Devices[i].ID, s.f.Devices[i].Addr
+	d.ID, d.Addr, d.HostKey = s.f.Devices[i].ID, s.f.Devices[i].Addr, s.f.Devices[i].HostKey
 	d.fill()
 	s.addGroupLocked(d.Group)
 	s.f.Devices[i] = d

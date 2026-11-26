@@ -3,9 +3,11 @@ package app
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/tangoui/kkdesk/internal/config"
 	"github.com/tangoui/kkdesk/internal/pairing"
 	"github.com/tangoui/kkdesk/internal/rendezvous"
 	"github.com/tangoui/kkdesk/internal/session"
@@ -99,5 +101,69 @@ func TestRemoteRejectsWrongHostIdentity(t *testing.T) {
 	}
 	if err := <-replied; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestViewerRemembersLANIdentity(t *testing.T) {
+	store, err := config.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := NewHost(HostConfig{Addr: "127.0.0.1:0", Password: "good", Pairing: testHostIdentity(t), AutoAccept: true}, nil)
+	defer host.Close()
+	if err := host.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	address := host.ListenAddr()
+	legacy, err := store.AddDevice("电脑", address, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dial := func(password string) (*Viewer, error) {
+		viewer := NewViewer(ViewerConfig{Addr: address, Password: password, FilesOnly: true, Devices: store}, nil)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return viewer, viewer.Connect(ctx)
+	}
+	if v, err := dial("bad"); err == nil {
+		v.Close()
+		t.Fatal("wrong password was accepted")
+	}
+	if d, _ := store.Device(legacy.ID); d.HostKey != "" {
+		t.Fatal("failed password saved host identity")
+	}
+	first, err := dial("good")
+	defer first.Close()
+	if err != nil || first.State().FirstHostCode != host.State().DeviceCode {
+		t.Fatalf("first connection: %+v, %v", first.State(), err)
+	}
+	if d, _ := store.Device(legacy.ID); d.HostKey != host.cfg.Pairing.PublicKey() {
+		t.Fatalf("saved key = %q", d.HostKey)
+	}
+	closeAndWait(t, host, first)
+	second, err := dial("good")
+	defer second.Close()
+	if err != nil || second.State().FirstHostCode != "" {
+		t.Fatalf("reconnect: %+v, %v", second.State(), err)
+	}
+	closeAndWait(t, host, second)
+	host.Close()
+
+	replaced := NewHost(HostConfig{Addr: address, Password: "good", Pairing: testHostIdentity(t), AutoAccept: true}, nil)
+	defer replaced.Close()
+	if err := replaced.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	if viewer, err := dial("good"); err == nil || !strings.Contains(err.Error(), "身份变了") {
+		viewer.Close()
+		t.Fatalf("replacement identity was accepted: %v", err)
+	}
+	if err := store.DeleteDevice(legacy.ID); err != nil {
+		t.Fatal(err)
+	}
+	newViewer, err := dial("good")
+	defer newViewer.Close()
+	if err != nil || newViewer.State().FirstHostCode != replaced.State().DeviceCode {
+		t.Fatalf("reconnect after removing identity: %+v, %v", newViewer.State(), err)
 	}
 }

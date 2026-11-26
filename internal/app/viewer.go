@@ -15,9 +15,11 @@ import (
 
 	"github.com/tangoui/kkdesk/internal/clipsync"
 	"github.com/tangoui/kkdesk/internal/codec"
+	"github.com/tangoui/kkdesk/internal/config"
 	"github.com/tangoui/kkdesk/internal/display"
 	"github.com/tangoui/kkdesk/internal/files"
 	"github.com/tangoui/kkdesk/internal/input"
+	"github.com/tangoui/kkdesk/internal/pairing"
 	"github.com/tangoui/kkdesk/internal/rendezvous"
 	"github.com/tangoui/kkdesk/internal/session"
 	"github.com/tangoui/kkdesk/internal/stats"
@@ -34,7 +36,8 @@ const maxDiagLogs = 20
 type ViewerConfig struct {
 	Addr     string // host[:port]; the port defaults to 21118
 	Password string
-	ViewOnly bool // force view-only
+	Devices  *config.Store // persists verified LAN identities when supplied
+	ViewOnly bool          // force view-only
 	// FilesOnly connects only to transfer files (session.ModeFiles): the
 	// host shares no screen.
 	FilesOnly bool
@@ -64,6 +67,7 @@ const (
 type ViewerState struct {
 	Phase               ViewerPhase
 	Addr                string
+	FirstHostCode       string // device code for a newly trusted LAN address
 	Err                 string // why it ended, "" for a normal exit
 	ViewOnly            bool
 	AccessibilityDenied bool
@@ -81,19 +85,20 @@ type Viewer struct {
 	rec       *stats.Recorder
 	held      input.Held // keys and buttons down on the host, released on view-only
 
-	mu       sync.Mutex
-	phase    ViewerPhase
-	errMsg   string
-	peer     *session.Peer
-	view     *display.View
-	viewOnly bool
-	bitrate  int
-	fps      int
-	closing  bool
-	relayed  bool
-	onEnd    []func()
-	files    *files.Client
-	since    time.Time // connected at
+	mu            sync.Mutex
+	phase         ViewerPhase
+	errMsg        string
+	firstHostCode string
+	peer          *session.Peer
+	view          *display.View
+	viewOnly      bool
+	bitrate       int
+	fps           int
+	closing       bool
+	relayed       bool
+	onEnd         []func()
+	files         *files.Client
+	since         time.Time // connected at
 
 	// video goroutine only
 	dec          codec.Decoder
@@ -201,6 +206,7 @@ func (v *Viewer) Connect(ctx context.Context) error {
 	}
 	var p *session.Peer
 	var err error
+	var firstHostCode string
 	if isRemote {
 		if v.cfg.Remote.URL == "" {
 			err = errors.New("请先在「设置 › 跨网连接」配置跨网服务")
@@ -208,7 +214,27 @@ func (v *Viewer) Connect(ctx context.Context) error {
 			p, err = session.DialRemote(ctx, v.cfg.Remote, v.cfg.Addr, mode, v.cfg.Password)
 		}
 	} else {
-		p, err = session.DialWithOptions(ctx, v.cfg.Addr, v.cfg.Password, session.DialOptions{Mode: mode})
+		opts := session.DialOptions{Mode: mode}
+		if v.cfg.Devices != nil {
+			opts.ExpectedHostKey = v.cfg.Devices.HostKey(v.cfg.Addr)
+		}
+		p, err = session.DialWithOptions(ctx, v.cfg.Addr, v.cfg.Password, opts)
+		if err == nil && v.cfg.Devices != nil {
+			var first bool
+			_, first, err = v.cfg.Devices.ConnectedWithHostKey(v.cfg.Addr, time.Now(), p.HostKey())
+			switch {
+			case errors.Is(err, config.ErrHostKeyChanged):
+				err = session.ErrHostKeyChanged
+			case err != nil:
+				err = fmt.Errorf("无法保存对方身份：%w", err)
+			case first:
+				key, _ := pairing.PublicKey(p.HostKey())
+				firstHostCode = pairing.DeviceCode(key)
+			}
+			if err != nil {
+				p.Close()
+			}
+		}
 	}
 	if err != nil {
 		msg := DialError(v.cfg.Addr, err)
@@ -228,6 +254,7 @@ func (v *Viewer) Connect(ctx context.Context) error {
 		return errors.New("已取消")
 	}
 	v.peer, v.phase, v.since = p, ViewerWaiting, time.Now()
+	v.firstHostCode = firstHostCode
 	v.relayed = isRemote && p.Relayed()
 	fps, bps := v.fps, v.bitrate
 	v.mu.Unlock()
@@ -360,7 +387,7 @@ func (v *Viewer) Close() {
 func (v *Viewer) State() ViewerState {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	s := ViewerState{Phase: v.phase, Addr: v.cfg.Addr, Err: v.errMsg, ViewOnly: v.viewOnly, BitrateBps: v.bitrate, FPS: v.fps, Relayed: v.relayed}
+	s := ViewerState{Phase: v.phase, Addr: v.cfg.Addr, Err: v.errMsg, ViewOnly: v.viewOnly, FirstHostCode: v.firstHostCode, BitrateBps: v.bitrate, FPS: v.fps, Relayed: v.relayed}
 	if v.peer != nil {
 		s.AccessibilityDenied = v.peer.AccessibilityDenied()
 	}
