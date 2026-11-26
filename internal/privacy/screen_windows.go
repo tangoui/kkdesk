@@ -4,7 +4,7 @@ package privacy
 
 /*
 #cgo CXXFLAGS: -std=c++17 -O2 -Wall
-#cgo LDFLAGS: -luser32 -lgdi32 -static-libgcc -static-libstdc++
+#cgo LDFLAGS: -luser32 -lgdi32 -lwtsapi32 -static-libgcc -static-libstdc++
 #include "privacy_windows.h"
 */
 import "C"
@@ -91,4 +91,22 @@ func (s *windowsScreen) Hide() {
 	}
 	<-s.done
 	s.window, s.done = 0, nil
+}
+
+func NewLocker() Locker {
+	return confirmedLocker{
+		request: func() error {
+			if code := C.mmprivacyw_lock(); code != 0 {
+				return fmt.Errorf("Windows 拒绝锁屏请求：%w", syscall.Errno(code))
+			}
+			return nil
+		},
+		locked: func() (bool, error) {
+			var locked C.int
+			if code := C.mmprivacyw_locked(&locked); code != 0 {
+				return false, fmt.Errorf("无法读取 Windows 当前会话的锁屏状态：%w", syscall.Errno(code))
+			}
+			return locked != 0, nil
+		},
+	}
 }

@@ -1,7 +1,10 @@
 // Package privacy provides the native operations for a host desktop session.
 package privacy
 
-import "errors"
+import (
+	"errors"
+	"time"
+)
 
 var ErrUnsupported = errors.New("当前平台不支持隐私屏")
 
@@ -22,4 +25,34 @@ func (unsupportedScreen) Hide()                                        {}
 // Locker returns success after the operating system confirms the lock.
 type Locker interface {
 	Lock() error
+}
+
+var errLockUnsupported = errors.New("当前平台不支持锁屏")
+
+var errLockTimeout = errors.New("等待系统确认锁屏超时（5 秒）")
+
+type confirmedLocker struct {
+	request func() error
+	locked  func() (bool, error)
+}
+
+func (l confirmedLocker) Lock() error {
+	deadline := time.Now().Add(5 * time.Second)
+	if err := l.request(); err != nil {
+		return err
+	}
+	for {
+		ok, err := l.locked()
+		if err != nil {
+			return err
+		}
+		if ok && !time.Now().After(deadline) {
+			return nil
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return errLockTimeout
+		}
+		time.Sleep(min(remaining, 100*time.Millisecond))
+	}
 }

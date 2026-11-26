@@ -4,7 +4,7 @@ package privacy
 
 /*
 #cgo CFLAGS: -x objective-c -fobjc-arc
-#cgo LDFLAGS: -framework AppKit -framework Carbon
+#cgo LDFLAGS: -framework AppKit -framework Carbon -framework CoreGraphics
 #include <stdlib.h>
 #include "privacy_darwin.h"
 */
@@ -104,4 +104,25 @@ func mmprivacyDarwinEvent(handle C.uintptr_t, displayChanged C.int) {
 		s.mu.Unlock()
 		exited(err)
 	}()
+}
+
+func NewLocker() Locker {
+	return confirmedLocker{
+		request: func() error {
+			if err := C.mmprivacy_lock(); err != nil {
+				return errors.New(C.GoString(err))
+			}
+			return nil
+		},
+		locked: func() (bool, error) {
+			switch C.mmprivacy_locked() {
+			case 1:
+				return true, nil
+			case 0:
+				return false, nil
+			default:
+				return false, errors.New("无法读取 macOS 当前登录会话的锁屏状态")
+			}
+		},
+	}
 }

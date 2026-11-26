@@ -195,3 +195,32 @@ unsigned long mmprivacyw_run(void *ptr) {
 void mmprivacyw_stop(uintptr_t window) {
     PostMessageW(reinterpret_cast<HWND>(window), stopMessage, 0, 0);
 }
+
+#include <wtsapi32.h>
+
+unsigned long mmprivacyw_lock(void) {
+    if (LockWorkStation()) return ERROR_SUCCESS;
+    DWORD err = GetLastError();
+    return err != ERROR_SUCCESS ? err : ERROR_GEN_FAILURE;
+}
+
+unsigned long mmprivacyw_locked(int *locked) {
+    LPWSTR buffer = nullptr;
+    DWORD size = 0;
+    if (!WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE, WTS_CURRENT_SESSION,
+                                    WTSSessionInfoEx, &buffer, &size)) {
+        DWORD err = GetLastError();
+        return err != ERROR_SUCCESS ? err : ERROR_GEN_FAILURE;
+    }
+    auto *info = reinterpret_cast<const WTSINFOEXW *>(buffer);
+    DWORD error = ERROR_INVALID_DATA;
+    if (size >= sizeof(WTSINFOEXW) && info->Level == 1) {
+        LONG flag = info->Data.WTSInfoExLevel1.SessionFlags;
+        if (flag == WTS_SESSIONSTATE_LOCK || flag == WTS_SESSIONSTATE_UNLOCK) {
+            *locked = flag == WTS_SESSIONSTATE_LOCK;
+            error = ERROR_SUCCESS;
+        }
+    }
+    WTSFreeMemory(buffer);
+    return error;
+}

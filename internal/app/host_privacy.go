@@ -35,6 +35,7 @@ type hostPrivacy struct {
 	askAgain  bool
 	showID    uint64
 	closed    bool
+	locked    bool
 }
 
 func newHostPrivacy(policy config.PrivacyPolicy, screen privacy.Screen, exclude func([]uint32) error,
@@ -150,7 +151,7 @@ func (p *hostPrivacy) exited(id uint64, err error) {
 	p.publish(hostPrivacyState{}, session.PrivacyLocalExit, "")
 }
 
-func (p *hostPrivacy) handle(peer *session.Peer, m session.PrivacyMessage) {
+func (p *hostPrivacy) handle(peer *session.Peer, m session.PrivacyMessage, locker privacy.Locker) {
 	switch m.Kind {
 	case session.PrivacyRequest:
 		p.set(m.Status == session.PrivacyOn)
@@ -163,7 +164,8 @@ func (p *hostPrivacy) handle(peer *session.Peer, m session.PrivacyMessage) {
 		_ = peer.SendPrivacy(session.PrivacyMessage{Kind: session.LockOnDisconnectState, Status: m.Status})
 		p.notify()
 	case session.LockNowRequest:
-		_ = peer.SendPrivacy(session.PrivacyMessage{Kind: session.LockNowResult, Status: session.PrivacyUnsupported, Detail: "当前平台不支持锁屏"})
+		p.lockNow(locker, func(result session.PrivacyMessage) { _ = peer.SendPrivacy(result) },
+			func() { _ = peer.CloseWithReason("对方已锁屏") })
 	}
 }
 
@@ -174,4 +176,25 @@ func (p *hostPrivacy) close() {
 	p.cancelConsent()
 	p.hide()
 	p.current.Store(nil)
+}
+
+func (p *hostPrivacy) lockNow(locker privacy.Locker, report func(session.PrivacyMessage), disconnect func()) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed || p.locked {
+		return
+	}
+	result := session.PrivacyMessage{Kind: session.LockNowResult, Status: session.PrivacyOn}
+	if err := locker.Lock(); err != nil {
+		if p.state().on {
+			p.hide()
+			p.publish(hostPrivacyState{}, session.PrivacyOff, "")
+		}
+		result.Status, result.Detail = session.PrivacyFailed, err.Error()
+		report(result)
+		return
+	}
+	p.locked = true
+	report(result)
+	disconnect()
 }

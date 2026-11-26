@@ -177,3 +177,33 @@ void mmprivacy_close(void *ptr) {
         }
     });
 }
+
+#include <dlfcn.h>
+
+const char *mmprivacy_lock(void) {
+    static void (*lockNow)(void);
+    static const char *failure;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        void *login = dlopen("/System/Library/PrivateFrameworks/login.framework/login", RTLD_LOCAL | RTLD_LAZY);
+        if (!login) {
+            failure = "无法加载 macOS 登录组件";
+            return;
+        }
+        lockNow = (void (*)(void))dlsym(login, "SACLockScreenImmediate");
+        if (!lockNow) {
+            failure = "macOS 登录组件缺少锁屏接口";
+        }
+    });
+    if (failure) return failure;
+    lockNow();
+    return NULL;
+}
+
+int mmprivacy_locked(void) {
+    @autoreleasepool {
+        NSDictionary *info = CFBridgingRelease(CGSessionCopyCurrentDictionary());
+        if (info == nil) return -1;
+        return [info[@"CGSSessionScreenIsLocked"] boolValue] ? 1 : 0;
+    }
+}

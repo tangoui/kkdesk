@@ -9,4 +9,7 @@ uint32_t *mmprivacy_prepare(void *screen, size_t *count);
 void mmprivacy_show(void *screen);
 void mmprivacy_close(void *screen);
 
+const char *mmprivacy_lock(void);
+int mmprivacy_locked(void);
+
 #endif

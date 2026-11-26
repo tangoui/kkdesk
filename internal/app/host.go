@@ -82,6 +82,7 @@ type HostConfig struct {
 	PrivacyPolicy           config.PrivacyPolicy
 	LockAfterDisconnect     bool
 	privacyScreen           func() privacy.Screen
+	locker                  privacy.Locker
 	Remote                  rendezvous.Config
 	Pairing                 *pairing.Store
 	IdentityErr             error
@@ -194,6 +195,9 @@ func NewHost(cfg HostConfig, notify func()) *Host {
 	}
 	if cfg.privacyScreen == nil {
 		cfg.privacyScreen = privacy.NewScreen
+	}
+	if cfg.locker == nil {
+		cfg.locker = privacy.NewLocker()
 	}
 	h := &Host{cfg: cfg, notify: notify, addrs: LocalIPv4()}
 	h.remote.code = h.deviceCode()
@@ -1014,7 +1018,7 @@ loop:
 		case <-p.Done():
 			break loop
 		case m := <-requests:
-			ps.handle(p, m)
+			ps.handle(p, m, h.cfg.locker)
 		case <-accessibilityTick:
 			refreshAccessibility()
 		case <-tk.C:
