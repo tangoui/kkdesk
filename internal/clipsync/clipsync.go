@@ -43,11 +43,13 @@ type Sync struct {
 	// mu is held across a read and the comparison (poll) and across a
 	// write (Receive): otherwise a read from before a received text could
 	// be taken for a new copy and sent back.
-	mu      sync.Mutex
-	last    string // the clipboard text as last seen, written or sent
-	known   bool   // last is valid
-	stopped bool
-	errLast string // the last error logged, to log each kind once
+	mu         sync.Mutex
+	last       string // the clipboard text as last seen, written or sent
+	known      bool   // last is valid
+	stopped    bool
+	pending    string // a local change not yet delivered (Send failed)
+	hasPending bool
+	errLast    string // the last error logged, to log each kind once
 }
 
 // Start reads the clipboard once (that text is not sent) and polls it
@@ -131,14 +133,44 @@ func (s *Sync) loop() {
 			s.apply(text)
 		case <-t.C:
 			if text, ok := s.poll(); ok {
-				if err := s.o.Send(text); err != nil {
-					s.mu.Lock()
-					s.logLocked("send clipboard: %v", err)
-					s.mu.Unlock()
-				}
+				s.send(text)
+			} else if text, ok := s.retry(); ok {
+				s.send(text)
 			}
 		}
 	}
+}
+
+// send delivers a local change; a failed one is kept and tried again on the
+// next ticks until it goes through or a newer text replaces it.
+func (s *Sync) send(text string) {
+	err := s.o.Send(text)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err != nil {
+		s.logLocked("send clipboard: %v", err)
+		s.pending, s.hasPending = text, true
+		return
+	}
+	if s.hasPending && s.pending == text {
+		s.pending, s.hasPending = "", false
+	}
+}
+
+// retry returns the change whose send failed, if it may still be sent.
+func (s *Sync) retry() (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.hasPending {
+		return "", false
+	}
+	if !s.allowed() || s.pending != s.last {
+		// Turned off, or the clipboard moved on (a newer copy, or text
+		// received from the other side): the failed copy is stale.
+		s.pending, s.hasPending = "", false
+		return "", false
+	}
+	return s.pending, true
 }
 
 // poll reads the clipboard and returns a change to send.
@@ -160,6 +192,7 @@ func (s *Sync) poll() (string, bool) {
 	if !changed || text == "" || !s.allowed() || (s.o.MaxLen > 0 && len(text) > s.o.MaxLen) {
 		return "", false
 	}
+	s.pending, s.hasPending = "", false // superseded by this copy
 	return text, true
 }
 
