@@ -1,7 +1,8 @@
 // Package codec provides H.264 video encoding and decoding behind
 // platform-independent interfaces. The darwin implementation uses
-// VideoToolbox hardware sessions; the windows encoder uses Media Foundation
-// (hardware MFT, software fallback); other platforms currently return
+// VideoToolbox hardware sessions; windows uses Media Foundation (hardware
+// encoder MFT with a software fallback, and the in-box H.264 decoder with
+// D3D11 or software decoding); other platforms currently return
 // ErrUnsupported.
 package codec
 
@@ -34,8 +35,11 @@ type EncodeOutput func(nal []byte, captureAt time.Time, keyframe bool)
 
 // DecodeOutput receives one decoded picture. On darwin pix is a
 // CVPixelBufferRef (NV12, IOSurface-backed) that is only valid during the
-// call; the receiver must CVPixelBufferRetain it to keep it. It is called on a
-// decoder-owned thread, before the corresponding Decode call returns.
+// call; the receiver must CVPixelBufferRetain it to keep it. On windows pix
+// is a decoder-owned NV12 ID3D11Texture2D* (a single texture, not an array
+// slice, cropped to the visible size) on winmedia.Device(), also only valid
+// during the call. It is called on a decoder-owned thread (windows: the
+// Decode caller's), before the corresponding Decode call returns.
 type DecodeOutput func(pix uintptr, captureAt time.Time)
 
 // Encoder encodes raw frames to H.264.

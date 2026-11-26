@@ -57,10 +57,10 @@ kkdesk 还在验证原型阶段。
 | 平台 | 被控端 | 控制端 | 说明 |
 |---|---|---|---|
 | macOS | ✅ | ✅ | ScreenCaptureKit 采集，VideoToolbox H.264 硬件编解码，CGEvent 注入。 |
-| Windows（x64） | 实机验证中 | 只能「传文件」 | 被控端：DXGI Desktop Duplication 采集，Media Foundation H.264 编码（优先硬件），SendInput 注入。控制端的解码和画面显示还没实现，暂时不能远程控制或查看别的电脑。 |
+| Windows（x64） | 实机验证中 | 实机验证中 | 被控端：DXGI Desktop Duplication 采集，Media Foundation H.264 编码（优先硬件），SendInput 注入。控制端：Media Foundation H.264 解码（优先硬件），D3D11 视频处理器上屏。 |
 | Linux（x64、arm64） | — | 只能「传文件」 | 屏幕采集、解码和画面显示都还没实现，目前只能用来传文件。 |
 
-暂不支持：Windows 作控制端看画面、声音、剪贴板里的图片和文件、真彩（4:4:4）和 HDR、多显示器切换。
+暂不支持：声音、剪贴板里的图片和文件、真彩（4:4:4）和 HDR、多显示器切换。
 
 ## 连接是怎么走的
 
