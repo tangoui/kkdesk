@@ -292,3 +292,16 @@ func TestDecodeChromaSoftware(t *testing.T) {
 	t.Setenv("KKDESK_DECODER", "software")
 	checkChroma(t)
 }
+
+func TestDecodeRejectsOversizedAccessUnit(t *testing.T) {
+	dec, err := NewDecoder(func(uintptr, time.Time) {})
+	if err != nil {
+		t.Fatalf("NewDecoder: %v", err)
+	}
+	defer dec.Close()
+	au := make([]byte, maxAccessUnit+1)
+	copy(au, []byte{0, 0, 0, 1, 0x67})
+	if err := dec.Decode(au, time.Now()); err == nil {
+		t.Fatal("Decode accepted an access unit over the limit")
+	}
+}

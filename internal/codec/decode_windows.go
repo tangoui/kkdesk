@@ -29,6 +29,9 @@ const (
 	decMaxOutputPerAU  = 16                        // guards against a decoder that never reports NEED_MORE_INPUT
 	decInfoBufferBytes = 256
 	decMaxPending      = 64
+	// maxAccessUnit bounds one access unit (the viewer's assembler already
+	// limits frames to 16 MiB); its length crosses into C as an int32.
+	maxAccessUnit = 64 << 20
 )
 
 //export mmdecLog
@@ -139,6 +142,9 @@ func (d *mfDecoder) Decode(annexB []byte, captureAt time.Time) error {
 	}
 	if len(annexB) == 0 {
 		return nil
+	}
+	if len(annexB) > maxAccessUnit {
+		return fmt.Errorf("codec: access unit of %d bytes exceeds %d", len(annexB), maxAccessUnit)
 	}
 	winmedia.ComInit()
 	buf := C.CBytes(annexB)
