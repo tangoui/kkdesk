@@ -76,10 +76,12 @@ func Start(opts Options, out func(Frame)) (Session, error) {
 	s.wall = time.Now()
 	s.rs = &restarter{delays: []time.Duration{200 * time.Millisecond, time.Second, 2 * time.Second}, reopen: s.reopen}
 	s.handle = cgo.NewHandle(s)
+	stopTargets.Store(uintptr(s.handle), s)
 
 	ptr, w, h, err := s.start(s.interval)
 	if err != nil {
 		s.closed.Store(true)
+		stopTargets.Delete(uintptr(s.handle))
 		s.handle.Delete()
 		return nil, err
 	}
@@ -158,6 +160,7 @@ func (s *darwinSession) Close() {
 	if ptr != nil { // nil when the last restart failed
 		C.mmcap_stop(ptr)
 	}
+	stopTargets.Delete(uintptr(s.handle))
 	s.handle.Delete()
 }
 
@@ -182,13 +185,23 @@ func mmcapGoFrame(handle C.uintptr_t, pixels C.uintptr_t, displayNs, arrivalNs C
 		CaptureAt: wall(capNs), ArrivedAt: wall(uint64(arrivalNs)), DisplayAt: wall(uint64(displayNs))})
 }
 
+// stopTargets maps a session's handle to the session for the stream-stopped
+// callback. Unlike frame callbacks (drained by mmcap_stop), that one runs on
+// ScreenCaptureKit's own queue and may arrive after Close deleted the
+// handle, where cgo.Handle.Value would panic; a lookup here just misses.
+var stopTargets sync.Map // uintptr -> *darwinSession
+
 //export mmcapGoStopped
 func mmcapGoStopped(handle C.uintptr_t, msg *C.char) {
-	s, ok := cgo.Handle(handle).Value().(*darwinSession)
-	if !ok || s.closed.Load() {
+	v, ok := stopTargets.Load(uintptr(handle))
+	if !ok {
 		return
 	}
-	s.rs.trigger(C.GoString(msg))
+	s := v.(*darwinSession)
+	if s.closed.Load() {
+		return
+	}
+	s.rs.trigger(C.GoString(msg)) // a no-op once Close has closed rs
 }
 
 //export mmcapGoStatus
