@@ -196,7 +196,7 @@ func (v *Viewer) Connect(ctx context.Context) error {
 	var err error
 	if isRemote {
 		if v.cfg.Remote.URL == "" {
-			err = errors.New("请先在「设置 › 网络」配置跨网服务")
+			err = errors.New("请先在「设置 › 跨网连接」配置跨网服务")
 		} else {
 			p, err = session.DialRemote(ctx, v.cfg.Remote, v.cfg.Addr, mode)
 		}

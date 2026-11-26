@@ -76,7 +76,7 @@ sudo journalctl -u kkdesk-server -o cat --no-pager |
 sudo sed -n 's/^KKDESK_SERVER_TOKEN=//p' /etc/kkdesk-server/server.env
 ```
 
-在两台电脑上打开支持公钥模式的 kkdesk，进入「设置 → 网络」，填写相同的配置。
+在两台电脑上打开支持公钥模式的 kkdesk，进入「设置 → 跨网连接」，填写相同的配置。
 
 | 字段 | 填写内容 |
 |---|---|
@@ -101,7 +101,7 @@ curl -fsSL -o install-server.sh https://raw.githubusercontent.com/tangoui/kkdesk
 
 脚本会构建并启动服务，创建 `/etc/kkdesk-server/server.env` 和 `/etc/kkdesk-server/server.json`，并设置开机启动。重复执行会沿用这两个文件。手头已有支持 `-config` 的当前架构二进制时，可以在命令末尾加 `--binary ./kkdesk-server`。
 
-安装成功后，在两台电脑的「设置 → 网络」填写相同的配置。**跨网服务**填安装时使用的域名，例如 `https://desk.example.com`。**服务密钥**填下面第二条命令输出的值。如果忘记了域名，第一条命令可以从一键安装生成的 systemd 服务中查到 HTTPS 地址。
+安装成功后，在两台电脑的「设置 → 跨网连接」填写相同的配置。**跨网服务**填安装时使用的域名，例如 `https://desk.example.com`。**服务密钥**填下面第二条命令输出的值。如果忘记了域名，第一条命令可以从一键安装生成的 systemd 服务中查到 HTTPS 地址。
 
 ```sh
 systemctl show -p ExecStart --value kkdesk-server.service |
@@ -180,7 +180,7 @@ export KKDESK_TURN_SECRET="$(openssl rand -hex 32)"    # 只留在服务器上
 
 | 环境变量 | 说明 |
 |---|---|
-| `KKDESK_SERVER_TOKEN` | 服务密钥。客户端在「设置 › 网络 › 服务密钥」里填它。 |
+| `KKDESK_SERVER_TOKEN` | 服务密钥。客户端在「设置 › 跨网连接 › 服务密钥」里填它。 |
 | `KKDESK_TURN_SECRET` | 签发 TURN 临时凭据的密钥，只留在服务器上。 |
 
 可用 `./kkdesk-server -config server.json` 启动。JSON 键名与命令行参数相同，去掉开头的 `-`。命令行上显式提供的参数优先。两个密钥通过环境变量设置。[完整配置示例](https://github.com/tangoui/kkdesk#服务端配置文件)
@@ -223,7 +223,7 @@ sudo systemctl enable --now kkdesk-server
 
 使用域名 HTTPS 时，访问 `https://desk.example.com/healthz`。返回 `ok` 表示 HTTPS 信令服务正在响应。公网 IP 公钥模式通过客户端保存配置后是否出现设备码来验证信令。中继连通性可通过强制中继验证。
 
-1. 两台电脑在「设置 › 网络」填同一个 **跨网服务** 地址（`https://desk.example.com`）和 **服务密钥**，点「保存跨网配置」。
+1. 两台电脑在「设置 › 跨网连接」填同一个 **跨网服务** 地址（`https://desk.example.com`）和 **服务密钥**，点「保存跨网配置」。
 2. 被控端开启「允许被远程控制」，连接页出现 `KD-` 开头的设备码，说明已经在服务上线。
 3. 控制端用设备码连接，被控端接受。
 4. 想确认中继可用：给服务端加 `-relay-only` 重启，再连一次，控制中心里「中继连接」应该被勾上。验证完记得去掉。

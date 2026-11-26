@@ -71,6 +71,13 @@ func (f FrameTimes) stages() [7]time.Time {
 	return [7]time.Time{f.Capture, f.Encoded, f.Sent, f.Received, f.Decoded, f.Enqueued, f.Presented}
 }
 
+// plausibleLatency rejects a latency no real frame has: a capture time from
+// a broken clock (an overflowed encoder timestamp gave the year 1754, a
+// latency of 272 years) must not show up in the stats.
+func plausibleLatency(d time.Duration) bool {
+	return d > -time.Second && d < time.Minute
+}
+
 // latency is Presented−Capture when both are known (viewer), else
 // Sent−Capture (host).
 func (f FrameTimes) latency() (time.Duration, bool) {
@@ -258,7 +265,7 @@ func (r *Recorder) Frame(f FrameTimes) {
 			}
 		}
 	}
-	if d, ok := f.latency(); ok {
+	if d, ok := f.latency(); ok && plausibleLatency(d) {
 		r.lat = append(r.lat, d)
 		if len(r.allLat) < r.maxSamples {
 			r.allLat = append(r.allLat, d)

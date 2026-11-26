@@ -519,7 +519,7 @@ func (h *Host) startLocked() error {
 			}
 		}
 		if err != nil {
-			h.errMsg = fmt.Sprintf("端口 %d 被系统保留，也没能找到其他可用端口，请在「设置 › 网络」里换一个端口", port)
+			h.errMsg = fmt.Sprintf("端口 %d 被系统保留，也没能找到其他可用端口，请在「设置 › 局域网」里换一个端口", port)
 			return err
 		}
 		got := ln.Addr().(*net.TCPAddr).Port

@@ -246,9 +246,9 @@ func (m *Main) connectCard(c *ui.Context) {
 				}
 			}, layout.Gap(6), layout.Padding(insets(6, 0, 0, 0)))
 			if !hasRemote {
-				ui.Alert(c, "warning", "还没有配置跨网服务：请先在「设置 › 网络」填写跨网服务地址和密钥（两台电脑填同一个）。").ShowIcon(true).Show()
+				ui.Alert(c, "warning", "还没有配置跨网服务：请先在「设置 › 跨网连接」填写跨网服务地址和密钥（两台电脑填同一个）。").ShowIcon(true).Show()
 				if ui.Button(c, "去设置").Small().Clicked() {
-					m.nav, m.set.tab = "settings", "network"
+					m.nav, m.set.tab = "settings", "remote"
 				}
 			}
 		} else {

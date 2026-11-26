@@ -206,13 +206,29 @@ func (c *sampleClock) stamp(t time.Time) int64 {
 	return ticks
 }
 
-// lookup returns the capture time of the sample with the given time,
-// falling back to base + ticks for unknown samples.
-func (c *sampleClock) lookup(ticks int64) time.Time {
+// maxEncodeAge bounds how long before now a capture time may lie: an
+// encoder holds only a few frames, so anything older is not this frame's.
+const maxEncodeAge = 10 * time.Second
+
+// at returns the capture time of the output sample with the given time:
+// the recorded time of that sample, else base + ticks. Hardware encoders
+// may return a sample time that is unset, negative or huge, and base +
+// ticks then overflows to centuries ago (a latency of 272 years on the
+// controller); a result outside (now − maxEncodeAge, now] is replaced by
+// now, the output time, which is within the encoding latency of the truth.
+func (c *sampleClock) at(ticks int64, now time.Time) time.Time {
+	t, ok := time.Time{}, false
 	for _, s := range c.ring {
 		if s.ticks == ticks {
-			return s.at
+			t, ok = s.at, true
+			break
 		}
 	}
-	return c.base.Add(time.Duration(ticks) * 100)
+	if !ok && !c.base.IsZero() && ticks >= 0 && ticks <= c.last+int64(maxEncodeAge/100) {
+		t, ok = c.base.Add(time.Duration(ticks)*100), true
+	}
+	if !ok || t.After(now) || now.Sub(t) > maxEncodeAge {
+		return now
+	}
+	return t
 }

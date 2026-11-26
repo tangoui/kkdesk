@@ -123,15 +123,16 @@ func TestSampleClock(t *testing.T) {
 	if !(t1 < t2 && t2 < t3) {
 		t.Fatalf("not increasing: %d %d %d", t1, t2, t3)
 	}
-	if got := c.lookup(t2); !got.Equal(base.Add(16 * time.Millisecond)) {
-		t.Errorf("lookup(t2) = %v", got)
+	now := base.Add(time.Second)
+	if got := c.at(t2, now); !got.Equal(base.Add(16 * time.Millisecond)) {
+		t.Errorf("at(t2) = %v", got)
 	}
-	if got := c.lookup(t1); !got.Equal(base) {
-		t.Errorf("lookup(t1) = %v", got)
+	if got := c.at(t1, now); !got.Equal(base) {
+		t.Errorf("at(t1) = %v", got)
 	}
 	// Unknown sample time falls back to base + ticks.
-	if got := c.lookup(t1 + 10_000); got.Sub(base) != time.Millisecond {
-		t.Errorf("fallback lookup = %v", got.Sub(base))
+	if got := c.at(t1+10_000, now); got.Sub(base) != time.Millisecond {
+		t.Errorf("fallback = %v", got.Sub(base))
 	}
 	// Ring wraps without growing.
 	for i := 0; i < 1000; i++ {
@@ -139,5 +140,31 @@ func TestSampleClock(t *testing.T) {
 	}
 	if len(c.ring) > sampleClockSize {
 		t.Errorf("ring grew to %d", len(c.ring))
+	}
+}
+
+// A sample time the encoder made up (hardware encoders may return a huge,
+// negative or unset one) must not become a capture time centuries away:
+// base + ticks overflowed to the 18th century and showed a latency of 272
+// years. Anything outside the last few seconds is replaced by now.
+func TestSampleClockImplausible(t *testing.T) {
+	var c sampleClock
+	base := time.Unix(1_700_000_000, 0)
+	t1 := c.stamp(base)
+	now := base.Add(500 * time.Millisecond)
+	for _, ticks := range []int64{1 << 62, -1, -(1 << 62), t1 + int64(time.Hour/100)} {
+		if got := c.at(ticks, now); !got.Equal(now) {
+			t.Errorf("at(%d) = %v, want now", ticks, got)
+		}
+	}
+	// A recorded capture time long before now (the encoder cannot hold a
+	// frame that long) is not used either.
+	if got := c.at(t1, base.Add(time.Minute)); !got.Equal(base.Add(time.Minute)) {
+		t.Errorf("stale capture time used: %v", got)
+	}
+	// Before the first frame there is no base.
+	var empty sampleClock
+	if got := empty.at(12345, now); !got.Equal(now) {
+		t.Errorf("empty clock: %v", got)
 	}
 }

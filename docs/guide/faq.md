@@ -2,7 +2,7 @@
 
 ## 一直提示「端口被系统保留」
 
-Windows 上装了 Hyper-V、WSL 或 Docker 时，系统会整段保留端口（一段往往 100 个以上）。新版 kkdesk 会自动换一个系统分配的空闲端口并保存为默认端口，下次启动不会再提示。仍然有问题时，用下面的命令查看保留范围，在「设置 › 网络」里填一个范围外的端口：
+Windows 上装了 Hyper-V、WSL 或 Docker 时，系统会整段保留端口（一段往往 100 个以上）。新版 kkdesk 会自动换一个系统分配的空闲端口并保存为默认端口，下次启动不会再提示。仍然有问题时，用下面的命令查看保留范围，在「设置 › 局域网」里填一个范围外的端口：
 
 ```powershell
 netsh interface ipv4 show excludedportrange protocol=tcp

@@ -30,22 +30,59 @@ func (m *Main) remoteDeviceCode(c *ui.Context, hs app.HostState) {
 		ui.Alert(c, "warning", hs.RemoteErr).ShowIcon(true).Show()
 	case hs.Enabled && m.o.Store.Settings().RemoteURL != "":
 		ui.Text(c, "正在连接跨网服务…").Size(12).Tertiary()
+	case hs.Enabled:
+		ui.Row(c, func() {
+			ui.Text(c, "还没配置跨网连接：不在同一个网络时，别人连不上本机。").Size(12).Tertiary().Layout(layout.Grow(1), layout.MinW(0))
+			if ui.Button(c, "配置跨网").Small().Clicked() {
+				m.nav, m.set.tab = "settings", "remote"
+			}
+		}, layout.Gap(8), layout.Middle(), layout.WrapItems())
 	}
 }
 
-func (m *Main) remoteSettings(c *ui.Context, f *ui.FormW) {
+// remoteSettings is 设置 › 跨网连接: the state of this computer on the
+// cross-network service, then the service's address, public key and token.
+func (m *Main) remoteSettings(c *ui.Context, f *ui.FormW, hs app.HostState) {
 	s := &m.set
+	f.Item("当前状态").Help("两台电脑不在同一个网络时，通过自己部署的跨网服务（kkdesk-server）用设备码连接。").Body(func() {
+		controlRow(c, func() {
+			th := c.Theme
+			switch {
+			case m.o.Store.Settings().RemoteURL == "":
+				dot(c, th.TextQuaternary, 6)
+				ui.Text(c, "未配置").Size(14)
+			case hs.RemoteCode != "":
+				dot(c, th.Success.Base, 6)
+				ui.Text(c, "已连接，本机设备码").Size(14)
+				mono(c, hs.RemoteCode, 14, text.Semibold, th.Text)
+			case hs.RemoteErr != "":
+				dot(c, th.Warning.Base, 6)
+				ui.Text(c, hs.RemoteErr).Size(14).Ellipsis().Layout(layout.Grow(1), layout.MinW(0))
+			case !hs.Enabled:
+				dot(c, th.TextQuaternary, 6)
+				ui.Text(c, "已配置；开启「允许被远程控制」后连接").Size(14)
+			default:
+				dot(c, th.Warning.Base, 6)
+				ui.Text(c, "正在连接跨网服务…").Size(14)
+			}
+		}, layout.Gap(8))
+	})
+	helpGap(c)
 	addr := f.Item("跨网服务")
 	if s.remoteErr != "" {
 		addr.Error(s.remoteErr)
+	} else {
+		addr.Help("两台电脑填同一个地址。")
 	}
 	addr.Body(func() {
 		ui.Input(c, &s.remoteURL).Placeholder("https://desk.example.com 或 IP:端口").A11yLabel("跨网服务地址")
 	})
-	f.Item("服务器公钥").Body(func() {
+	helpGap(c)
+	f.Item("服务器公钥").Help("用 IP 地址时填写服务端安装后输出的公钥；用域名和正式证书时可以留空。").Body(func() {
 		ui.Input(c, &s.remotePublicKey).Placeholder("IP 模式填服务端输出的公钥").A11yLabel("跨网服务器公钥")
 	})
-	f.Item("服务密钥").Body(func() {
+	helpGap(c)
+	f.Item("服务密钥").Help("服务端的 KKDESK_SERVER_TOKEN，两台电脑填同一个。").Body(func() {
 		ui.Row(c, func() {
 			field := ui.Input(c, &s.remoteToken).Password().A11yLabel("跨网服务密钥")
 			field.Layout(layout.Grow(1), layout.MinW(0))
