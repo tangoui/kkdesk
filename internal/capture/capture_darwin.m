@@ -30,7 +30,7 @@ static BOOL waitSem(dispatch_semaphore_t sem) {
 }
 
 API_AVAILABLE(macos(12.3))
-@interface MMCapture : NSObject <SCStreamOutput>
+@interface MMCapture : NSObject <SCStreamOutput, SCStreamDelegate>
 @property(nonatomic, strong) SCStream *stream;
 @property(nonatomic, strong) SCStreamConfiguration *config;
 @property(nonatomic, strong) dispatch_queue_t queue;
@@ -69,6 +69,17 @@ API_AVAILABLE(macos(12.3))
 	uint64_t dispNs = disp != nil ? machToNs(disp.unsignedLongLongValue) : 0;
 	mmcapGoFrame(self.handle, (uintptr_t)pb, dispNs, machToNs(entry),
 	             (int)CVPixelBufferGetWidth(pb), (int)CVPixelBufferGetHeight(pb));
+}
+
+// The system stopped the stream (it does so on its own, e.g. around a
+// screenshot): Go restarts it, off this queue.
+- (void)stream:(SCStream *)stream didStopWithError:(NSError *)error {
+	if (self.stopped) {
+		return;
+	}
+	NSString *msg = [NSString stringWithFormat:@"%@ (%@ %ld)", error.localizedDescription ?: @"unknown error",
+	                                           error.domain ?: @"", (long)error.code];
+	mmcapGoStopped(self.handle, (char *)msg.UTF8String);
 }
 
 @end
@@ -183,7 +194,7 @@ void *mmcap_start(int64_t intervalNs, int maxWidth, const char *excludeApp,
 		cap.config = cfg;
 		cap.queue = dispatch_queue_create("kkdesk.capture", DISPATCH_QUEUE_SERIAL);
 		dispatch_queue_set_specific(cap.queue, kQueueKey, (__bridge void *)cap, NULL);
-		cap.stream = [[SCStream alloc] initWithFilter:filter configuration:cfg delegate:nil];
+		cap.stream = [[SCStream alloc] initWithFilter:filter configuration:cfg delegate:cap];
 
 		NSError *addErr = nil;
 		if (![cap.stream addStreamOutput:cap type:SCStreamOutputTypeScreen sampleHandlerQueue:cap.queue error:&addErr]) {
