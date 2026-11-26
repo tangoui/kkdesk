@@ -94,6 +94,9 @@ func (e Event) Marshal(dst []byte) []byte {
 
 // Unmarshal decodes one event. It returns an error for an empty or unknown
 // kind, and for input that is not exactly the size of that kind.
+// MaxWheelDelta bounds one wheel event's delta (logical pixels) on decode.
+const MaxWheelDelta = 10000
+
 func Unmarshal(b []byte) (Event, error) {
 	if len(b) == 0 {
 		return Event{}, fmt.Errorf("input: empty event")
@@ -121,6 +124,13 @@ func Unmarshal(b []byte) (Event, error) {
 		e.DX, e.DY = f32(p[0:]), f32(p[4:])
 		e.Mods = p[8]
 	}
+	for _, v := range []float32{e.X, e.Y, e.DX, e.DY} {
+		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+			return Event{}, fmt.Errorf("input: kind %d event has a non-finite value", k)
+		}
+	}
+	e.DX = max(-MaxWheelDelta, min(e.DX, MaxWheelDelta))
+	e.DY = max(-MaxWheelDelta, min(e.DY, MaxWheelDelta))
 	return e, nil
 }
 
