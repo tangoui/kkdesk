@@ -4,6 +4,24 @@
 
 一个程序两种角色：被控端共享本机屏幕，控制端查看或控制对方。局域网可用地址和密码连接。异地设备可用自托管跨网服务，通过设备码连接。
 
+## 界面截图
+
+### 电脑端（macOS）
+
+| 我的设备 | 文件传输 |
+| --- | --- |
+| ![macOS 我的设备页](docs/public/screenshots/page-devices.png) | ![macOS 文件传输页](docs/public/screenshots/page-files.png) |
+
+### 手机端（iOS）
+
+| 设备列表（iPhone 真机） | 浏览电脑文件 |
+| --- | --- |
+| <img width="220" src="docs/mobile-ui-shots/round-2/iphone/devices.png" alt="iPhone 设备列表"> | <img width="220" src="docs/mobile-ui-shots/files/ios/light-browser.png" alt="iOS 浏览电脑文件"> |
+
+远控菜单（演示会话）
+
+![iOS 横屏远控菜单，可打开键盘和触控板](docs/mobile-ui-shots/round-2/ios/light/18-remote-menu.png)
+
 ## 现状（验证原型）
 
 - macOS：被控端和控制端都可用。屏幕采集用 ScreenCaptureKit，编解码用 VideoToolbox H.264 硬件编解码，画面用 `AVSampleBufferDisplayLayer` 显示。

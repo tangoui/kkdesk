@@ -9,6 +9,35 @@ kkdesk 是一个用 [Tango](https://github.com/tangoui/tango) 写的远程桌面
 
 两台电脑都装同一个 kkdesk，谁控制谁只取决于谁去连谁（Windows 目前只能被控，见下面的[平台现状](#平台现状)）。
 
+## 界面截图
+
+### 电脑端（macOS）
+
+**我的设备**可查看在线状态，也可以直接发起连接。详细操作见[我的设备与远程会话](./devices)。
+
+<img class="shot" src="/screenshots/page-devices.png" alt="macOS 我的设备页，显示分组、在线状态和连接按钮">
+
+**文件传输**页显示可用的文件会话和传输记录。详细操作见[文件传输](./file-transfer)。
+
+<img class="shot" src="/screenshots/page-files.png" alt="macOS 文件传输页，显示文件会话和传输记录">
+
+### 手机端（iOS）
+
+<div style="display: flex; flex-wrap: wrap; gap: 16px">
+  <div>
+    <img class="shot" width="220" loading="lazy" src="../mobile-ui-shots/round-2/iphone/devices.png" alt="iPhone 设备列表，显示在线和离线的电脑">
+    <p>设备列表（iPhone 真机）</p>
+  </div>
+  <div>
+    <img class="shot" width="220" loading="lazy" src="../mobile-ui-shots/files/ios/light-browser.png" alt="iOS 文件浏览器，显示电脑文件和上传、下载按钮">
+    <p>浏览电脑文件</p>
+  </div>
+</div>
+
+**远控菜单**可打开键盘、切换触控方式和调整画质。下图取自演示会话。
+
+<img class="shot" loading="lazy" src="../mobile-ui-shots/round-2/ios/light/18-remote-menu.png" alt="iOS 横屏远控菜单，显示键盘、触控板、屏幕和画质选项">
+
 ## 能做什么
 
 | 功能 | 说明 |
