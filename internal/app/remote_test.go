@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -76,10 +77,42 @@ func TestRemoteFileSession(t *testing.T) {
 	}
 }
 
+// A wrong password on a cross-network connection is refused like on the
+// LAN, with 密码错误, instead of falling back to a confirmation the user
+// cannot tell apart from a missing password.
+func TestRemoteWrongPasswordRefused(t *testing.T) {
+	cfg, done := remoteTestService(t)
+	defer done()
+	for _, autoAccept := range []bool{true, false} {
+		h := NewHost(HostConfig{Addr: "127.0.0.1:0", Password: "k7Pm4x", AutoAccept: autoAccept, Remote: cfg}, nil)
+		if err := h.SetEnabled(true); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		for h.State().RemoteCode == "" && ctx.Err() == nil {
+			time.Sleep(10 * time.Millisecond)
+		}
+		v := NewViewer(ViewerConfig{Addr: h.State().RemoteCode, Password: "k7Pm4X", FilesOnly: true, Remote: cfg}, nil)
+		err := v.Connect(ctx)
+		if err == nil || !strings.Contains(err.Error(), "密码错误") {
+			t.Fatalf("autoAccept %v: connect = %v, want 密码错误", autoAccept, err)
+		}
+		if p := h.State().Phase; p == HostPending || p == HostActive {
+			t.Fatalf("autoAccept %v: host phase %v after a wrong password", autoAccept, p)
+		}
+		v.Close()
+		h.Close()
+		cancel()
+	}
+}
+
 // A cross-network controller that gives the host's password connects
 // without a confirmation when the host turned 连接前需要确认 off; a wrong
 // password, or confirmation on, still asks.
-func TestRemotePasswordSkipsConfirmation(t *testing.T) {
+// remoteTestService starts a rendezvous server with a TURN relay on
+// loopback; call done when finished.
+func remoteTestService(t *testing.T) (rendezvous.Config, func()) {
+	t.Helper()
 	const token = "test-enrollment-token-of-sufficient-length"
 	const secret = "test-relay-secret-of-sufficient-length"
 	relay, err := rendezvous.StartRelay(rendezvous.RelayConfig{
@@ -89,14 +122,18 @@ func TestRemotePasswordSkipsConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer relay.Close()
 	signaling, err := rendezvous.NewServer(token, secret, []string{"turn:" + relay.UDPAddr.String()})
 	if err != nil {
+		relay.Close()
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(signaling)
-	defer server.Close()
-	cfg := rendezvous.Config{URL: server.URL, Token: token}
+	return rendezvous.Config{URL: server.URL, Token: token}, func() { server.Close(); relay.Close() }
+}
+
+func TestRemotePasswordSkipsConfirmation(t *testing.T) {
+	cfg, done := remoteTestService(t)
+	defer done()
 	for _, tc := range []struct {
 		name       string
 		autoAccept bool
@@ -105,7 +142,7 @@ func TestRemotePasswordSkipsConfirmation(t *testing.T) {
 	}{
 		{"right temporary password", true, "k7Pm4x", false},
 		{"right fixed password", true, "fixed-pass-1", false},
-		{"wrong password", true, "k7Pm4X", true},
+
 		{"no password", true, "", true},
 		{"confirmation on", false, "k7Pm4x", true},
 	} {

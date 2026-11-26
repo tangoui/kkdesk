@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"log"
 	"time"
 
 	"github.com/coder/websocket"
@@ -131,12 +132,20 @@ func (h *Host) answerRemote(ctx context.Context, cfg rendezvous.Config, conn *we
 		return
 	}
 	// A controller that proves the temporary or fixed password skips the
-	// confirmation like on the LAN (when 连接前需要确认 is off).
+	// confirmation like on the LAN (when 连接前需要确认 is off); a wrong
+	// password is refused like on the LAN. Without a password (an older
+	// controller) the user confirms.
 	h.mu.Lock()
 	passwords := []string{h.password, h.cfg.Fixed}
 	h.mu.Unlock()
-	var passwordOK bool
-	req.SDP.SDP, passwordOK = session.VerifyRemoteOffer(req.SDP.SDP, passwords...)
+	var auth session.RemoteAuth
+	req.SDP.SDP, auth = session.VerifyRemoteOffer(req.SDP.SDP, passwords...)
+	log.Printf("kkdesk host: cross-network request (%s, %s)", req.Mode, auth)
+	if auth == session.RemoteAuthWrong {
+		_ = rendezvous.Reply(replyCtx, conn, req.ID, nil, "密码错误")
+		return
+	}
+	passwordOK := auth == session.RemoteAuthOK
 	peer, answer, err := session.AnswerRemote(cfg, req)
 	if err != nil {
 		_ = rendezvous.Reply(replyCtx, conn, req.ID, nil, "被控端无法建立跨网连接")
