@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/pion/webrtc/v4"
+
+	"github.com/tangoui/kkdesk/internal/pairing"
 )
 
 // ErrBadPassword is returned by Dial when the host rejects the password, and
@@ -40,12 +42,13 @@ const signalTimeout = 30 * time.Second
 //	client → host  {"sdp": offer, "mode": "desktop"|"files"}
 //	host → client  {"sdp": answer}
 type sigMsg struct {
-	Nonce string                     `json:"nonce,omitempty"`
-	MAC   string                     `json:"mac,omitempty"`
-	OK    *bool                      `json:"ok,omitempty"`
-	Error string                     `json:"error,omitempty"`
-	SDP   *webrtc.SessionDescription `json:"sdp,omitempty"`
-	Mode  Mode                       `json:"mode,omitempty"` // with the offer; "" = desktop
+	Mobile *pairing.Message           `json:"mobile,omitempty"`
+	Nonce  string                     `json:"nonce,omitempty"`
+	MAC    string                     `json:"mac,omitempty"`
+	OK     *bool                      `json:"ok,omitempty"`
+	Error  string                     `json:"error,omitempty"`
+	SDP    *webrtc.SessionDescription `json:"sdp,omitempty"`
+	Mode   Mode                       `json:"mode,omitempty"` // with the offer; "" = desktop
 }
 
 type sigConn struct {
@@ -87,6 +90,7 @@ type Host struct {
 
 	mu        sync.Mutex
 	passwords []string // any of them passes the challenge; never ""
+	mobile    func(context.Context, *MobileLAN, func())
 }
 
 // Listen starts listening for signaling connections on addr (e.g. ":21118").
@@ -152,7 +156,12 @@ func (h *Host) Accept(ctx context.Context) (*Peer, error) {
 		return nil, err
 	}
 	sc, done := newSigConn(ctx, c)
-	defer done()
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			done()
+		}
+	}()
 
 	nonce := make([]byte, 32)
 	if _, err := rand.Read(nonce); err != nil {
@@ -167,6 +176,16 @@ func (h *Host) Accept(ctx context.Context) (*Peer, error) {
 			return nil, ErrProbe
 		}
 		return nil, fmt.Errorf("session: read challenge response: %w", err)
+	}
+	if m.Mobile != nil && h.mobile != nil {
+		deadline := time.Now().Add(2 * time.Minute)
+		if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+			deadline = d
+		}
+		_ = sc.conn.SetDeadline(deadline)
+		handedOff = true
+		h.mobile(ctx, &MobileLAN{sc: sc, first: m.Mobile, close: done}, done)
+		return nil, ErrProbe
 	}
 	mac, err := base64.StdEncoding.DecodeString(m.MAC)
 	if err != nil || !h.verify(mac, nonce) {

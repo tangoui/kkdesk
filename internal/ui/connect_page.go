@@ -133,8 +133,12 @@ func (m *Main) hostCard(c *ui.Context, hs app.HostState) {
 			if ui.Button(c, "复制并分享").Icon(icon.Copy).Disabled(len(hs.Addrs) == 0).Clicked() {
 				copyText(c, shareText(hs), "已复制，可以直接发给对方")
 			}
+			if ui.Button(c, "手机扫码连接").Icon(antd.ScanOutlined).Disabled(!m.o.Host.PairingAvailable()).Clicked() {
+				m.pairing.open = true
+				c.Invalidate()
+			}
 			m.screenRecording.entry(c)
-		}, layout.Gap(8), layout.Middle(), layout.Padding(insets(4, 0, 0, 0)))
+		}, layout.Gap(8), layout.Middle(), layout.WrapItems(), layout.Padding(insets(4, 0, 0, 0)))
 	}, layout.Grow(1), layout.Basis(340), layout.Pad(20), layout.Gap(8))
 }
 
@@ -232,7 +236,7 @@ func (m *Main) recent(c *ui.Context) {
 			f.Recent = nil
 			c.Invalidate()
 		}
-	}, layout.Gap(8), layout.Middle(), layout.Padding(insets(4, 0, 0, 0)))
+	}, layout.Gap(8), layout.Middle(), layout.WrapItems(), layout.Padding(insets(4, 0, 0, 0)))
 	if len(f.Recent) == 0 {
 		panel(c, func() {
 			ui.Empty(c).Simple().Description("还没有连接记录")

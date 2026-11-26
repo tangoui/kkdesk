@@ -6,10 +6,16 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'files/file_transfer_service.dart';
 import 'lan_session.dart';
 import 'mobile_services.dart';
+import 'pairing/transport.dart';
 import 'touch_controller.dart';
 
 class LanRemoteSession extends ChangeNotifier implements RemoteSession {
-  LanRemoteSession(this.address, this._password);
+  LanRemoteSession(this.address, this._password) : _paired = null;
+  LanRemoteSession.paired(this.address, this._paired) : _password = '';
+
+  final PairedConnection? _paired;
+  ConnectionPath get _path =>
+      _session.relay ? ConnectionPath.relay : ConnectionPath.direct;
 
   final String address;
   Future<FileTransferService> get files => _session.files;
@@ -54,7 +60,11 @@ class LanRemoteSession extends ChangeNotifier implements RemoteSession {
         if (!_closed) notifyListeners();
       };
       _renderer.onFirstFrameRendered = _onFirstFrame;
-      await _session.connect(address, _password);
+      if (_paired case final connect?) {
+        await _session.connectPaired(address, connect);
+      } else {
+        await _session.connect(address, _password);
+      }
       if (_closed || status.phase != RemotePhase.connecting) return;
       _frameTimeout = Timer(const Duration(seconds: 20), () {
         _onEnded('等待远程画面超时');
@@ -62,11 +72,15 @@ class LanRemoteSession extends ChangeNotifier implements RemoteSession {
       });
     } catch (error) {
       _onEnded(
-        error is FormatException
+        error is PairFailure
+            ? error.message
+            : error is FormatException
             ? error.message
             : error is StateError
             ? error.message
-            : '无法连接电脑，请检查地址、密码和局域网连接。',
+            : _paired == null
+            ? '无法连接电脑，请检查地址、密码和局域网连接。'
+            : '无法连接已配对的电脑，请检查电脑和跨网服务是否在线。',
       );
     }
   }
@@ -78,7 +92,7 @@ class LanRemoteSession extends ChangeNotifier implements RemoteSession {
   void _onFirstFrame() {
     if (_closed || status.phase != RemotePhase.connecting) return;
     _frameTimeout?.cancel();
-    _status = const RemoteStatus(phase: RemotePhase.connected);
+    _status = RemoteStatus(phase: RemotePhase.connected, path: _path);
     _stats = Timer.periodic(
       const Duration(seconds: 1),
       (_) => unawaited(_refreshStats()),
@@ -92,6 +106,7 @@ class LanRemoteSession extends ChangeNotifier implements RemoteSession {
       if (_closed || status.phase != RemotePhase.connected) return;
       _status = RemoteStatus(
         phase: RemotePhase.connected,
+        path: _path,
         latency: stats.latency,
         fps: stats.fps,
       );

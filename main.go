@@ -19,6 +19,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -30,6 +31,7 @@ import (
 
 	"github.com/tangoui/kkdesk/internal/app"
 	"github.com/tangoui/kkdesk/internal/config"
+	"github.com/tangoui/kkdesk/internal/pairing"
 	"github.com/tangoui/kkdesk/internal/rendezvous"
 	appui "github.com/tangoui/kkdesk/internal/ui"
 	"github.com/tangoui/kkdesk/internal/update"
@@ -136,6 +138,11 @@ func run(o options) error {
 	store := openStore()
 	board := &appui.Clipboard{} // the app is set once it exists
 	hcfg := hostConfig(o, store, logw)
+	identity, identityErr := pairing.Open(filepath.Dir(store.Path()))
+	if identityErr != nil {
+		log.Printf("kkdesk: desktop identity: %v", identityErr)
+	}
+	hcfg.Pairing = identity
 	if !o.host { // measurement runs leave the clipboard alone
 		hcfg.Clipboard = board
 	}

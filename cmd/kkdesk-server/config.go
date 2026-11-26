@@ -18,6 +18,7 @@ type serverConfig struct {
 	Key            string         `json:"tls-key"`
 	Identity       string         `json:"tls-identity"`
 	TURNListen     string         `json:"turn-listen"`
+	TURNTCPListen  string         `json:"turn-tcp-listen"`
 	TURNTLSListen  string         `json:"turn-tls-listen"`
 	TURNHost       string         `json:"turn-host"`
 	PublicIP       string         `json:"turn-public-ip"`
@@ -40,6 +41,7 @@ func parseConfig(args []string) (serverConfig, error) {
 	flags.StringVar(&cfg.Key, "tls-key", "", "TLS private key PEM")
 	flags.StringVar(&cfg.Identity, "tls-identity", "", "persistent private key PEM for IP and public-key TLS")
 	flags.StringVar(&cfg.TURNListen, "turn-listen", "0.0.0.0:3478", "TURN UDP listen address")
+	flags.StringVar(&cfg.TURNTCPListen, "turn-tcp-listen", "", "TURN TCP listen address in IP public-key mode (defaults to -turn-listen)")
 	flags.StringVar(&cfg.TURNTLSListen, "turn-tls-listen", "", "optional TURN TLS listen address")
 	flags.StringVar(&cfg.TURNHost, "turn-host", "", "public DNS name used by TURN TLS")
 	flags.StringVar(&cfg.PublicIP, "turn-public-ip", "", "public IPv4 advertised for TURN allocations")
@@ -73,6 +75,9 @@ func parseConfig(args []string) (serverConfig, error) {
 	}
 	if time.Duration(cfg.CredentialTTL) < time.Second {
 		return cfg, errors.New("turn-credential-ttl must be at least 1s")
+	}
+	if cfg.TURNTCPListen != "" && cfg.Identity == "" {
+		return cfg, errors.New("turn-tcp-listen requires -tls-identity")
 	}
 	return cfg, nil
 }

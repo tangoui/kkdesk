@@ -70,10 +70,14 @@ func (m *Main) confirm(c *ui.Context, hs app.HostState) {
 	}
 	md := ui.Modal(c, &open, "连接请求").Width(min(420, c.Size().W-32)).MaskClosable(false).Header(func() {
 		ui.Row(c, func() {
-			ui.Avatar(c, "").Icon(antd.DesktopOutlined).Size(44).Bg(th.Primary.Bg)
+			peerIcon := antd.DesktopOutlined
+			if hs.PhonePeer {
+				peerIcon = antd.MobileOutlined
+			}
+			ui.Avatar(c, "").Icon(peerIcon).Size(44).Bg(th.Primary.Bg)
 			ui.Column(c, func() {
 				ui.Text(c, hs.Peer+" "+what).Size(16).Strong()
-				if !hs.RemotePeer {
+				if !hs.RemotePeer && !hs.PhonePeer {
 					ui.Text(c, "地址 "+hs.Peer+" · 局域网直连").Size(12).Tertiary()
 				}
 			}, layout.Gap(2), layout.Grow(1), layout.MinW(0))
@@ -86,6 +90,9 @@ func (m *Main) confirm(c *ui.Context, hs app.HostState) {
 	}).Body(func() {
 		ui.Column(c, func() {
 			ui.Alert(c, "warning", warn).ShowIcon(true).Show()
+			if hs.BiometricEnrollment {
+				ui.Alert(c, "info", "接受后将登记这台手机的生物识别密钥。请确认手机刚完成面容或指纹验证。").ShowIcon(true).Show()
+			}
 			ui.Row(c, func() {
 				for _, p := range perms {
 					if !permShown(hs, p.label) {

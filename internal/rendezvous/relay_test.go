@@ -12,27 +12,43 @@ import (
 	"github.com/pion/turn/v4"
 )
 
-func TestTURNOverTLS(t *testing.T) {
-	const secret = "test-turn-secret-of-sufficient-length"
-	certServer := httptest.NewTLSServer(http.NotFoundHandler())
-	roots := x509.NewCertPool()
-	roots.AddCert(certServer.Certificate())
-	serverTLS := certServer.TLS.Clone()
-	certServer.Close()
+func TestTURNOverStream(t *testing.T) {
+	t.Run("TLS", func(t *testing.T) { testTURNOverStream(t, true) })
+	t.Run("TCP", func(t *testing.T) { testTURNOverStream(t, false) })
+}
 
-	relay, err := StartRelay(RelayConfig{
-		UDPAddr: "127.0.0.1:0", TLSAddr: "127.0.0.1:0", TLS: serverTLS,
-		BindIP: "127.0.0.1", PublicIP: net.IPv4(127, 0, 0, 1),
+func testTURNOverStream(t *testing.T, secure bool) {
+	t.Helper()
+	const secret = "test-turn-secret-of-sufficient-length"
+	cfg := RelayConfig{
+		UDPAddr: "127.0.0.1:0",
+		BindIP:  "127.0.0.1", PublicIP: net.IPv4(127, 0, 0, 1),
 		MinPort: 49460, MaxPort: 49559, Secret: secret,
-	})
+	}
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	dial := dialer.Dial
+	if secure {
+		certServer := httptest.NewTLSServer(http.NotFoundHandler())
+		roots := x509.NewCertPool()
+		roots.AddCert(certServer.Certificate())
+		cfg.TLSAddr, cfg.TLS = "127.0.0.1:0", certServer.TLS.Clone()
+		certServer.Close()
+		clientTLS := &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
+		dial = (&tls.Dialer{NetDialer: dialer, Config: clientTLS}).Dial
+	} else {
+		cfg.TCPAddr = "127.0.0.1:0"
+	}
+	relay, err := StartRelay(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer relay.Close()
-	addr := relay.TLSAddr.String()
-	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}, "tcp4", addr, &tls.Config{
-		RootCAs: roots, MinVersion: tls.VersionTLS12,
-	})
+	listener := relay.TCPAddr
+	if secure {
+		listener = relay.TLSAddr
+	}
+	addr := listener.String()
+	conn, err := dial("tcp4", addr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,15 +77,16 @@ func TestTURNOverTLS(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer dst.Close()
-	if _, err := allocated.WriteTo([]byte("relay over TLS"), dst.LocalAddr()); err != nil {
+	const payload = "relay to UDP"
+	if _, err := allocated.WriteTo([]byte(payload), dst.LocalAddr()); err != nil {
 		t.Fatal(err)
 	}
 	buf := make([]byte, 64)
 	if err := dst.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	n, _, err := dst.ReadFrom(buf)
-	if err != nil || string(buf[:n]) != "relay over TLS" {
-		t.Fatalf("relayed packet %q, %v", buf[:n], err)
+	n, from, err := dst.ReadFrom(buf)
+	if err != nil || string(buf[:n]) != payload || from.String() != allocated.LocalAddr().String() {
+		t.Fatalf("relayed UDP packet %q from %v, %v", buf[:n], from, err)
 	}
 }

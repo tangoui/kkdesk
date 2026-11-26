@@ -3,6 +3,7 @@ package rendezvous
 import (
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"net"
 	"net/netip"
 	"sync"
@@ -12,6 +13,7 @@ import (
 
 type RelayConfig struct {
 	UDPAddr  string
+	TCPAddr  string // optional; the same address as UDPAddr shares its port
 	TLSAddr  string
 	TLS      *tls.Config
 	BindIP   string
@@ -24,6 +26,7 @@ type RelayConfig struct {
 type Relay struct {
 	*turn.Server
 	UDPAddr net.Addr
+	TCPAddr net.Addr
 	TLSAddr net.Addr
 }
 
@@ -80,24 +83,42 @@ func StartRelay(cfg RelayConfig) (*Relay, error) {
 		},
 	}
 	relay := &Relay{UDPAddr: udp.LocalAddr()}
-	var stream net.Listener
-	if cfg.TLSAddr != "" {
-		stream, err = tls.Listen("tcp4", cfg.TLSAddr, cfg.TLS)
-		if err != nil {
+	defer func() {
+		if relay.Server == nil {
 			udp.Close()
-			return nil, err
+			for _, cfg := range settings.ListenerConfigs {
+				cfg.Listener.Close()
+			}
+		}
+	}()
+	addListener := func(stream net.Listener) {
+		// TURN over TCP or TLS still allocates a UDP relay socket.
+		settings.ListenerConfigs = append(settings.ListenerConfigs, turn.ListenerConfig{
+			Listener: stream, RelayAddressGenerator: gen(), PermissionHandler: permission,
+		})
+	}
+	if cfg.TCPAddr != "" {
+		addr := cfg.TCPAddr
+		if addr == cfg.UDPAddr {
+			addr = relay.UDPAddr.String()
+		}
+		stream, err := net.Listen("tcp4", addr)
+		if err != nil {
+			return nil, fmt.Errorf("listen for TURN TCP: %w", err)
+		}
+		relay.TCPAddr = stream.Addr()
+		addListener(stream)
+	}
+	if cfg.TLSAddr != "" {
+		stream, err := tls.Listen("tcp4", cfg.TLSAddr, cfg.TLS)
+		if err != nil {
+			return nil, fmt.Errorf("listen for TURN TLS: %w", err)
 		}
 		relay.TLSAddr = stream.Addr()
-		settings.ListenerConfigs = []turn.ListenerConfig{{
-			Listener: stream, RelayAddressGenerator: gen(), PermissionHandler: permission,
-		}}
+		addListener(stream)
 	}
 	relay.Server, err = turn.NewServer(settings)
 	if err != nil {
-		udp.Close()
-		if stream != nil {
-			stream.Close()
-		}
 		return nil, err
 	}
 	return relay, nil

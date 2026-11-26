@@ -15,6 +15,8 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 	"github.com/pion/webrtc/v4"
+
+	"github.com/tangoui/kkdesk/internal/pairing"
 )
 
 const (
@@ -84,6 +86,9 @@ func IsCode(code string) bool {
 }
 
 type message struct {
+	Device    string                     `json:"device,omitempty"`
+	Mobile    *pairing.Message           `json:"mobile,omitempty"`
+	Online    bool                       `json:"online,omitempty"`
 	Type      string                     `json:"type"`
 	Code      string                     `json:"code,omitempty"`
 	ID        string                     `json:"id,omitempty"`
@@ -185,7 +190,11 @@ func ReadOffer(ctx context.Context, conn *websocket.Conn) (Offer, error) {
 }
 
 func Reply(ctx context.Context, conn *websocket.Conn, id string, answer *webrtc.SessionDescription, reason string) error {
-	return write(ctx, conn, message{Type: "answer", ID: id, SDP: answer, Error: reason})
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// The desktop reuses this socket for subsequent offers.
+	return writeWithTimeout(context.WithoutCancel(ctx), conn, message{Type: "answer", ID: id, SDP: answer, Error: reason})
 }
 
 type Guest struct {

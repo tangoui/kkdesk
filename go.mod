@@ -30,6 +30,7 @@ require (
 	github.com/pion/rtp v1.10.1
 	github.com/pion/turn/v4 v4.1.4
 	github.com/pion/webrtc/v4 v4.2.11
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/tangoui/tango v0.2.2-0.20261124110843-ed116886df41
 	golang.org/x/net v0.59.0
 	golang.org/x/sys v0.49.0

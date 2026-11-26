@@ -7,6 +7,7 @@ import flutter_webrtc
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private var frameProbe: FrameProbe?
   private let mediaUploadPicker = MediaUploadPicker()
+  private let biometricKey = BiometricKey()
 
   override func application(
     _ application: UIApplication,
@@ -19,6 +20,9 @@ import flutter_webrtc
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
     if let mediaRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "KKDeskMediaUpload") {
       mediaUploadPicker.register(with: mediaRegistrar.messenger())
+    }
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "KKDeskBiometricKey") {
+      biometricKey.register(with: registrar.messenger())
     }
     guard let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "KKDeskSpike") else {
       return

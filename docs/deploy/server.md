@@ -3,7 +3,7 @@
 `kkdesk-server` 是 kkdesk 的自托管跨网服务，一个程序里包含两部分：
 
 - **信令**（HTTPS + WebSocket）：被控端用设备码上线，控制端用设备码找到它并交换 WebRTC 连接信息。
-- **TURN 中继**（UDP，可选 TLS）：两台电脑无法直接打通时，加密后的画面和操作经它转发。
+- **TURN 中继**支持 UDP、IP 公钥模式下的 TCP，以及可选的 TLS。客户端无法直连时，经 TURN 转发加密的画面和操作。
 
 客户端会自动选择直连或中继。
 
@@ -16,15 +16,18 @@
 | 端口 | 协议 | 用途 |
 |---|---|---|
 | 8443（IP 公钥模式）或 443（域名 HTTPS） | TCP | 信令（HTTPS），可通过 `--listen-port` 修改 |
-| 3478 | UDP | TURN |
-| 49160–49259 | UDP | TURN 中继分配的端口范围 |
+| 3478 | UDP | TURN UDP，由 `-turn-listen` 指定 |
+| 3478（IP 公钥模式） | TCP | 手机连接 TURN 的明文 TCP 端口，默认与 UDP 使用相同端口，可通过 `-turn-tcp-listen` 修改 |
+| 49160–49259 | UDP | TURN 为媒体分配的中继端口范围，手机通过 TCP 连接 TURN 时也需开放 |
 | 5349（可选，由 `-turn-tls-listen` 指定） | TCP | TURN over TLS，适合只放行 TCP 的网络 |
 
 服务器在 NAT 后面时，要把这些端口映射进来，并且路由器要支持对公布的公网地址做回环转发。
 
 ## 公网 IP 与服务器公钥
 
-用公网 IPv4 安装时，服务端会生成并保存 Ed25519 密钥。客户端用服务器公钥验证信令和 TURN TLS 的服务器身份。
+用公网 IPv4 安装时，服务端会生成并保存 Ed25519 密钥。手机和电脑都用服务器公钥验证 HTTPS/WebSocket 信令，电脑也用它验证已配置的 TURN TLS。
+
+IP 公钥模式下，服务端只向手机控制端下发 `turn:` 的 UDP 和明文 TCP 地址。手机原生 WebRTC 的 TURN TLS 无法使用 kkdesk 的 Ed25519 公钥校验。WebRTC 音视频仍使用 DTLS-SRTP 端到端加密，数据通道由 DTLS 保护。TURN 使用信令服务签发的 HMAC 临时凭据，默认有效期 8 小时，可通过 `-turn-credential-ttl` 设置。
 
 ### 1. 准备安装文件
 
@@ -53,13 +56,15 @@ curl -fsSL -o install-server.sh https://raw.githubusercontent.com/tangoui/kkdesk
 
 ### 2. 开放端口并安装
 
-在云安全组和服务器防火墙放行 **TCP 8443、5349** 和 **UDP 3478、49160–49259**。在安装文件所在目录运行以下命令，把示例 IP 换成服务器的公网 IPv4。以 root 登录时可以省略 `sudo`。
+在云安全组和服务器防火墙放行 **TCP 8443、3478、5349** 和 **UDP 3478、49160–49259**。在安装文件所在目录运行以下命令，把示例 IP 换成服务器的公网 IPv4。以 root 登录时可以省略 `sudo`。
 
 ```sh
 sudo bash install-server.sh --ip 203.0.113.10 --binary ./kkdesk-server
 ```
 
 `--binary` 使用上传的二进制，跳过在服务器上下载 Go 和编译。二进制需要支持 `-tls-identity`。也可以省略 `--binary ./kkdesk-server`，由脚本构建服务端。通过 `--listen-port` 修改信令端口时，同时调整防火墙和客户端地址中的端口。
+
+如果已有信令或 TURN TLS 使用了与 TURN UDP 相同的端口号，手机 TURN TCP 会从 `3479` 开始选择一个端口号，避开已有的两个 TCP 配置。实际监听地址见服务日志的 `kkdesk mobile TURN TCP on`。也可在 `/etc/kkdesk-server/server.json` 设置 `"turn-tcp-listen": ":3479"` 指定独立端口，放行对应 TCP 端口后重启服务。
 
 ### 3. 读取客户端配置
 
@@ -162,6 +167,7 @@ export KKDESK_TURN_SECRET="$(openssl rand -hex 32)"    # 只留在服务器上
 | `-tls-key` | | TLS 私钥的 PEM 文件。 |
 | `-tls-identity` | | 公网 IP 模式的 Ed25519 私钥文件。服务首次启动时创建，后续启动复用。 |
 | `-turn-listen` | `0.0.0.0:3478` | TURN UDP 监听地址。 |
+| `-turn-tcp-listen` | 沿用 `-turn-listen` | 仅适用于 `-tls-identity`。手机使用的明文 TURN TCP 监听地址，例如 `:3479`。 |
 | `-turn-tls-listen` | | 可选的 TURN over TLS 监听地址，例如 `:5349`。 |
 | `-turn-host` | | TURN TLS 使用的公网域名或 IP。公钥模式使用服务器的公网 IP。 |
 | `-turn-public-ip` | | 公布给客户端的中继公网 IPv4。 |
