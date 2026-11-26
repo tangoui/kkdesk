@@ -49,6 +49,9 @@ const AutoBitrate = 8_000_000
 
 // HostConfig configures a Host.
 type HostConfig struct {
+	// Viewers remembers controllers let in with the password (ViewerTrust);
+	// nil remembers none.
+	Viewers ViewerTrust
 	Addr string // listen address; default ":21118"
 	// Password is the temporary password; empty generates a 6-digit one.
 	// PasswordSince is when it was made (zero: now), for a timed Rotate.
@@ -698,6 +701,10 @@ func (h *Host) RefreshPassword() {
 
 // anyRequest answers whichever request is pending (Accept, Reject).
 const anyRequest = 0
+
+// Identity returns this computer's identity (nil if it could not be read);
+// controllers started here prove it to hosts.
+func (h *Host) Identity() *pairing.Store { return h.cfg.Pairing }
 
 // Accept accepts whatever connection is pending.
 func (h *Host) Accept() { h.answer(anyRequest, true) }

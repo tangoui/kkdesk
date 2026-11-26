@@ -308,7 +308,7 @@ func (m *Main) connect(addr, pw, mode string) {
 	filesOnly := mode == modeTransfer
 	st := m.o.Store.Settings()
 	v := app.NewViewer(app.ViewerConfig{Addr: addr, Password: pw, ViewOnly: viewOnly, FilesOnly: filesOnly, Log: m.o.ViewerLog,
-		Clipboard: m.clipboard(), Devices: m.o.Store,
+		Clipboard: m.clipboard(), Devices: m.o.Store, Identity: m.o.Host.Identity(),
 		FPS: st.FPS, BitrateBps: st.BitrateMbps * 1_000_000,
 		Remote: rendezvous.Config{URL: st.RemoteURL, Token: st.RemoteToken, PublicKey: st.RemotePublicKey}}, nil)
 	go func() {

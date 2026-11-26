@@ -16,7 +16,7 @@ import (
 func TestLANV2GreetingAndSignedAnswer(t *testing.T) {
 	v, identity := readAuthVector(t)
 	var guard PasswordGate
-	host, err := Listen("127.0.0.1:0", identity, func(source string, tx PasswordTranscript, proof []byte) (string, time.Duration) {
+	host, err := Listen("127.0.0.1:0", identity, func(source, _ string, tx PasswordTranscript, proof []byte) (string, time.Duration) {
 		return guard.Check(time.Now(), source, tx, proof, testPassword, "")
 	})
 	if err != nil {
@@ -110,7 +110,7 @@ func listenForTest(t *testing.T, address, temporary, fixed string) (*Host, error
 	t.Helper()
 	_, identity := readAuthVector(t)
 	var gate PasswordGate
-	return Listen(address, identity, func(source string, tx PasswordTranscript, proof []byte) (string, time.Duration) {
+	return Listen(address, identity, func(source, _ string, tx PasswordTranscript, proof []byte) (string, time.Duration) {
 		return gate.Check(time.Now(), source, tx, proof, temporary, fixed)
 	})
 }

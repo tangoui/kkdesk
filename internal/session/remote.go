@@ -12,6 +12,12 @@ import (
 // DialRemote verifies the signed answer against code before proving the
 // password over WebRTC.
 func DialRemote(ctx context.Context, cfg rendezvous.Config, code string, mode Mode, password string) (*Peer, error) {
+	return DialRemoteAs(ctx, cfg, code, mode, password, nil)
+}
+
+// DialRemoteAs is DialRemote proving identity to the host (see
+// DialOptions.Identity); nil sends none.
+func DialRemoteAs(ctx context.Context, cfg rendezvous.Config, code string, mode Mode, password string, identity *pairing.Store) (*Peer, error) {
 	guest, err := rendezvous.Join(ctx, cfg, code)
 	if err != nil {
 		return nil, err
@@ -22,6 +28,7 @@ func DialRemote(ctx context.Context, cfg rendezvous.Config, code string, mode Mo
 		return nil, err
 	}
 	p.requirePassword()
+	p.identity = identity
 	offer, err := p.offer()
 	var answer webrtc.SessionDescription
 	if err == nil {

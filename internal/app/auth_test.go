@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"sync"
 	"strings"
 	"testing"
 	"time"
@@ -183,4 +184,73 @@ func TestViewerRemembersLANIdentity(t *testing.T) {
 	if err != nil || newViewer.State().FirstHostCode != replaced.State().DeviceCode {
 		t.Fatalf("reconnect after removing identity: %+v, %v", newViewer.State(), err)
 	}
+}
+
+// trustSet is an in-memory ViewerTrust.
+type trustSet struct {
+	mu   sync.Mutex
+	keys map[string]bool
+}
+
+func (s *trustSet) ViewerTrusted(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.keys[key]
+}
+
+func (s *trustSet) TrustViewer(key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.keys == nil {
+		s.keys = map[string]bool{}
+	}
+	s.keys[key] = true
+	return nil
+}
+
+// A controller that has got in with the password before is not held up by a
+// pause strangers caused on the shared cross-network source.
+func TestTrustedViewerIgnoresRemotePause(t *testing.T) {
+	cfg, stop := remoteTestService(t)
+	defer stop()
+	trust := &trustSet{}
+	h := NewHost(HostConfig{Addr: "127.0.0.1:0", Password: "good", Pairing: testHostIdentity(t), Remote: cfg,
+		AutoAccept: true, Rotate: config.RotateNever, Viewers: trust}, nil)
+	defer h.Close()
+	if err := h.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+	for h.State().RemoteCode == "" && ctx.Err() == nil {
+		time.Sleep(10 * time.Millisecond)
+	}
+	code := h.State().RemoteCode
+	me := testHostIdentity(t) // the controller's own identity
+	p, err := session.DialRemoteAs(ctx, cfg, code, session.ModeFiles, "good", me)
+	if err != nil {
+		t.Fatalf("first connection: %v", err)
+	}
+	p.Close()
+	waitIdle(t, h)
+	if !trust.ViewerTrusted(me.PublicKey()) {
+		t.Fatal("a controller that got in was not remembered")
+	}
+	for range 5 { // strangers pause the shared remote source
+		if _, err := session.DialRemote(ctx, cfg, code, session.ModeFiles, "bad"); !errors.Is(err, session.ErrBadPassword) {
+			t.Fatalf("stranger: %v", err)
+		}
+	}
+	if _, err := session.DialRemote(ctx, cfg, code, session.ModeFiles, "good"); !errors.As(err, new(*session.PasswordLockedError)) {
+		t.Fatalf("anonymous controller during the pause: %v", err)
+	}
+	stranger := testHostIdentity(t)
+	if _, err := session.DialRemoteAs(ctx, cfg, code, session.ModeFiles, "good", stranger); !errors.As(err, new(*session.PasswordLockedError)) {
+		t.Fatalf("an unknown identity during the pause: %v", err)
+	}
+	p, err = session.DialRemoteAs(ctx, cfg, code, session.ModeFiles, "good", me)
+	if err != nil {
+		t.Fatalf("trusted controller during the pause: %v", err)
+	}
+	p.Close()
 }

@@ -6,6 +6,8 @@ import (
 	"github.com/pion/webrtc/v4"
 
 	"github.com/tangoui/kkdesk/internal/files"
+
+	"github.com/tangoui/kkdesk/internal/pairing"
 )
 
 // Mode is what a connection is for, chosen by the controller.
@@ -23,6 +25,10 @@ const (
 type DialOptions struct {
 	ExpectedHostKey string
 	Mode            Mode // "" means ModeDesktop
+	// Identity, if set, is proved to the host so it can recognize a
+	// controller it has let in before (its password pause then does not
+	// apply to us).
+	Identity *pairing.Store
 }
 
 func normMode(m Mode) Mode {

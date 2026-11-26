@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/tangoui/kkdesk/internal/session"
@@ -15,7 +16,21 @@ func identityError(err error) error {
 // requests (their addresses are relays or unknown).
 const remoteSource = "remote"
 
-func (h *Host) verifyPassword(source string, transcript session.PasswordTranscript, proof []byte) (string, time.Duration) {
+// ViewerTrust remembers controllers that got in with the password: a
+// controller that proves such a key (session.Peer.ViewerKey) has a pause
+// source of its own, so strangers failing on a shared source cannot keep it
+// out. Unknown keys count as their source like anonymous controllers, so new
+// keys give an attacker no extra guesses.
+type ViewerTrust interface {
+	ViewerTrusted(key string) bool
+	TrustViewer(key string) error
+}
+
+func (h *Host) verifyPassword(source, viewerKey string, transcript session.PasswordTranscript, proof []byte) (string, time.Duration) {
+	trusted := viewerKey != "" && h.cfg.Viewers != nil && h.cfg.Viewers.ViewerTrusted(viewerKey)
+	if trusted {
+		source = "viewer:" + viewerKey
+	}
 	h.mu.Lock()
 	now := time.Now()
 	matched, remaining := h.passwordGate.Check(now, source, transcript, proof, h.password, h.cfg.Fixed)
@@ -26,6 +41,11 @@ func (h *Host) verifyPassword(source string, transcript session.PasswordTranscri
 	h.mu.Unlock()
 	if locked {
 		h.notify()
+	}
+	if matched != "" && viewerKey != "" && !trusted && h.cfg.Viewers != nil {
+		if err := h.cfg.Viewers.TrustViewer(viewerKey); err != nil {
+			log.Printf("kkdesk host: remember controller: %v", err)
+		}
 	}
 	return matched, remaining
 }

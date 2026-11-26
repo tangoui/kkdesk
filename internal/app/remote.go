@@ -135,7 +135,7 @@ func (h *Host) answerRemote(ctx context.Context, cfg rendezvous.Config, conn *we
 		return
 	}
 	check := func(tx session.PasswordTranscript, proof []byte) (string, time.Duration) {
-		return h.verifyPassword(remoteSource, tx, proof)
+		return h.verifyPassword(remoteSource, peer.ViewerKey(), tx, proof)
 	}
 	if err := peer.AcceptPassword(replyCtx, transcript, check); err != nil {
 		peer.Close()

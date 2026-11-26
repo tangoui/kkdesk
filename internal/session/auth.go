@@ -67,6 +67,11 @@ func NewPasswordTranscript(offer, answer string) PasswordTranscript {
 	return PasswordTranscript{sha256.Sum256([]byte(offer)), sha256.Sum256([]byte(answer))}
 }
 
+// bytes is what a controller's identity claim signs.
+func (t PasswordTranscript) bytes() []byte {
+	return append(append(make([]byte, 0, 2*sha256.Size), t.offer[:]...), t.answer[:]...)
+}
+
 func (t PasswordTranscript) Proof(password string) []byte {
 	mac := hmac.New(sha256.New, []byte(password))
 	mac.Write([]byte("kkdesk password v2\x00"))

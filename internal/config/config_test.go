@@ -458,3 +458,28 @@ func TestConfigReadRetry(t *testing.T) {
 		t.Fatalf("Open = %v, allowRemote %v; want the file loaded on retry", err, s.Settings().AllowRemote)
 	}
 }
+
+func TestTrustedViewers(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.ViewerTrusted("k1") {
+		t.Fatal("trusted before TrustViewer")
+	}
+	if err := s.TrustViewer("k1"); err != nil {
+		t.Fatal(err)
+	}
+	if s2, _ := Open(dir); !s2.ViewerTrusted("k1") {
+		t.Fatal("a trusted controller was not saved")
+	}
+	for i := range maxTrustedViewers + 5 {
+		if err := s.TrustViewer(fmt.Sprintf("n%d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if s.ViewerTrusted("k1") || !s.ViewerTrusted(fmt.Sprintf("n%d", maxTrustedViewers+4)) {
+		t.Fatal("the oldest controller should be dropped past the limit, the newest kept")
+	}
+}

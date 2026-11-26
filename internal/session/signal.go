@@ -99,9 +99,10 @@ type Host struct {
 	mobile   func(context.Context, *MobileLAN, func())
 }
 
-// SourcedVerifier checks a password proof from source ("lan:<ip>" for LAN
-// connections), so failures can be limited per source.
-type SourcedVerifier func(source string, tx PasswordTranscript, proof []byte) (matched string, remaining time.Duration)
+// SourcedVerifier checks a password proof from source (SourceKey of the
+// address) and the controller's proved key (Peer.ViewerKey, "" if none), so
+// failures can be limited per source.
+type SourcedVerifier func(source, viewerKey string, tx PasswordTranscript, proof []byte) (matched string, remaining time.Duration)
 
 // Listen starts listening for v2 signaling connections on addr.
 func Listen(addr string, identity *pairing.Store, verify SourcedVerifier) (*Host, error) {
@@ -215,7 +216,9 @@ func (h *Host) Handshake(ctx context.Context, c net.Conn) (*Peer, error) {
 	}
 	done()
 	source := SourceKey(hostOnly(c.RemoteAddr()))
-	check := func(tx PasswordTranscript, proof []byte) (string, time.Duration) { return h.verify(source, tx, proof) }
+	check := func(tx PasswordTranscript, proof []byte) (string, time.Duration) {
+		return h.verify(source, p.ViewerKey(), tx, proof)
+	}
 	if err := p.AcceptPassword(ctx, NewPasswordTranscript(m.SDP.SDP, answer.SDP), check); err != nil {
 		p.Close()
 		return nil, err
@@ -253,6 +256,7 @@ func DialWithOptions(ctx context.Context, addr, password string, opts DialOption
 	}
 	p.remote = c.RemoteAddr().String()
 	p.requirePassword()
+	p.identity = opts.Identity
 	offer, err := p.offer()
 	if err != nil {
 		p.Close()

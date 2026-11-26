@@ -20,6 +20,8 @@ import (
 	"golang.org/x/net/proxy"
 
 	"github.com/tangoui/kkdesk/internal/input"
+
+	"github.com/tangoui/kkdesk/internal/pairing"
 )
 
 const (
@@ -97,13 +99,17 @@ type Peer struct {
 	reason         string // close reason sent by the other side
 	remote         string // remote signaling address
 	hostKey        string // verified LAN identity on the controller
-	auth           atomic.Pointer[peerPasswordAuth]
-	authPassword   string // the host password the controller proved, "" if none
-	dcMove         *webrtc.DataChannel
-	dcInput        *webrtc.DataChannel
-	dcMeta         *webrtc.DataChannel
-	files          *fileChannel
-	lastPLI        time.Time
+	// identity is the controller's own key, proved to hosts that support it
+	// (viewerClaim); viewerKey is that proved key as the host saw it.
+	identity     *pairing.Store
+	viewerKey    atomic.Pointer[string]
+	auth         atomic.Pointer[peerPasswordAuth]
+	authPassword string // the host password the controller proved, "" if none
+	dcMove       *webrtc.DataChannel
+	dcInput      *webrtc.DataChannel
+	dcMeta       *webrtc.DataChannel
+	files        *fileChannel
+	lastPLI      time.Time
 
 	opened    atomic.Int32
 	ready     chan struct{}

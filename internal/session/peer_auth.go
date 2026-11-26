@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
@@ -10,15 +11,22 @@ import (
 	"time"
 
 	"github.com/pion/webrtc/v4"
+
+	"github.com/tangoui/kkdesk/internal/pairing"
 )
 
 const (
 	metaAuth       byte = 0x41
 	metaAuthResult byte = 0x52
-	authOK         byte = 0
-	authWrong      byte = 1
-	authLocked     byte = 2
-	authWait            = 10 * time.Second
+	// metaViewerID carries a controller's identity claim before its
+	// password proof: [0x49][public key][signature of the transcript]. Hosts
+	// that do not know it drop it (unknown frames before authentication).
+	metaViewerID    byte = 0x49
+	viewerClaimSize      = 1 + ed25519.PublicKeySize + ed25519.SignatureSize
+	authOK          byte = 0
+	authWrong       byte = 1
+	authLocked      byte = 2
+	authWait             = 10 * time.Second
 )
 
 var ErrBadPassword = errors.New("密码错误")
@@ -39,6 +47,7 @@ type peerPasswordAuth struct {
 	frame    chan []byte
 	received bool // only accessed by the meta channel callback
 	verified atomic.Bool
+	claim    atomic.Pointer[[]byte] // the controller's identity claim, unverified
 }
 
 func (p *Peer) requirePassword() {
@@ -52,10 +61,44 @@ func (p *Peer) passwordPending() bool {
 
 func (p *Peer) HostKey() string { return p.hostKey }
 
+// ViewerKey returns, on the host, the controller key proved for this
+// connection's transcript ("" if the controller sent none). It is set before
+// the password verifier runs.
+func (p *Peer) ViewerKey() string {
+	if k := p.viewerKey.Load(); k != nil {
+		return *k
+	}
+	return ""
+}
+
+// viewerClaim is a controller's identity claim for transcript.
+func viewerClaim(id *pairing.Store, tx PasswordTranscript) []byte {
+	claim := append([]byte{metaViewerID}, id.PublicKeyBytes()...)
+	return append(claim, id.SignViewer(tx.bytes())...)
+}
+
+// verifyViewerClaim returns the encoded key of a valid claim for tx, else "".
+func verifyViewerClaim(claim []byte, tx PasswordTranscript) string {
+	if len(claim) != viewerClaimSize || claim[0] != metaViewerID {
+		return ""
+	}
+	public, sig := claim[1:1+ed25519.PublicKeySize], claim[1+ed25519.PublicKeySize:]
+	if !pairing.VerifyViewer(public, sig, tx.bytes()) {
+		return ""
+	}
+	return pairing.Encode(public)
+}
+
 func (p *Peer) handlePasswordMeta(msg webrtc.DataChannelMessage) bool {
 	a := p.auth.Load()
 	b := msg.Data
 	switch b[0] {
+	case metaViewerID:
+		if p.isHost && a != nil && !a.received && !msg.IsString && len(b) == viewerClaimSize {
+			claim := append([]byte(nil), b...)
+			a.claim.CompareAndSwap(nil, &claim)
+		}
+		return true
 	case metaAuth, metaAuthResult:
 		if a == nil || a.received || msg.IsString {
 			return true
@@ -137,6 +180,11 @@ func (p *Peer) AcceptPassword(ctx context.Context, tx PasswordTranscript, check 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if claim := p.auth.Load().claim.Load(); claim != nil {
+		if key := verifyViewerClaim(*claim, tx); key != "" {
+			p.viewerKey.Store(&key)
+		}
+	}
 	matched, remaining := check(tx, proof)
 	switch {
 	case remaining > 0:
@@ -158,6 +206,11 @@ func (p *Peer) AcceptPassword(ctx context.Context, tx PasswordTranscript, check 
 func (p *Peer) provePassword(ctx context.Context, tx PasswordTranscript, password string) error {
 	if err := p.waitReady(ctx); err != nil {
 		return err
+	}
+	if p.identity != nil {
+		if err := p.sendMeta(viewerClaim(p.identity, tx)); err != nil {
+			return err
+		}
 	}
 	if err := p.sendMeta(append([]byte{metaAuth}, tx.Proof(password)...)); err != nil {
 		return err

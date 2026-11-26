@@ -168,6 +168,9 @@ type file struct {
 	Temp     *TempPassword `json:"temp,omitempty"`
 	Groups   []string      `json:"groups"`
 	Devices  []Device      `json:"devices"`
+	// TrustedViewers are controller keys that got in with the password,
+	// oldest first (see app.ViewerTrust).
+	TrustedViewers []string `json:"trustedViewers,omitempty"`
 }
 
 // ErrCorrupt is returned by Open when the file could not be parsed; it was
@@ -322,6 +325,29 @@ func (s *Store) UpdateSettings(fn func(*Settings)) error {
 	defer s.mu.Unlock()
 	fn(&s.f.Settings)
 	s.f.Settings.repair()
+	return s.saveLocked()
+}
+
+// maxTrustedViewers bounds the remembered controllers; the oldest go first.
+const maxTrustedViewers = 64
+
+// ViewerTrusted reports whether key is a remembered controller.
+func (s *Store) ViewerTrusted(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Contains(s.f.TrustedViewers, key)
+}
+
+// TrustViewer remembers a controller that got in with the password.
+func (s *Store) TrustViewer(key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	keys := slices.DeleteFunc(slices.Clone(s.f.TrustedViewers), func(k string) bool { return k == key })
+	keys = append(keys, key)
+	if len(keys) > maxTrustedViewers {
+		keys = keys[len(keys)-maxTrustedViewers:]
+	}
+	s.f.TrustedViewers = keys
 	return s.saveLocked()
 }
 

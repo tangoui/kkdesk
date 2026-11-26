@@ -34,6 +34,9 @@ const maxDiagLogs = 20
 
 // ViewerConfig configures a Viewer.
 type ViewerConfig struct {
+	// Identity, if set, is proved to hosts so they recognize this controller
+	// (see Host ViewerTrust).
+	Identity *pairing.Store
 	Addr     string // host[:port]; the port defaults to 21118
 	Password string
 	Devices  *config.Store // persists verified LAN identities when supplied
@@ -211,10 +214,10 @@ func (v *Viewer) Connect(ctx context.Context) error {
 		if v.cfg.Remote.URL == "" {
 			err = errors.New("请先在「设置 › 跨网连接」配置跨网服务")
 		} else {
-			p, err = session.DialRemote(ctx, v.cfg.Remote, v.cfg.Addr, mode, v.cfg.Password)
+			p, err = session.DialRemoteAs(ctx, v.cfg.Remote, v.cfg.Addr, mode, v.cfg.Password, v.cfg.Identity)
 		}
 	} else {
-		opts := session.DialOptions{Mode: mode}
+		opts := session.DialOptions{Mode: mode, Identity: v.cfg.Identity}
 		if v.cfg.Devices != nil {
 			opts.ExpectedHostKey = v.cfg.Devices.HostKey(v.cfg.Addr)
 		}
