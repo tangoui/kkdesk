@@ -13,6 +13,7 @@ import "C"
 import (
 	"errors"
 	"runtime/cgo"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -52,12 +53,17 @@ type darwinSession struct {
 	wall   time.Time
 	machNs uint64
 
+	streamMu sync.Mutex // serializes restart, filter changes and close
+	excluded []uint32
+
 	mu     sync.Mutex
 	ptr    unsafe.Pointer
 	closed atomic.Bool
 
 	complete, idle, other, late atomic.Uint64
 }
+
+var errNoDisplay = errors.New("capture: no display available")
 
 // Start begins capturing the main display. out is called on a dedicated
 // serial dispatch queue for every new (complete) frame; it must not block
@@ -94,12 +100,15 @@ func (s *darwinSession) start(interval int64) (unsafe.Pointer, int, int, error) 
 	defer C.free(unsafe.Pointer(cExclude))
 	var cw, ch C.int
 	var cerr *C.char
-	ptr := C.mmcap_start(C.int64_t(interval), C.int(s.maxWidth), cExclude, C.uintptr_t(s.handle), &cw, &ch, &cerr)
+	ptr := C.mmcap_start(C.int64_t(interval), C.int(s.maxWidth), cExclude, (*C.uint32_t)(unsafe.Pointer(unsafe.SliceData(s.excluded))), C.size_t(len(s.excluded)), C.uintptr_t(s.handle), &cw, &ch, &cerr)
 	if ptr == nil {
 		msg := "capture: start failed"
 		if cerr != nil {
 			msg = C.GoString(cerr)
 			C.free(unsafe.Pointer(cerr))
+		}
+		if msg == errNoDisplay.Error() {
+			return nil, 0, 0, errNoDisplay
 		}
 		return nil, 0, 0, errors.New(msg)
 	}
@@ -108,6 +117,12 @@ func (s *darwinSession) start(interval int64) (unsafe.Pointer, int, int, error) 
 
 // reopen replaces a stream the system stopped with a new one (restarter).
 func (s *darwinSession) reopen() error {
+	s.streamMu.Lock()
+	defer s.streamMu.Unlock()
+	return s.reopenLocked()
+}
+
+func (s *darwinSession) reopenLocked() error {
 	s.mu.Lock()
 	old := s.ptr
 	s.ptr = nil
@@ -123,7 +138,59 @@ func (s *darwinSession) reopen() error {
 	s.mu.Lock()
 	s.ptr = ptr
 	s.w, s.h = w, h
+	if s.interval != interval {
+		C.mmcap_set_fps(ptr, C.int64_t(s.interval))
+	}
 	s.mu.Unlock()
+	return nil
+}
+
+func (s *darwinSession) excludeWindows(ids []uint32) error {
+	s.streamMu.Lock()
+	defer s.streamMu.Unlock()
+	s.mu.Lock()
+	ptr := s.ptr
+	s.mu.Unlock()
+	if s.closed.Load() {
+		if len(ids) == 0 {
+			s.excluded = nil
+			return nil
+		}
+		return errors.New("屏幕采集暂不可用")
+	}
+	if ptr == nil {
+		return s.reopenWithExclusions(ids)
+	}
+	app := C.CString(s.excludeApp)
+	defer C.free(unsafe.Pointer(app))
+	var reopen C.int
+	err := C.mmcap_exclude(ptr, app, (*C.uint32_t)(unsafe.Pointer(unsafe.SliceData(ids))), C.size_t(len(ids)), &reopen)
+	if err != nil {
+		defer C.free(unsafe.Pointer(err))
+		if len(ids) == 0 {
+			// The covers are already hidden. Restart with the default filter.
+			s.excluded = nil
+			s.rs.trigger("restore capture filter")
+		}
+		return errors.New(C.GoString(err))
+	}
+	if reopen != 0 {
+		return s.reopenWithExclusions(ids)
+	}
+	s.excluded = slices.Clone(ids)
+	return nil
+}
+
+func (s *darwinSession) reopenWithExclusions(ids []uint32) error {
+	previous := s.excluded
+	s.excluded = slices.Clone(ids)
+	if err := s.reopenLocked(); err != nil {
+		if len(ids) != 0 {
+			s.excluded = previous
+		}
+		s.rs.trigger("capture unavailable after display change")
+		return err
+	}
 	return nil
 }
 
@@ -151,6 +218,8 @@ func (s *darwinSession) Close() {
 		return
 	}
 	s.rs.close() // a running restart finishes first; its stream is stopped below
+	s.streamMu.Lock()
+	defer s.streamMu.Unlock()
 	s.mu.Lock()
 	ptr := s.ptr
 	s.ptr = nil

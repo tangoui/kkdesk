@@ -141,6 +141,7 @@ func OpenMain(o MainOptions) (*Main, error) {
 	}
 	m.runner.Store(r)
 	m.surface.Store(s)
+	trackWindow(s)
 	m.prober = app.NewProber(app.ProberConfig{}, m.Invalidate)
 	m.syncProbeTargets()
 	app.Watch(m.Invalidate)
@@ -192,6 +193,9 @@ func (m *Main) page(c *ui.Context) {
 					if msg := m.o.Store.Err(); msg != "" {
 						ui.Alert(c, "warning", msg).ShowIcon(true).Show()
 					}
+					if !hs.LockDeadline.IsZero() {
+						m.lockGrace(c, hs.LockDeadline)
+					}
 					switch m.nav {
 					case "devices":
 						m.devicesPage(c)
@@ -215,6 +219,11 @@ func (m *Main) page(c *ui.Context) {
 		m.pairingConfirm(c, request)
 	} else if hs.Phase == app.HostPending {
 		m.confirm(c, hs)
+	} else if hs.PrivacyRequest != 0 {
+		allow, reject := privacyConsentDialog(c, hs.PrivacyDeadline)
+		if allow || reject {
+			m.o.Host.AnswerPrivacy(hs.PrivacyRequest, allow)
+		}
 	} else if m.pairing.open {
 		m.pairingQR(c)
 	} else {

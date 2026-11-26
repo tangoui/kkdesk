@@ -138,3 +138,12 @@ type Stats struct {
 	// returned a new image (Windows; average = AcquireTotal/Complete).
 	AcquireTotal time.Duration
 }
+
+// ExcludeWindows changes the running macOS capture filter and persists
+// the exclusions for any later restart. Windows uses display affinity.
+func ExcludeWindows(s Session, ids []uint32) error {
+	if updater, ok := s.(interface{ excludeWindows([]uint32) error }); ok {
+		return updater.excludeWindows(ids)
+	}
+	return nil
+}
