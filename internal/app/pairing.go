@@ -71,7 +71,14 @@ func (h *Host) PairingCode(now time.Time) (string, time.Time, error) {
 		return "", time.Time{}, errors.New("本机还没有可用的连接地址")
 	}
 	invite := identity.Invite(now)
-	return pairing.QRURI(identity.ID(), invite.Code, identity.Fingerprint(), cfg.URL, cfg.Token, cfg.PublicKey, lan), invite.Expires, nil
+	token := ""
+	if cfg.Token != "" {
+		// A credential for this computer only, not the service token: a
+		// photographed code or a paired phone cannot register device codes
+		// or reach other computers.
+		token = rendezvous.MobileToken(cfg.Token, identity.ID())
+	}
+	return pairing.QRURI(identity.ID(), invite.Code, identity.Fingerprint(), cfg.URL, token, cfg.PublicKey, lan), invite.Expires, nil
 }
 
 // PairingManualCode exposes the code for the same invitation as the QR.

@@ -22,6 +22,7 @@ import (
 type Server struct {
 	RelayOnly           bool // configure before serving
 	token               [32]byte
+	scopeKey            []byte // the service token, keying phone credentials
 	turnSecret          string
 	credentialTTL       time.Duration
 	stunURLs            []string
@@ -70,7 +71,7 @@ func NewServerWithOptions(token, turnSecret string, iceURLs []string, opts Serve
 	if opts.MaxConnections < 1 || opts.CredentialTTL < time.Second {
 		return nil, errors.New("invalid signaling connection limit or TURN credential lifetime")
 	}
-	s := &Server{token: sha256.Sum256([]byte("Bearer " + token)), turnSecret: turnSecret,
+	s := &Server{token: sha256.Sum256([]byte("Bearer " + token)), scopeKey: []byte(token), turnSecret: turnSecret,
 		credentialTTL: opts.CredentialTTL, slots: make(chan struct{}, opts.MaxConnections),
 		devices: make(map[string]*registration), mobile: make(map[string]*mobileRegistration)}
 	for _, u := range iceURLs {
@@ -111,10 +112,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	presented := sha256.Sum256([]byte(r.Header.Get("Authorization")))
+	header := r.Header.Get("Authorization")
+	presented := sha256.Sum256([]byte(header))
+	scope := "" // a phone credential's computer; "" for the service token
 	if subtle.ConstantTimeCompare(s.token[:], presented[:]) != 1 {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
+		device, ok := parseMobileToken(s.scopeKey, header)
+		if !ok {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		scope = device
 	}
 	select {
 	case s.slots <- struct{}{}:
@@ -133,6 +140,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	msg, err := read(ctx, conn)
 	cancel()
 	if err != nil {
+		return
+	}
+	if scope != "" && !scopeAllows(scope, msg) {
+		sendError(r.Context(), conn, "此凭据只能用于连接已配对的电脑")
 		return
 	}
 	if s.handleMobile(r.Context(), conn, msg) {

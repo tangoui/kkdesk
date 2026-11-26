@@ -430,3 +430,28 @@ func TestManualPairingAuthenticatesDesktopWithoutSendingCode(t *testing.T) {
 		t.Fatal("manual pairing did not persist the verified phone")
 	}
 }
+
+// The pairing QR code carries a credential for this computer only, never the
+// service token.
+func TestPairingQRCarriesScopedCredential(t *testing.T) {
+	identity := testHostIdentity(t)
+	const token = "private-service-token-of-sufficient-length"
+	host := NewHost(HostConfig{Addr: "127.0.0.1:0", Pairing: identity,
+		Remote: rendezvous.Config{URL: "http://127.0.0.1:9", Token: token}}, nil)
+	defer host.Close()
+	if err := host.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	uri, _, err := host.PairingCode(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(uri)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := u.Query().Get("t")
+	if strings.Contains(uri, token) || got != rendezvous.MobileToken(token, identity.ID()) {
+		t.Fatalf("QR credential = %q; want the scoped credential, not the service token", got)
+	}
+}
