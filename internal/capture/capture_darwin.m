@@ -170,7 +170,10 @@ void *mmcap_start(int64_t intervalNs, int maxWidth, const char *excludeApp,
 		cfg.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
 		cfg.minimumFrameInterval = CMTimeMake(intervalNs, 1000000000);
 		cfg.queueDepth = 3;
-		cfg.showsCursor = YES;
+		// The pointer is not composited (like the Windows host): the viewer
+		// shows its own, which follows the hand without the stream's latency;
+		// drawing the host's too gives two pointers on the viewer.
+		cfg.showsCursor = NO;
 		cfg.scalesToFit = YES;
 		cfg.colorSpaceName = kCGColorSpaceSRGB;
 		cfg.colorMatrix = kCGDisplayStreamYCbCrMatrix_ITU_R_709_2;
