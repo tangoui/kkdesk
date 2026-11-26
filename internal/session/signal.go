@@ -121,17 +121,18 @@ func (h *Host) SetPasswords(passwords ...string) {
 	h.mu.Unlock()
 }
 
-// verify reports whether mac answers nonce with one of the passwords. Every
+// verify returns the password mac answers nonce with, or ok false. Every
 // password is checked, so the time does not tell which one matched.
-func (h *Host) verify(mac, nonce []byte) bool {
+func (h *Host) verify(mac, nonce []byte) (matched string, ok bool) {
 	h.mu.Lock()
 	pws := h.passwords
 	h.mu.Unlock()
-	ok := 0
 	for _, pw := range pws {
-		ok |= subtle.ConstantTimeCompare(mac, computeMAC(pw, nonce))
+		if subtle.ConstantTimeCompare(mac, computeMAC(pw, nonce)) == 1 {
+			matched, ok = pw, true
+		}
 	}
-	return ok == 1
+	return matched, ok
 }
 
 // Addr returns the listening address.
@@ -145,6 +146,9 @@ func (h *Host) Close() error { return h.ln.Close() }
 // that fails the challenge gets ErrBadPassword; the host keeps listening and
 // Accept may be called again.
 func (h *Host) Accept(ctx context.Context) (*Peer, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	stop := context.AfterFunc(ctx, func() { _ = h.ln.SetDeadline(time.Now()) })
 	c, err := h.ln.Accept()
 	stop()
@@ -188,7 +192,12 @@ func (h *Host) Accept(ctx context.Context) (*Peer, error) {
 		return nil, ErrProbe
 	}
 	mac, err := base64.StdEncoding.DecodeString(m.MAC)
-	if err != nil || !h.verify(mac, nonce) {
+	var authPW string
+	var authOK bool
+	if err == nil {
+		authPW, authOK = h.verify(mac, nonce)
+	}
+	if !authOK {
 		f := false
 		_ = sc.send(sigMsg{OK: &f, Error: "bad password"})
 		return nil, ErrBadPassword
@@ -210,6 +219,7 @@ func (h *Host) Accept(ctx context.Context) (*Peer, error) {
 		return nil, err
 	}
 	p.remote = c.RemoteAddr().String()
+	p.SetAuthPassword(authPW)
 	answer, err := p.answer(*m.SDP)
 	if err != nil {
 		p.Close()

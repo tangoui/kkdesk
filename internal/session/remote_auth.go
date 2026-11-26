@@ -61,24 +61,31 @@ func (a RemoteAuth) String() string {
 // checks it against the passwords (empty ones are skipped). An offer
 // without a proof is returned unchanged.
 func VerifyRemoteOffer(sdp string, passwords ...string) (clean string, auth RemoteAuth) {
+	clean, auth, _ = VerifyRemoteOfferPassword(sdp, passwords...)
+	return clean, auth
+}
+
+// VerifyRemoteOfferPassword is VerifyRemoteOffer that also returns the
+// password that matched (RemoteAuthOK only).
+func VerifyRemoteOfferPassword(sdp string, passwords ...string) (clean string, auth RemoteAuth, matched string) {
 	i := strings.LastIndex(sdp, remoteAuthAttr)
 	if i < 0 || (i > 0 && sdp[i-1] != '\n') {
-		return sdp, RemoteAuthNone
+		return sdp, RemoteAuthNone, ""
 	}
 	end := strings.Index(sdp[i:], "\r\n")
 	if end < 0 {
-		return sdp, RemoteAuthNone
+		return sdp, RemoteAuthNone, ""
 	}
 	value := sdp[i+len(remoteAuthAttr) : i+end]
 	clean = sdp[:i] + sdp[i+end+2:]
 	mac, err := base64.RawStdEncoding.DecodeString(value)
 	if err != nil {
-		return clean, RemoteAuthWrong
+		return clean, RemoteAuthWrong, ""
 	}
 	for _, pw := range passwords {
 		if pw != "" && hmac.Equal(mac, remoteOfferMAC(clean, pw)) {
-			return clean, RemoteAuthOK
+			return clean, RemoteAuthOK, pw
 		}
 	}
-	return clean, RemoteAuthWrong
+	return clean, RemoteAuthWrong, ""
 }

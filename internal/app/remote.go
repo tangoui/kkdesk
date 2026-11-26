@@ -139,7 +139,8 @@ func (h *Host) answerRemote(ctx context.Context, cfg rendezvous.Config, conn *we
 	passwords := []string{h.password, h.cfg.Fixed}
 	h.mu.Unlock()
 	var auth session.RemoteAuth
-	req.SDP.SDP, auth = session.VerifyRemoteOffer(req.SDP.SDP, passwords...)
+	var authPW string
+	req.SDP.SDP, auth, authPW = session.VerifyRemoteOfferPassword(req.SDP.SDP, passwords...)
 	log.Printf("kkdesk host: cross-network request (%s, %s)", req.Mode, auth)
 	if auth == session.RemoteAuthWrong {
 		_ = rendezvous.Reply(replyCtx, conn, req.ID, nil, "密码错误")
@@ -151,6 +152,7 @@ func (h *Host) answerRemote(ctx context.Context, cfg rendezvous.Config, conn *we
 		_ = rendezvous.Reply(replyCtx, conn, req.ID, nil, "被控端无法建立跨网连接")
 		return
 	}
+	peer.SetAuthPassword(authPW)
 	if err := rendezvous.Reply(replyCtx, conn, req.ID, answer, ""); err != nil {
 		peer.Close()
 		return

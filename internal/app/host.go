@@ -211,6 +211,12 @@ func (h *Host) newPasswordLocked() {
 	h.scheduleLocked()
 }
 
+// passwordCurrentLocked reports whether pw is still the temporary or the
+// fixed password.
+func (h *Host) passwordCurrentLocked(pw string) bool {
+	return pw != "" && (pw == h.password || pw == h.cfg.Fixed)
+}
+
 // scheduleLocked arms the timer of a timed rotation policy, or rotates at
 // once when the password is due.
 func (h *Host) scheduleLocked() {
@@ -766,6 +772,15 @@ func (h *Host) handle(p *session.Peer, listenCtx context.Context, remote, passwo
 		}
 		confirm = !phone.Bypass || biometricKey == "" || phone.BiometricKey != biometricKey
 		enroll = phone.Bypass && biometricKey != "" && phone.BiometricKey != biometricKey
+	}
+	if pw := p.AuthPassword(); !confirm && pw != "" && !h.passwordCurrentLocked(pw) {
+		// Let in by its password alone, which was refreshed or replaced
+		// while the connection was being set up: the old one stops working
+		// at once (a session the user accepts goes on).
+		h.mu.Unlock()
+		log.Printf("kkdesk host: refused %s: its password changed during setup", p.RemoteAddr())
+		p.CloseWithReason("密码已更换，请用新密码重新连接")
+		return
 	}
 	h.busy = true
 	h.peer, h.since = p, time.Now()

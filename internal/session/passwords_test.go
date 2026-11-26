@@ -133,3 +133,34 @@ func TestQualityBeforeOnQuality(t *testing.T) {
 		t.Fatal("pending quality not delivered")
 	}
 }
+
+
+// The accepted peer remembers which password it proved, so the app can
+// refuse it if that password changed before the session was let in.
+func TestPeerRemembersItsPassword(t *testing.T) {
+	h, err := Listen("127.0.0.1:0", "123456", "fixed-pass-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	for _, pw := range []string{"123456", "fixed-pass-1"} {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		acc := make(chan *Peer, 1)
+		go func() {
+			p, _ := h.Accept(ctx)
+			acc <- p
+		}()
+		ctl, err := Dial(ctx, h.Addr().String(), pw)
+		p := <-acc
+		if err != nil || p == nil {
+			cancel()
+			t.Fatalf("password %q: dial %v, peer %v", pw, err, p)
+		}
+		if got := p.AuthPassword(); got != pw {
+			t.Errorf("AuthPassword = %q, want %q", got, pw)
+		}
+		ctl.Close()
+		p.Close()
+		cancel()
+	}
+}

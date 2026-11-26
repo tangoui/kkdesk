@@ -96,6 +96,7 @@ type Peer struct {
 	pendingQuality *Quality
 	reason         string // close reason sent by the other side
 	remote         string // remote signaling address
+	authPassword   string // the host password the controller proved, "" if none
 	dcMove         *webrtc.DataChannel
 	dcInput        *webrtc.DataChannel
 	dcMeta         *webrtc.DataChannel
@@ -570,6 +571,22 @@ func (p *Peer) OnVideo(f func(frame []byte, captureAt time.Time)) {
 	p.mu.Lock()
 	p.onVideo = f
 	p.mu.Unlock()
+}
+
+// SetAuthPassword records the host password the controller proved
+// (Host.Accept sets it; the app sets it for cross-network peers).
+func (p *Peer) SetAuthPassword(pw string) {
+	p.mu.Lock()
+	p.authPassword = pw
+	p.mu.Unlock()
+}
+
+// AuthPassword returns the host password the controller proved, "" if it
+// proved none (a paired phone, an older cross-network controller).
+func (p *Peer) AuthPassword() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.authPassword
 }
 
 // OnInput sets the callback for input events from the other side.
