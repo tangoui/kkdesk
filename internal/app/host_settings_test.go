@@ -322,3 +322,52 @@ func TestHostStalledHandshakeDoesNotBlock(t *testing.T) {
 		t.Fatalf("connect took %v behind a stalled handshake", d)
 	}
 }
+
+// Many stalled connections from one address do not block another address.
+func TestHostStalledFloodDoesNotBlockOthers(t *testing.T) {
+	h := NewHost(HostConfig{Pairing: testHostIdentity(t), Addr: "127.0.0.1:0", Password: "123456", Rotate: config.RotateNever}, nil)
+	defer h.Close()
+	if err := h.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	h.SetAutoAccept(true)
+	d := net.Dialer{LocalAddr: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 2)}}
+	for range 8 {
+		c, err := d.Dial("tcp", h.ListenAddr())
+		if err != nil {
+			t.Skipf("cannot dial from 127.0.0.2: %v", err)
+		}
+		defer c.Close() // never answers
+	}
+	time.Sleep(200 * time.Millisecond)
+	start := time.Now()
+	v, err := dialFiles(t, h.ListenAddr(), "123456")
+	if err != nil {
+		t.Fatalf("connect behind a flood of stalled handshakes: %v (after %v)", err, time.Since(start))
+	}
+	defer v.Close()
+	if d := time.Since(start); d > 10*time.Second {
+		t.Fatalf("connect took %v behind a flood of stalled handshakes", d)
+	}
+}
+
+func TestHandshakeLimiter(t *testing.T) {
+	l := newHandshakeLimiter(3, 2)
+	r1, ok1 := l.acquire("10.0.0.1")
+	_, ok2 := l.acquire("10.0.0.1")
+	if _, ok := l.acquire("10.0.0.1"); !ok1 || !ok2 || ok {
+		t.Fatalf("per-address limit: %v %v %v, want two then refused", ok1, ok2, ok)
+	}
+	_, ok3 := l.acquire("10.0.0.2")
+	if _, ok := l.acquire("10.0.0.3"); !ok3 || ok {
+		t.Fatalf("global limit: %v %v, want one more then refused", ok3, ok)
+	}
+	r1()
+	r1() // idempotent
+	if _, ok := l.acquire("10.0.0.3"); !ok {
+		t.Fatal("a released slot was not reusable")
+	}
+	if _, ok := l.acquire("10.0.0.1"); ok {
+		t.Fatal("double release freed two slots")
+	}
+}

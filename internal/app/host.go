@@ -590,11 +590,11 @@ func (h *Host) startLocked() error {
 	h.errMsg = ""
 	ctx, cancel := context.WithCancel(context.Background())
 	if h.cfg.Pairing != nil {
+		// Runs on the connection's handshake goroutine, which keeps its
+		// handshake slot until the exchange ends.
 		ln.SetMobileHandler(func(ctx context.Context, exchange *session.MobileLAN, release func()) {
-			h.wg.Go(func() {
-				defer release()
-				h.serveMobile(ctx, ctx, rendezvous.Config{}, exchange)
-			})
+			defer release()
+			h.serveMobile(ctx, ctx, rendezvous.Config{}, exchange)
 		})
 	}
 	h.ln, h.cancel = ln, cancel
@@ -740,38 +740,55 @@ func (h *Host) Close() {
 	})
 }
 
-// acceptWorkers is how many LAN handshakes run at once: one that stalls
-// (up to the signaling timeout) does not hold up the others, and a flood
-// of connections cannot start unbounded handshakes. Only one session runs
-// at a time all the same (handle's busy check).
-const acceptWorkers = 4
+// LAN handshakes run one goroutine per connection, at most
+// maxHandshakes at once and maxHandshakesPerIP per remote address: a
+// connection that stalls (or a flood of them from one address) does not hold
+// up anyone else, and connections beyond the limits are closed at once
+// instead of queuing. Only one session runs at a time all the same
+// (handle's busy check).
+const (
+	maxHandshakes      = 32
+	maxHandshakesPerIP = 2
+)
 
 func (h *Host) acceptLoop(ctx context.Context, ln *session.Host) {
 	defer h.wg.Done()
-	var workers sync.WaitGroup
-	for range acceptWorkers {
-		workers.Go(func() { h.acceptWorker(ctx, ln) })
-	}
-	workers.Wait()
-}
-
-func (h *Host) acceptWorker(ctx context.Context, ln *session.Host) {
+	limit := newHandshakeLimiter(maxHandshakes, maxHandshakesPerIP)
+	var handshakes sync.WaitGroup
+	defer handshakes.Wait()
 	for {
-		p, err := ln.Accept(ctx)
+		c, err := ln.AcceptConn(ctx)
 		if err != nil {
 			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
 				return
 			}
-			if !errors.Is(err, session.ErrBadPassword) && !errors.Is(err, session.ErrProbe) && !errors.As(err, new(*session.PasswordLockedError)) {
-				log.Printf("kkdesk host: accept: %v", err)
-			}
+			log.Printf("kkdesk host: accept: %v", err)
 			continue
 		}
-		h.wg.Add(1)
-		go func() {
-			defer h.wg.Done()
-			h.handle(p, ctx, false, "", "")
-		}()
+		ip := c.RemoteAddr().String()
+		if host, _, err := net.SplitHostPort(ip); err == nil {
+			ip = host
+		}
+		release, ok := limit.acquire(ip)
+		if !ok {
+			_ = c.Close()
+			continue
+		}
+		handshakes.Go(func() {
+			p, err := ln.Handshake(ctx, c)
+			release()
+			if err != nil {
+				if ctx.Err() == nil && !errors.Is(err, session.ErrBadPassword) && !errors.Is(err, session.ErrProbe) && !errors.As(err, new(*session.PasswordLockedError)) {
+					log.Printf("kkdesk host: accept: %v", err)
+				}
+				return
+			}
+			h.wg.Add(1)
+			go func() {
+				defer h.wg.Done()
+				h.handle(p, ctx, false, "", "")
+			}()
+		})
 	}
 }
 
