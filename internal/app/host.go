@@ -208,9 +208,11 @@ func NewHost(cfg HostConfig, notify func()) *Host {
 }
 
 // newPasswordLocked makes a new temporary password: the listener accepts
-// it (and no longer the old one) from the next connection on.
+// it (and no longer the old one) from the next connection on. Earlier wrong
+// guesses no longer matter, so every password pause is lifted.
 func (h *Host) newPasswordLocked() {
 	h.password, h.pwSince = NewPassword(), time.Now()
+	h.passwordGate.Reset()
 	if h.cfg.OnPassword != nil {
 		h.cfg.OnPassword(config.TempPassword{Password: h.password, Since: h.pwSince})
 	}
@@ -267,6 +269,9 @@ func (h *Host) SetRotate(policy string) {
 // stops working at the next connection; running sessions go on.
 func (h *Host) SetFixedPassword(pw string) {
 	h.mu.Lock()
+	if pw != h.cfg.Fixed {
+		h.passwordGate.Reset()
+	}
 	h.cfg.Fixed = pw
 	h.mu.Unlock()
 	h.notify()

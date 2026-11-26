@@ -22,8 +22,8 @@ func (b *memBoard) get() string               { s, _ := b.ReadText(); return s }
 func peers(t *testing.T) (hp, cp *session.Peer) {
 	t.Helper()
 	var gate session.PasswordGate
-	ln, err := session.Listen("127.0.0.1:0", testHostIdentity(t), func(tx session.PasswordTranscript, proof []byte) (string, time.Duration) {
-		return gate.Check(time.Now(), tx, proof, "123456", "")
+	ln, err := session.Listen("127.0.0.1:0", testHostIdentity(t), func(source string, tx session.PasswordTranscript, proof []byte) (string, time.Duration) {
+		return gate.Check(time.Now(), source, tx, proof, "123456", "")
 	})
 	if err != nil {
 		t.Fatal(err)

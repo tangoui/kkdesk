@@ -93,12 +93,16 @@ func (s *sigConn) recv() (sigMsg, error) {
 type Host struct {
 	ln       *net.TCPListener
 	identity *pairing.Store
-	verify   PasswordVerifier
+	verify   SourcedVerifier
 	mobile   func(context.Context, *MobileLAN, func())
 }
 
+// SourcedVerifier checks a password proof from source ("lan:<ip>" for LAN
+// connections), so failures can be limited per source.
+type SourcedVerifier func(source string, tx PasswordTranscript, proof []byte) (matched string, remaining time.Duration)
+
 // Listen starts listening for v2 signaling connections on addr.
-func Listen(addr string, identity *pairing.Store, verify PasswordVerifier) (*Host, error) {
+func Listen(addr string, identity *pairing.Store, verify SourcedVerifier) (*Host, error) {
 	if identity == nil || verify == nil {
 		return nil, errors.New("session: listener requires an identity and password verifier")
 	}
@@ -178,7 +182,9 @@ func (h *Host) Accept(ctx context.Context) (*Peer, error) {
 		return nil, err
 	}
 	done()
-	if err := p.AcceptPassword(ctx, NewPasswordTranscript(m.SDP.SDP, answer.SDP), h.verify); err != nil {
+	source := "lan:" + hostOnly(c.RemoteAddr())
+	check := func(tx PasswordTranscript, proof []byte) (string, time.Duration) { return h.verify(source, tx, proof) }
+	if err := p.AcceptPassword(ctx, NewPasswordTranscript(m.SDP.SDP, answer.SDP), check); err != nil {
 		p.Close()
 		return nil, err
 	}
@@ -264,4 +270,13 @@ func isLoopback(a net.Addr) bool {
 		return t.IP.IsLoopback()
 	}
 	return false
+}
+
+// hostOnly is the IP of a TCP address (the whole string if it has no port).
+func hostOnly(a net.Addr) string {
+	host, _, err := net.SplitHostPort(a.String())
+	if err != nil {
+		return a.String()
+	}
+	return host
 }

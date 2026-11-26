@@ -1,6 +1,7 @@
 package session
 
 import (
+	"fmt"
 	"encoding/json"
 	"errors"
 	"os"
@@ -105,7 +106,7 @@ func TestPasswordLockout(t *testing.T) {
 	wrong := tx.Proof("wrong")
 	check := func(proof []byte, want string, wait time.Duration) {
 		t.Helper()
-		if got, remaining := gate.Check(now, tx, proof, "temporary", "fixed"); got != want || remaining != wait {
+		if got, remaining := gate.Check(now, "lan:192.0.2.1", tx, proof, "temporary", "fixed"); got != want || remaining != wait {
 			t.Fatalf("check = %q, %s; want %q, %s", got, remaining, want, wait)
 		}
 	}
@@ -136,5 +137,59 @@ func TestPasswordLockout(t *testing.T) {
 	}
 	if gate.Remaining(now) != 0 {
 		t.Fatal("success did not clear failure count")
+	}
+}
+
+func TestPasswordLockoutIsPerSource(t *testing.T) {
+	var gate PasswordGate
+	now := time.Unix(1000, 0)
+	tx := NewPasswordTranscript("offer", "answer")
+	for range 5 {
+		gate.Check(now, "remote", tx, tx.Proof("wrong"), "temporary", "")
+	}
+	if _, remaining := gate.Check(now, "remote", tx, tx.Proof("temporary"), "temporary", ""); remaining == 0 {
+		t.Fatal("five failures did not pause their source")
+	}
+	if got, remaining := gate.Check(now, "lan:192.0.2.7", tx, tx.Proof("temporary"), "temporary", ""); got != "temporary" || remaining != 0 {
+		t.Fatalf("another source = %q, %s; want accepted while remote is paused", got, remaining)
+	}
+}
+
+func TestPasswordFailuresAreForgotten(t *testing.T) {
+	var gate PasswordGate
+	now := time.Unix(1000, 0)
+	tx := NewPasswordTranscript("offer", "answer")
+	for range 4 {
+		gate.Check(now, "remote", tx, tx.Proof("wrong"), "temporary", "")
+	}
+	now = now.Add(16 * time.Minute)
+	gate.Check(now, "remote", tx, tx.Proof("wrong"), "temporary", "")
+	if remaining := gate.Remaining(now); remaining != 0 {
+		t.Fatalf("a failure 16 minutes after the last ones paused for %s; old failures were not forgotten", remaining)
+	}
+}
+
+func TestPasswordGateReset(t *testing.T) {
+	var gate PasswordGate
+	now := time.Unix(1000, 0)
+	tx := NewPasswordTranscript("offer", "answer")
+	for range 10 {
+		gate.Check(now, "remote", tx, tx.Proof("wrong"), "temporary", "")
+	}
+	gate.Reset()
+	if got, remaining := gate.Check(now, "remote", tx, tx.Proof("temporary"), "temporary", ""); got != "temporary" || remaining != 0 {
+		t.Fatalf("after Reset = %q, %s; want accepted", got, remaining)
+	}
+}
+
+func TestPasswordGateBoundsSources(t *testing.T) {
+	var gate PasswordGate
+	now := time.Unix(1000, 0)
+	tx := NewPasswordTranscript("offer", "answer")
+	for i := range 5000 {
+		gate.Check(now, fmt.Sprintf("lan:10.0.%d.%d", i/256, i%256), tx, tx.Proof("wrong"), "temporary", "")
+	}
+	if n := gate.sourceCount(); n > maxGateSources {
+		t.Fatalf("gate tracks %d sources, want at most %d", n, maxGateSources)
 	}
 }

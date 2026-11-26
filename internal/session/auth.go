@@ -74,26 +74,100 @@ func (t PasswordTranscript) Proof(password string) []byte {
 	return mac.Sum(nil)
 }
 
-// PasswordGate serializes password attempts across the host's listeners.
+// PasswordGate rate-limits password attempts per source: a LAN address, or
+// all cross-network requests together. A source that keeps failing pauses
+// only itself, so a stranger cannot lock everyone else out; failures are
+// forgotten after a quiet spell, and Reset (a new password) lifts every
+// pause.
 type PasswordGate struct {
-	mu       sync.Mutex
-	failures int
-	until    time.Time
+	mu      sync.Mutex
+	sources map[string]*gateSource
 }
 
+type gateSource struct {
+	failures int
+	until    time.Time // paused until
+	last     time.Time // latest failure
+}
+
+const (
+	// gateForget is how long a source's failures are remembered after its
+	// latest one (once any pause has ended).
+	gateForget = 15 * time.Minute
+	// maxGateSources bounds the sources remembered at once.
+	maxGateSources = 256
+)
+
+// Remaining returns the longest pause still running for any source.
 func (g *PasswordGate) Remaining(now time.Time) time.Duration {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return max(0, g.until.Sub(now))
+	var longest time.Duration
+	for _, s := range g.sources {
+		longest = max(longest, s.until.Sub(now))
+	}
+	return longest
 }
 
-// Check returns the matched password, or the time until a paused gate reopens.
-// Two zero results represent an incorrect password.
-func (g *PasswordGate) Check(now time.Time, transcript PasswordTranscript, proof []byte, temporary, fixed string) (string, time.Duration) {
+// Reset forgets every failure and lifts every pause (the password changed,
+// so earlier guesses no longer matter).
+func (g *PasswordGate) Reset() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if remaining := g.until.Sub(now); remaining > 0 {
-		return "", remaining
+	g.sources = nil
+}
+
+func (g *PasswordGate) sourceCount() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return len(g.sources)
+}
+
+func (s *gateSource) stale(now time.Time) bool {
+	return !now.Before(s.until) && now.Sub(s.last) > gateForget
+}
+
+// track returns the record for source, making room if needed. g.mu is held.
+func (g *PasswordGate) track(now time.Time, source string) *gateSource {
+	if s := g.sources[source]; s != nil {
+		return s
+	}
+	if g.sources == nil {
+		g.sources = map[string]*gateSource{}
+	}
+	if len(g.sources) >= maxGateSources {
+		for k, s := range g.sources {
+			if s.stale(now) {
+				delete(g.sources, k)
+			}
+		}
+	}
+	for len(g.sources) >= maxGateSources { // still full: drop the oldest
+		oldest := ""
+		for k, s := range g.sources {
+			if oldest == "" || s.last.Before(g.sources[oldest].last) {
+				oldest = k
+			}
+		}
+		delete(g.sources, oldest)
+	}
+	s := &gateSource{}
+	g.sources[source] = s
+	return s
+}
+
+// Check returns the matched password, or the time until source's pause ends.
+// Two zero results represent an incorrect password.
+func (g *PasswordGate) Check(now time.Time, source string, transcript PasswordTranscript, proof []byte, temporary, fixed string) (string, time.Duration) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if s := g.sources[source]; s != nil {
+		if remaining := s.until.Sub(now); remaining > 0 {
+			return "", remaining
+		}
+		if s.stale(now) {
+			delete(g.sources, source)
+		}
 	}
 	tempOK := hmac.Equal(proof, transcript.Proof(temporary))
 	fixedOK := hmac.Equal(proof, transcript.Proof(fixed))
@@ -104,14 +178,16 @@ func (g *PasswordGate) Check(now time.Time, transcript PasswordTranscript, proof
 		matched = fixed
 	}
 	if matched != "" {
-		g.failures, g.until = 0, time.Time{}
+		delete(g.sources, source)
 		return matched, 0
 	}
 
-	g.failures = min(g.failures+1, 10)
-	if g.failures >= 5 {
-		delay := (30 * time.Second) << (g.failures - 5)
-		g.until = now.Add(min(delay, 15*time.Minute))
+	s := g.track(now, source)
+	s.failures = min(s.failures+1, 10)
+	s.last = now
+	if s.failures >= 5 {
+		delay := (30 * time.Second) << (s.failures - 5)
+		s.until = now.Add(min(delay, 15*time.Minute))
 	}
 	return "", 0
 }

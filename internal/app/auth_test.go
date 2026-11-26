@@ -30,7 +30,7 @@ func TestHostWithoutIdentityCannotListen(t *testing.T) {
 	}
 }
 
-func TestPasswordLockoutSharedByLANAndRemote(t *testing.T) {
+func TestPasswordLockoutPerPathAndLiftedByRefresh(t *testing.T) {
 	cfg, stop := remoteTestService(t)
 	defer stop()
 	h := NewHost(HostConfig{Addr: "127.0.0.1:0", Password: "good", Pairing: testHostIdentity(t), Remote: cfg, AutoAccept: true}, nil)
@@ -43,26 +43,43 @@ func TestPasswordLockoutSharedByLANAndRemote(t *testing.T) {
 	for h.State().RemoteCode == "" && ctx.Err() == nil {
 		time.Sleep(10 * time.Millisecond)
 	}
-	for range 4 {
-		if _, err := session.Dial(ctx, h.ListenAddr(), "bad"); !errors.Is(err, session.ErrBadPassword) {
-			t.Fatalf("bad LAN password: %v", err)
+	for range 5 {
+		if _, err := session.DialRemote(ctx, cfg, h.State().RemoteCode, session.ModeFiles, "bad"); !errors.Is(err, session.ErrBadPassword) {
+			t.Fatalf("bad remote password: %v", err)
 		}
-	}
-	if _, err := session.DialRemote(ctx, cfg, h.State().RemoteCode, session.ModeFiles, "bad"); !errors.Is(err, session.ErrBadPassword) {
-		t.Fatalf("bad remote password: %v", err)
 	}
 	if state := h.State(); state.PasswordLockSeconds == 0 || state.Phase != HostListening {
-		t.Fatalf("host after five incorrect passwords: %+v", state)
+		t.Fatalf("host after five incorrect remote passwords: %+v", state)
 	}
-	for _, dial := range []func() (*session.Peer, error){
-		func() (*session.Peer, error) { return session.Dial(ctx, h.ListenAddr(), "good") },
-		func() (*session.Peer, error) {
-			return session.DialRemote(ctx, cfg, h.State().RemoteCode, session.ModeFiles, "good")
-		},
-	} {
-		if _, err := dial(); !errors.As(err, new(*session.PasswordLockedError)) {
-			t.Fatalf("locked password: %v", err)
+	if _, err := session.DialRemote(ctx, cfg, h.State().RemoteCode, session.ModeFiles, "good"); !errors.As(err, new(*session.PasswordLockedError)) {
+		t.Fatalf("remote while paused: %v", err)
+	}
+	// Strangers failing across the network do not lock the LAN out.
+	lan, err := session.Dial(ctx, h.ListenAddr(), "good")
+	if err != nil {
+		t.Fatalf("LAN while remote is paused: %v", err)
+	}
+	lan.Close()
+	waitIdle(t, h)
+	// A new password lifts every pause.
+	h.RefreshPassword()
+	good := h.State().Password
+	peer, err := session.DialRemote(ctx, cfg, h.State().RemoteCode, session.ModeFiles, good)
+	if err != nil {
+		t.Fatalf("remote after refreshing the password: %v", err)
+	}
+	peer.Close()
+}
+
+// waitIdle waits until the host is listening again after a session.
+func waitIdle(t *testing.T, h *Host) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for h.State().Phase != HostListening {
+		if time.Now().After(deadline) {
+			t.Fatalf("host did not return to listening: %+v", h.State())
 		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
