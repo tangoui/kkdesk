@@ -406,17 +406,19 @@ class _HomeState extends State<_Home> {
   Future<void> _launchLan(String address, String password) async {
     if (_services.settings.locked && !await _authorize('验证身份以开始局域网连接')) return;
     if (!mounted) return;
-    await _showRemote(
+    final again = await _showRemote(
       Computer(id: 'lan:$address', name: address, os: ComputerOS.unknown),
       _services.sessions.lan(address, password),
       viewOnly: false,
       reopenFiles: () => _transfers.connect(address, password),
     );
+    if (again == true && mounted) await _launchLan(address, password);
   }
 
   Future<void> _connect(Computer computer, {bool viewOnly = false}) async {
     if (_connecting) return;
     _connecting = true;
+    bool? again;
     FocusScope.of(context).unfocus();
     try {
       if (_services.settings.locked ||
@@ -424,7 +426,7 @@ class _HomeState extends State<_Home> {
         if (!await _authorize('验证身份以连接「${computer.name}」')) return;
       }
       if (!mounted) return;
-      await _showRemote(
+      again = await _showRemote(
         computer,
         _services.sessions.paired(computer),
         viewOnly: viewOnly,
@@ -433,6 +435,7 @@ class _HomeState extends State<_Home> {
     } finally {
       _connecting = false;
     }
+    if (again == true && mounted) await _connect(computer, viewOnly: viewOnly);
   }
 
   Future<TransferConnection> Function()? _reopenPairedFiles(Computer computer) {
@@ -445,14 +448,14 @@ class _HomeState extends State<_Home> {
     );
   }
 
-  Future<void> _showRemote(
+  Future<bool?> _showRemote(
     Computer computer,
     RemoteSession session, {
     required bool viewOnly,
     Future<TransferConnection> Function()? reopenFiles,
   }) {
     TransferConnection? files;
-    return Navigator.push<void>(
+    return Navigator.push<bool>(
       context,
       MaterialPageRoute(
         builder: (_) => RemotePage(
