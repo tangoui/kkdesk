@@ -2,6 +2,7 @@
 package privacy
 
 import (
+	"context"
 	"errors"
 	"time"
 )
@@ -40,22 +41,39 @@ type confirmedLocker struct {
 }
 
 func (l confirmedLocker) Lock() error {
-	deadline := time.Now().Add(5 * time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- l.confirm(ctx) }()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return errLockTimeout
+	}
+}
+
+func (l confirmedLocker) confirm(ctx context.Context) error {
 	if err := l.request(); err != nil {
 		return err
 	}
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
 	for {
+		if ctx.Err() != nil {
+			return errLockTimeout
+		}
 		ok, err := l.locked()
 		if err != nil {
 			return err
 		}
-		if ok && !time.Now().After(deadline) {
+		if ok && ctx.Err() == nil {
 			return nil
 		}
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
+		select {
+		case <-ctx.Done():
 			return errLockTimeout
+		case <-ticker.C:
 		}
-		time.Sleep(min(remaining, 100*time.Millisecond))
 	}
 }

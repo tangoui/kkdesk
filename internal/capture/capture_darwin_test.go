@@ -3,6 +3,7 @@
 package capture
 
 import (
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -29,6 +30,9 @@ func TestCaptureMainDisplay(t *testing.T) {
 		frames = append(frames, r)
 		mu.Unlock()
 	})
+	if errors.Is(err, errNoDisplay) {
+		t.Skip("ScreenCaptureKit has no display in this login session")
+	}
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -78,6 +82,9 @@ func TestCaptureWindowExclusionRejectsMissingWindow(t *testing.T) {
 		t.Skip("Screen Recording permission missing")
 	}
 	s, err := Start(Options{FPS: 30, MaxWidth: 320}, func(Frame) {})
+	if errors.Is(err, errNoDisplay) {
+		t.Skip("ScreenCaptureKit has no display in this login session")
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

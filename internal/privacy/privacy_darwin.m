@@ -228,3 +228,9 @@ int mmprivacy_locked(void) {
         return [info[@"CGSSessionScreenIsLocked"] boolValue] ? 1 : 0;
     }
 }
+
+void mmprivacy_pump_main(void) {
+    @autoreleasepool {
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, true);
+    }
+}

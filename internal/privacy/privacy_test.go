@@ -41,3 +41,18 @@ func TestLockRequestFailure(t *testing.T) {
 		t.Fatalf("Lock = %v, want %v", err, fail)
 	}
 }
+
+func TestLockTimeoutIncludesBlockedNativeCall(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		defer close(release)
+		start := time.Now()
+		lock := confirmedLocker{
+			request: func() error { <-release; return nil },
+			locked:  func() (bool, error) { return true, nil },
+		}
+		if err := lock.Lock(); !errors.Is(err, errLockTimeout) || time.Since(start) != 5*time.Second {
+			t.Fatalf("Lock = %v after %s, want timeout after 5s", err, time.Since(start))
+		}
+	})
+}

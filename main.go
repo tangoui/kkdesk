@@ -33,6 +33,7 @@ import (
 	"github.com/tangoui/kkdesk/internal/app"
 	"github.com/tangoui/kkdesk/internal/config"
 	"github.com/tangoui/kkdesk/internal/pairing"
+	"github.com/tangoui/kkdesk/internal/privacy"
 	"github.com/tangoui/kkdesk/internal/rendezvous"
 	appui "github.com/tangoui/kkdesk/internal/ui"
 	"github.com/tangoui/kkdesk/internal/update"
@@ -287,7 +288,7 @@ func run(o options) error {
 	}()
 
 	err := a.Run()
-	host.Close()
+	privacy.ShutdownOnMain(host.Close)
 	if viewer != nil {
 		viewer.Close()
 		done := make(chan struct{})

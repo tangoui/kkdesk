@@ -10,7 +10,7 @@
 // failure it returns NULL and stores a malloc'ed message in *err.
 void *mmcap_start(int64_t intervalNs, int maxWidth, const char *excludeApp,
                   const uint32_t *ids, size_t count, uintptr_t handle, int *outW, int *outH, char **err);
-char *mmcap_exclude(void *s, const char *excludeApp, const uint32_t *ids, size_t count);
+char *mmcap_exclude(void *s, const char *excludeApp, const uint32_t *ids, size_t count, int *reopen);
 void mmcap_set_fps(void *s, int64_t intervalNs);
 // mmcap_stop stops the stream, waits until no frame callback is running
 // and releases the session.

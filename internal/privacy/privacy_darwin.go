@@ -134,3 +134,21 @@ func NewLocker() Locker {
 		},
 	}
 }
+
+// ShutdownOnMain keeps main-queue AppKit cleanup available even if a
+// development tool stopped Tango's event loop directly.
+func ShutdownOnMain(cleanup func()) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		cleanup()
+	}()
+	for {
+		select {
+		case <-done:
+			return
+		default:
+			C.mmprivacy_pump_main()
+		}
+	}
+}

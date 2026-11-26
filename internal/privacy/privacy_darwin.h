@@ -12,5 +12,6 @@ void mmprivacy_close(void *screen);
 
 const char *mmprivacy_lock(void);
 int mmprivacy_locked(void);
+void mmprivacy_pump_main(void);
 
 #endif

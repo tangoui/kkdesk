@@ -24,12 +24,13 @@ type hostPrivacyState struct {
 // hostPrivacy serializes native operations off the main thread. The UI
 // reads a snapshot so it never blocks on a native call that needs AppKit.
 type hostPrivacy struct {
-	mu      sync.Mutex
-	policy  config.PrivacyPolicy
-	screen  privacy.Screen
-	exclude func([]uint32) error
-	report  func(session.PrivacyStatus, string)
-	notify  func()
+	mu         sync.Mutex
+	policy     config.PrivacyPolicy
+	readPolicy func() config.PrivacyPolicy
+	screen     privacy.Screen
+	exclude    func([]uint32) error
+	report     func(session.PrivacyStatus, string)
+	notify     func()
 
 	current     atomic.Pointer[hostPrivacyState]
 	consent     *time.Timer
@@ -67,18 +68,21 @@ func (p *hostPrivacy) set(on bool) {
 		return
 	}
 	state := p.state()
+	policy := p.privacyPolicy()
 	switch {
 	case !on:
 		p.cancelConsent()
 		p.hide()
 		p.publish(hostPrivacyState{}, session.PrivacyOff, "")
-	case p.policy == config.PrivacyDeny:
+	case policy == config.PrivacyDeny:
+		p.cancelConsent()
+		p.hide()
 		p.publish(hostPrivacyState{}, session.PrivacyNotAllowed, "")
 	case state.on:
 		p.report(session.PrivacyOn, "")
 	case state.request != 0:
 		p.report(session.PrivacyWaiting, "")
-	case p.policy == config.PrivacyAllow && !p.askAgain:
+	case policy == config.PrivacyAllow && !p.askAgain:
 		p.show()
 	default:
 		id := privacyRequestID.Add(1)
@@ -96,6 +100,10 @@ func (p *hostPrivacy) answer(id uint64, allow bool) {
 		return
 	}
 	p.cancelConsent()
+	if p.privacyPolicy() == config.PrivacyDeny {
+		p.publish(hostPrivacyState{}, session.PrivacyNotAllowed, "")
+		return
+	}
 	if !allow || !time.Now().Before(state.deadline) {
 		p.publish(hostPrivacyState{}, session.PrivacyDenied, "")
 		return
@@ -104,19 +112,34 @@ func (p *hostPrivacy) answer(id uint64, allow bool) {
 }
 
 func (p *hostPrivacy) setPolicy(policy config.PrivacyPolicy) {
-	p.updatePolicy(func() config.PrivacyPolicy { return policy })
-}
-
-func (p *hostPrivacy) updatePolicy(policy func() config.PrivacyPolicy) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.policy = policy()
+	p.policy = policy
+	if policy == config.PrivacyDeny {
+		p.revoke()
+	}
+}
+
+func (p *hostPrivacy) privacyPolicy() config.PrivacyPolicy {
+	if p.readPolicy != nil {
+		return p.readPolicy()
+	}
+	return p.policy
+}
+
+func (p *hostPrivacy) revoke() {
 	s := p.state()
-	if p.policy == config.PrivacyDeny && (s.on || s.request != 0) {
+	if s.on || s.request != 0 {
 		p.cancelConsent()
 		p.hide()
 		p.publish(hostPrivacyState{}, session.PrivacyNotAllowed, "")
 	}
+}
+
+func (h *Host) privacyPolicy() config.PrivacyPolicy {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.cfg.PrivacyPolicy
 }
 
 // SetPrivacyPolicy changes permission for the current and future sessions.
@@ -125,16 +148,14 @@ func (h *Host) SetPrivacyPolicy(policy config.PrivacyPolicy) {
 	h.cfg.PrivacyPolicy = policy
 	active, grace := h.privacy, h.grace
 	h.mu.Unlock()
-	currentPolicy := func() config.PrivacyPolicy {
-		h.mu.Lock()
-		defer h.mu.Unlock()
-		return h.cfg.PrivacyPolicy
+	if policy != config.PrivacyDeny {
+		return
 	}
 	if active != nil {
-		go active.updatePolicy(currentPolicy)
+		go active.setPolicy(policy)
 	}
 	if grace != nil && grace.session != active {
-		go grace.session.updatePolicy(currentPolicy)
+		go grace.session.setPolicy(policy)
 	}
 }
 
@@ -260,10 +281,11 @@ func (p *hostPrivacy) lockNow(locker privacy.Locker, report func(session.Privacy
 const lockGracePeriod = 60 * time.Second
 
 type privacyGrace struct {
-	session *hostPrivacy
-	until   time.Time
-	timer   *time.Timer
-	done    chan struct{}
+	session  *hostPrivacy
+	until    time.Time
+	timer    *time.Timer
+	done     chan struct{}
+	admitted bool // guarded by Host.mu
 }
 
 func (h *Host) endDesktopPrivacy(p *hostPrivacy, graceful bool) {
@@ -283,7 +305,7 @@ func (h *Host) endDesktopPrivacy(p *hostPrivacy, graceful bool) {
 	p.closed = true
 	p.detached.Store(true)
 	p.cancelConsent()
-	p.cancelGrace = func() { h.finishGrace(g, false) }
+	p.cancelGrace = func() { h.cancelGrace(g) }
 	s := p.state()
 	s.request, s.deadline = 0, time.Time{}
 	p.current.Store(&s)
@@ -294,7 +316,7 @@ func (h *Host) endDesktopPrivacy(p *hostPrivacy, graceful bool) {
 	h.mu.Lock()
 	h.grace = g
 	h.mu.Unlock()
-	g.timer = time.AfterFunc(time.Until(g.until), func() { h.finishGrace(g, true) })
+	g.timer = time.AfterFunc(time.Until(g.until), func() { h.finishGrace(g) })
 	if s.on {
 		go g.countDown()
 	}
@@ -333,7 +355,7 @@ func (h *Host) finishDesktopPrivacy(p *hostPrivacy, lock bool) {
 
 // finishGrace serializes a reconnect, local cancellation, timer and app
 // shutdown. A stale timer or shortcut can only act on its own session.
-func (h *Host) finishGrace(expected *privacyGrace, lock bool) {
+func (h *Host) finishGrace(expected *privacyGrace) {
 	h.graceMu.Lock()
 	defer h.graceMu.Unlock()
 	h.mu.Lock()
@@ -346,7 +368,7 @@ func (h *Host) finishGrace(expected *privacyGrace, lock bool) {
 	close(g.done)
 	h.grace = nil
 	h.mu.Unlock()
-	h.finishDesktopPrivacy(g.session, lock)
+	h.finishDesktopPrivacy(g.session, !g.admitted)
 	h.notify()
 }
 
@@ -356,6 +378,27 @@ func (h *Host) CancelPendingLock() {
 	g := h.grace
 	h.mu.Unlock()
 	if g != nil {
-		go h.finishGrace(g, false)
+		go h.cancelGrace(g)
+	}
+}
+
+func (h *Host) cancelGrace(g *privacyGrace) {
+	h.mu.Lock()
+	if h.grace == g && time.Now().Before(g.until) {
+		g.admitted = true
+	}
+	h.mu.Unlock()
+	h.finishGrace(g)
+}
+
+func (h *Host) admitAfterGrace() {
+	h.mu.Lock()
+	g := h.grace
+	if g != nil && time.Now().Before(g.until) && !h.closed {
+		g.admitted = true
+	}
+	h.mu.Unlock()
+	if g != nil {
+		h.finishGrace(g)
 	}
 }

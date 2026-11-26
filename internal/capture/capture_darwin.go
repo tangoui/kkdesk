@@ -63,6 +63,8 @@ type darwinSession struct {
 	complete, idle, other, late atomic.Uint64
 }
 
+var errNoDisplay = errors.New("capture: no display available")
+
 // Start begins capturing the main display. out is called on a dedicated
 // serial dispatch queue for every new (complete) frame; it must not block
 // for long and must not call Close.
@@ -105,6 +107,9 @@ func (s *darwinSession) start(interval int64) (unsafe.Pointer, int, int, error) 
 			msg = C.GoString(cerr)
 			C.free(unsafe.Pointer(cerr))
 		}
+		if msg == errNoDisplay.Error() {
+			return nil, 0, 0, errNoDisplay
+		}
 		return nil, 0, 0, errors.New(msg)
 	}
 	return ptr, int(cw), int(ch), nil
@@ -114,6 +119,10 @@ func (s *darwinSession) start(interval int64) (unsafe.Pointer, int, int, error) 
 func (s *darwinSession) reopen() error {
 	s.streamMu.Lock()
 	defer s.streamMu.Unlock()
+	return s.reopenLocked()
+}
+
+func (s *darwinSession) reopenLocked() error {
 	s.mu.Lock()
 	old := s.ptr
 	s.ptr = nil
@@ -142,16 +151,20 @@ func (s *darwinSession) excludeWindows(ids []uint32) error {
 	s.mu.Lock()
 	ptr := s.ptr
 	s.mu.Unlock()
-	if s.closed.Load() || ptr == nil {
+	if s.closed.Load() {
 		if len(ids) == 0 {
 			s.excluded = nil
 			return nil
 		}
 		return errors.New("屏幕采集暂不可用")
 	}
+	if ptr == nil {
+		return s.reopenWithExclusions(ids)
+	}
 	app := C.CString(s.excludeApp)
 	defer C.free(unsafe.Pointer(app))
-	err := C.mmcap_exclude(ptr, app, (*C.uint32_t)(unsafe.Pointer(unsafe.SliceData(ids))), C.size_t(len(ids)))
+	var reopen C.int
+	err := C.mmcap_exclude(ptr, app, (*C.uint32_t)(unsafe.Pointer(unsafe.SliceData(ids))), C.size_t(len(ids)), &reopen)
 	if err != nil {
 		defer C.free(unsafe.Pointer(err))
 		if len(ids) == 0 {
@@ -161,7 +174,23 @@ func (s *darwinSession) excludeWindows(ids []uint32) error {
 		}
 		return errors.New(C.GoString(err))
 	}
+	if reopen != 0 {
+		return s.reopenWithExclusions(ids)
+	}
 	s.excluded = slices.Clone(ids)
+	return nil
+}
+
+func (s *darwinSession) reopenWithExclusions(ids []uint32) error {
+	previous := s.excluded
+	s.excluded = slices.Clone(ids)
+	if err := s.reopenLocked(); err != nil {
+		if len(ids) != 0 {
+			s.excluded = previous
+		}
+		s.rs.trigger("capture unavailable after display change")
+		return err
+	}
 	return nil
 }
 

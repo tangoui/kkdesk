@@ -101,7 +101,7 @@ static BOOL appMatches(SCRunningApplication *app, NSString *want) API_AVAILABLE(
 	return NO;
 }
 
-static SCContentFilter *captureFilter(CGDirectDisplayID displayID, BOOL useFallback,
+static SCContentFilter *captureFilter(CGDirectDisplayID displayID,
                                     const char *excludeApp, const uint32_t *ids, size_t count,
                                     SCDisplay **outDisplay, char **err) API_AVAILABLE(macos(12.3)) {
 	__block SCShareableContent *content = nil;
@@ -129,7 +129,7 @@ static SCContentFilter *captureFilter(CGDirectDisplayID displayID, BOOL useFallb
 			break;
 		}
 	}
-	if (display == nil && useFallback) {
+	if (display == nil) {
 		display = content.displays.firstObject;
 	}
 	if (display == nil) {
@@ -173,14 +173,19 @@ static SCContentFilter *captureFilter(CGDirectDisplayID displayID, BOOL useFallb
 	return [[SCContentFilter alloc] initWithDisplay:display excludingApplications:apps exceptingWindows:windows];
 }
 
-char *mmcap_exclude(void *s, const char *excludeApp, const uint32_t *ids, size_t count) {
+char *mmcap_exclude(void *s, const char *excludeApp, const uint32_t *ids, size_t count, int *reopen) {
 	@autoreleasepool {
 		MMCapture *cap = (__bridge MMCapture *)s;
 		SCDisplay *display = nil;
 		char *err = NULL;
-		SCContentFilter *filter = captureFilter(cap.displayID, NO, excludeApp, ids, count, &display, &err);
+		SCContentFilter *filter = captureFilter(CGMainDisplayID(), excludeApp, ids, count, &display, &err);
 		if (filter == nil) {
 			return err;
+		}
+		if (display.displayID != cap.displayID) {
+			// Replace both the filter and stream dimensions on the new main display.
+			*reopen = 1;
+			return NULL;
 		}
 		__block NSError *updateErr = nil;
 		dispatch_semaphore_t sem = dispatch_semaphore_create(0);
@@ -210,7 +215,7 @@ void *mmcap_start(int64_t intervalNs, int maxWidth, const char *excludeApp,
 		}
 
 		SCDisplay *display = nil;
-		SCContentFilter *filter = captureFilter(CGMainDisplayID(), YES, excludeApp, ids, count, &display, err);
+		SCContentFilter *filter = captureFilter(CGMainDisplayID(), excludeApp, ids, count, &display, err);
 		if (filter == nil) {
 			return NULL;
 		}

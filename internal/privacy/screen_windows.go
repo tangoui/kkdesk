@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"runtime/cgo"
 	"syscall"
 
 	"golang.org/x/sys/windows"
@@ -56,7 +57,9 @@ func (s *windowsScreen) start() error {
 		defer runtime.UnlockOSThread()
 		var window C.uintptr_t
 		var code C.ulong
-		ptr := C.mmprivacyw_open(&window, &code)
+		handle := cgo.NewHandle(exited)
+		defer handle.Delete()
+		ptr := C.mmprivacyw_open(C.uintptr_t(handle), &window, &code)
 		if ptr == nil {
 			started <- result{err: fmt.Errorf("无法创建可排除采集的隐私遮罩或注册退出快捷键：%w", syscall.Errno(code))}
 			return
@@ -64,11 +67,7 @@ func (s *windowsScreen) start() error {
 		started <- result{window: window}
 		code = C.mmprivacyw_run(ptr)
 		close(done)
-		switch code {
-		case 0:
-		case C.ulong(windows.ERROR_CANCELLED):
-			exited(nil)
-		default:
+		if code != 0 {
 			exited(fmt.Errorf("隐私遮罩已停止：%w", syscall.Errno(code)))
 		}
 	}()
@@ -78,6 +77,12 @@ func (s *windowsScreen) start() error {
 	}
 	s.window, s.done = r.window, done
 	return nil
+}
+
+//export mmprivacyWindowsExit
+func mmprivacyWindowsExit(handle C.uintptr_t) {
+	exited := cgo.Handle(handle).Value().(func(error))
+	go exited(nil)
 }
 
 func (s *windowsScreen) Hide() {

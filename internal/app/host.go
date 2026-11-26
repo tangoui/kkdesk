@@ -764,7 +764,7 @@ func (h *Host) Close() {
 		h.Reject()
 		h.Disconnect()
 		h.wg.Wait()
-		h.finishGrace(nil, true)
+		h.finishGrace(nil)
 	})
 }
 
@@ -920,7 +920,7 @@ func (h *Host) handle(p *session.Peer, listenCtx context.Context, remote bool, p
 		return
 	default:
 	}
-	h.finishGrace(nil, false)
+	h.admitAfterGrace()
 	h.serveFiles(p)
 	if p.Mode() == session.ModeFiles {
 		p.OnPrivacy(func(session.PrivacyMessage) {})
@@ -1022,6 +1022,7 @@ func (h *Host) stream(p *session.Peer) error {
 		func(status session.PrivacyStatus, detail string) {
 			_ = p.SendPrivacy(session.PrivacyMessage{Kind: session.PrivacyState, Status: status, Detail: detail})
 		}, h.notify)
+	ps.readPolicy = h.privacyPolicy
 	ps.exclude = func(ids []uint32) error {
 		if ps.detached.Load() {
 			return nil

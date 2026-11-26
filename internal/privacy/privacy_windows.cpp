@@ -8,6 +8,7 @@
 #include <memory>
 #include <vector>
 #include "privacy_windows.h"
+#include "_cgo_export.h"
 
 static const wchar_t className[] = L"KKDeskPrivacyScreen";
 static constexpr UINT stopMessage = WM_APP + 1;
@@ -22,7 +23,7 @@ struct WindowsScreen {
     HWND control = nullptr;
     std::vector<HWND> covers;
     DWORD error = ERROR_SUCCESS;
-    bool shortcut = false;
+    uintptr_t handle = 0;
     int countdown = -1;
 
     ~WindowsScreen() {
@@ -139,10 +140,7 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wparam, LPARA
         PostQuitMessage(0);
         return 0;
     case WM_HOTKEY:
-        if (wparam == exitHotkey) {
-            screen->shortcut = true;
-            PostQuitMessage(0);
-        }
+        if (wparam == exitHotkey) mmprivacyWindowsExit(screen->handle);
         return 0;
     case WM_DISPLAYCHANGE:
         PostMessageW(hwnd, rebuildMessage, 0, 0);
@@ -159,8 +157,14 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wparam, LPARA
         }
         return 0;
     case WM_TIMER: {
-        HWND top = GetTopWindow(nullptr);
-        if (std::find(screen->covers.begin(), screen->covers.end(), top) == screen->covers.end()) {
+        // All covers must precede other visible windows in the z-order.
+        size_t first = 0;
+        for (HWND top = GetTopWindow(nullptr); top && first < screen->covers.size(); top = GetWindow(top, GW_HWNDNEXT)) {
+            if (!IsWindowVisible(top)) continue;
+            if (std::find(screen->covers.begin(), screen->covers.end(), top) == screen->covers.end()) break;
+            ++first;
+        }
+        if (first != screen->covers.size()) {
             for (HWND cover : screen->covers) {
                 SetWindowPos(cover, HWND_TOPMOST, 0, 0, 0, 0,
                              SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
@@ -172,7 +176,7 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wparam, LPARA
     return DefWindowProcW(hwnd, message, wparam, lparam);
 }
 
-void *mmprivacyw_open(uintptr_t *window, unsigned long *error) {
+void *mmprivacyw_open(uintptr_t handle, uintptr_t *window, unsigned long *error) {
     SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     HINSTANCE module = GetModuleHandleW(nullptr);
     WNDCLASSW wc = {};
@@ -185,6 +189,7 @@ void *mmprivacyw_open(uintptr_t *window, unsigned long *error) {
         return nullptr;
     }
     auto screen = std::make_unique<WindowsScreen>();
+    screen->handle = handle;
     // A hidden top-level window receives display broadcasts and the hotkey.
     screen->control = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, className, L"",
                                       WS_POPUP, 0, 0, 0, 0, nullptr, nullptr, module, screen.get());
@@ -209,9 +214,7 @@ unsigned long mmprivacyw_run(void *ptr) {
         DispatchMessageW(&msg);
     }
     if (result == -1) return GetLastError();
-    if (screen->error != ERROR_SUCCESS) return screen->error;
-    // ERROR_CANCELLED is the local shortcut. A normal stop has no callback.
-    return screen->shortcut ? ERROR_CANCELLED : ERROR_SUCCESS;
+    return screen->error;
 }
 
 void mmprivacyw_stop(uintptr_t window) {

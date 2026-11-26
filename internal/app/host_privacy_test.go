@@ -143,6 +143,17 @@ func TestHostPrivacyScreenFailure(t *testing.T) {
 	}
 }
 
+func TestHostPrivacyReadsCurrentPolicyAtRequest(t *testing.T) {
+	screen := &fakePrivacyScreen{}
+	p, results := testPrivacyScreen(config.PrivacyAllow, screen)
+	p.readPolicy = func() config.PrivacyPolicy { return config.PrivacyAsk }
+	p.set(true)
+	if screen.shown || (*results)[0].status != session.PrivacyWaiting {
+		t.Fatalf("used cached allow policy: shown=%v, results=%v", screen.shown, *results)
+	}
+	p.close()
+}
+
 type fakeLocker func() error
 
 func (f fakeLocker) Lock() error { return f() }
@@ -185,7 +196,7 @@ func TestHostDisconnectLockGrace(t *testing.T) {
 					}
 					switch action {
 					case "reconnect":
-						h.finishGrace(nil, false)
+						h.admitAfterGrace()
 					case "shortcut":
 						screen.exit(nil)
 					case "quit":
