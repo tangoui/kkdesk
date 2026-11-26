@@ -246,3 +246,29 @@ func TestHostConfirmSetting(t *testing.T) {
 	h.Reject()
 	(<-vc).Close()
 }
+
+// Turning remote control off cancels a LAN request still waiting for the
+// user: a late 接受 must not start the session.
+func TestHostDisableCancelsPendingLAN(t *testing.T) {
+	h := NewHost(HostConfig{Addr: "127.0.0.1:0", Password: "123456", Rotate: config.RotateNever}, nil)
+	defer h.Close()
+	if err := h.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	h.SetAutoAccept(false)
+	v, err := dialFiles(t, h.ListenAddr(), "123456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer v.Close()
+	waitFor(t, "pending", func() bool { return h.State().Phase == HostPending })
+	if err := h.SetEnabled(false); err != nil {
+		t.Fatal(err)
+	}
+	h.Accept()
+	waitFor(t, "request cancelled", func() bool { return h.State().Phase == HostOff })
+	time.Sleep(200 * time.Millisecond)
+	if p := h.State().Phase; p != HostOff {
+		t.Fatalf("phase after a late accept = %v, want off", p)
+	}
+}
