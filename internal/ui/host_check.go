@@ -51,11 +51,21 @@ func (m *Main) hostCheckDialog(c *ui.Context) bool {
 	md := ui.Modal(c, &open, "核对对方设备码").Width(min(440, c.Size().W-32)).MaskClosable(false).Footer(func() {
 		ui.Row(c, func() {
 			ui.Spacer(c)
+			if hc.code == "" { // nothing to compare: cancelling is the safe default
+				ok = ui.Button(c, "仍然连接").AutoInsertSpace(false).Danger().Clicked()
+				cancel = ui.Button(c, "取消").AutoInsertSpace(false).Primary().Clicked()
+				return
+			}
 			cancel = ui.Button(c, "取消").AutoInsertSpace(false).Clicked()
 			ok = ui.Button(c, "一致，继续连接").AutoInsertSpace(false).Primary().Clicked()
 		}, layout.Gap(8), layout.Middle())
 	}).Body(func() {
 		ui.Column(c, func() {
+			if hc.code == "" {
+				ui.Text(c, "第一次连接 "+hc.addr+"，对方没有提供设备码。")
+				ui.Alert(c, "error", "可能是对方的 kkdesk 版本太旧，也可能有人冒充那台电脑。无法核对时请取消，请对方升级后再连。").ShowIcon(true).Show()
+				return
+			}
 			ui.Text(c, "第一次连接 "+hc.addr+"，对方的设备码是：")
 			ui.Text(c, hc.code).Size(24).Strong()
 			ui.Alert(c, "warning", "请对照对方电脑 kkdesk「连接」页显示的「本机设备码」，完全一致才继续。不一致可能有人冒充那台电脑，请取消。").ShowIcon(true).Show()

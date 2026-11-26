@@ -3,8 +3,10 @@ package app
 import (
 	"context"
 	"errors"
-	"sync"
+	"io"
+	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -290,8 +292,8 @@ func TestViewerConfirmsFirstHostBeforeProof(t *testing.T) {
 	if len(asked) != 1 || asked[0] != host.State().DeviceCode {
 		t.Fatalf("asked %q, want the host's device code %q once", asked, host.State().DeviceCode)
 	}
-	if s := host.State(); s.PasswordLockSeconds != 0 {
-		t.Fatalf("a declined first connection still tried the password: %+v", s)
+	if key := store.HostKey(address); key != "" {
+		t.Fatalf("a declined first connection still connected and remembered %q", key)
 	}
 	answer = true
 	v, err := dial()
@@ -307,5 +309,53 @@ func TestViewerConfirmsFirstHostBeforeProof(t *testing.T) {
 	defer v.Close()
 	if len(asked) != 0 {
 		t.Fatalf("asked again for a known host: %q", asked)
+	}
+}
+
+// A stranger at the address cannot skip the device-code check by naming no
+// key or refusing the probe: the user is asked (with no code to compare) or
+// the connection fails, and no proof is sent unasked.
+func TestViewerFirstHostCheckCannotBeSkipped(t *testing.T) {
+	store, err := config.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() { // an impostor: greets without a key, then reads whatever comes
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				_, _ = c.Write([]byte("{\"version\":2}\n"))
+				_, _ = io.Copy(io.Discard, c)
+			}()
+		}
+	}()
+	var asked []string
+	v := NewViewer(ViewerConfig{Addr: ln.Addr().String(), Password: "good", FilesOnly: true, Devices: store,
+		ConfirmHost: func(_ context.Context, addr, code string) bool {
+			asked = append(asked, code)
+			return false
+		}}, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := v.Connect(ctx); err == nil || !strings.Contains(err.Error(), ErrHostNotConfirmed.Error()) {
+		t.Fatalf("Connect = %v, want ErrHostNotConfirmed", err)
+	}
+	if len(asked) != 1 || asked[0] != "" {
+		t.Fatalf("asked %q, want one question with no code to compare", asked)
+	}
+	ln.Close() // a host that refuses the probe
+	v = NewViewer(ViewerConfig{Addr: ln.Addr().String(), Password: "good", FilesOnly: true, Devices: store,
+		ConfirmHost: func(context.Context, string, string) bool { t.Error("asked without a probe"); return true }}, nil)
+	if err := v.Connect(ctx); err == nil {
+		t.Fatal("connected although the probe failed")
 	}
 }

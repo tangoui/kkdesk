@@ -37,8 +37,10 @@ type ViewerConfig struct {
 	// ConfirmHost, if set, is asked before the first connection to a LAN
 	// address (no key remembered for it): it shows the device code the host
 	// names so the user can compare it with the host's screen, and returns
-	// whether to go on. Nothing derived from the password is sent before.
-	// It may block for as long as the user takes (ctx ends it).
+	// whether to go on. code is "" when the host names none (old version or
+	// hiding): then the user should be warned. Nothing derived from the
+	// password is sent before. It may block for as long as the user takes
+	// (ctx ends it).
 	ConfirmHost func(ctx context.Context, addr, code string) bool
 	// Identity, if set, is proved to hosts so they recognize this controller
 	// (see Host ViewerTrust).
@@ -209,9 +211,12 @@ const confirmWait = 5 * time.Second
 // confirmFirstHost asks the user to check the device code of a LAN host
 // that has no remembered key, before any password proof is sent: a
 // stranger answering at that address would otherwise get one proof to guess
-// the password from offline. It returns the confirmed key to expect. Hosts
-// too old to name their key, and failed probes, fall back to the plain dial
-// (which remembers the key after it connects).
+// the password from offline. It returns the confirmed key to expect. A
+// stranger controls its own answers, so nothing it does skips the question:
+// a failed probe fails the connection, and a host naming no key (an old
+// kkdesk, or someone hiding) is asked about with no code to compare
+// (ConfirmHost gets ""); only if the user goes on anyway is it dialed
+// without an expected key.
 func (v *Viewer) confirmFirstHost(ctx context.Context, isRemote bool) (string, error) {
 	if isRemote || v.cfg.ConfirmHost == nil || v.cfg.Devices == nil || v.cfg.Devices.HostKey(v.cfg.Addr) != "" {
 		return "", nil
@@ -219,11 +224,15 @@ func (v *Viewer) confirmFirstHost(ctx context.Context, isRemote bool) (string, e
 	probeCtx, cancel := context.WithTimeout(ctx, confirmWait)
 	key, err := session.ProbeHostKey(probeCtx, v.cfg.Addr)
 	cancel()
-	if err != nil || key == "" {
-		return "", nil
+	if err != nil {
+		return "", err
 	}
-	public, _ := pairing.PublicKey(key)
-	if !v.cfg.ConfirmHost(ctx, v.cfg.Addr, pairing.DeviceCode(public)) {
+	code := ""
+	if key != "" {
+		public, _ := pairing.PublicKey(key)
+		code = pairing.DeviceCode(public)
+	}
+	if !v.cfg.ConfirmHost(ctx, v.cfg.Addr, code) {
 		return "", ErrHostNotConfirmed
 	}
 	return key, nil
