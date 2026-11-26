@@ -915,7 +915,8 @@ func (h *Host) stream(p *session.Peer) error {
 	vs.forceKey.Store(true)
 	p.OnKeyframeRequest(func() { vs.forceKey.Store(true) })
 
-	refreshAccessibility := h.wireInput(p)
+	refreshAccessibility, releaseInput := h.wireInput(p)
+	defer releaseInput()
 	var accessibilityTick <-chan time.Time
 	if refreshAccessibility != nil {
 		ticker := time.NewTicker(2 * time.Second)
@@ -963,8 +964,10 @@ loop:
 var injectLimitsOnce sync.Once
 
 // wireInput installs the input handler and returns a macOS permission refresh
-// for the lifetime of this desktop session.
-func (h *Host) wireInput(p *session.Peer) (refresh func()) {
+// for the lifetime of this desktop session, and release, which ends input and
+// lets go of the keys and buttons the controller left down (a session that
+// drops mid-drag or with a modifier held would otherwise leave them held).
+func (h *Host) wireInput(p *session.Peer) (refresh, release func()) {
 	var granted atomic.Bool
 	help := InjectHelp()
 	granted.Store(help == "")
@@ -1000,8 +1003,13 @@ func (h *Host) wireInput(p *session.Peer) (refresh func()) {
 	}
 	var n atomic.Int64
 	var errLogged atomic.Bool
+	var held input.Held
+	var mu sync.Mutex // orders injection against release
+	stopped := false
 	p.OnInput(func(e input.Event) {
-		if inj == nil || !granted.Load() {
+		mu.Lock()
+		defer mu.Unlock()
+		if stopped || inj == nil || !granted.Load() {
 			return
 		}
 		if err := inj.Apply(e); err != nil {
@@ -1010,11 +1018,28 @@ func (h *Host) wireInput(p *session.Peer) (refresh func()) {
 			}
 			return
 		}
+		held.Track(e)
 		if n.Add(1) == 1 {
 			log.Printf("kkdesk host: injected first remote input event (kind %d)", e.Kind)
 		}
 	})
-	return refresh
+	release = func() {
+		p.OnInput(nil)
+		mu.Lock()
+		defer mu.Unlock()
+		stopped = true
+		if inj == nil {
+			return
+		}
+		ups := held.Release()
+		for _, e := range ups {
+			_ = inj.Apply(e)
+		}
+		if len(ups) > 0 {
+			log.Printf("kkdesk host: released %d keys/buttons left down by the controller", len(ups))
+		}
+	}
+	return refresh, release
 }
 
 // videoSender encodes captured frames and sends them to the peer.

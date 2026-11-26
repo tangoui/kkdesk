@@ -79,6 +79,7 @@ type Viewer struct {
 	cfg       ViewerConfig
 	notifyFns atomic.Pointer[[]func()]
 	rec       *stats.Recorder
+	held      input.Held // keys and buttons down on the host, released on view-only
 
 	mu       sync.Mutex
 	phase    ViewerPhase
@@ -396,11 +397,21 @@ func (v *Viewer) FrameSize() (w, h int) {
 	return view.FrameSize()
 }
 
-// SetViewOnly turns input forwarding off (true) or on.
+// SetViewOnly turns input forwarding off (true) or on. Turning it off
+// first releases the keys and buttons still down on the host.
 func (v *Viewer) SetViewOnly(on bool) {
 	v.mu.Lock()
 	v.viewOnly = on
+	p := v.peer
 	v.mu.Unlock()
+	if on {
+		ups := v.held.Release()
+		if p != nil {
+			for _, e := range ups {
+				_ = p.SendInput(e)
+			}
+		}
+	}
 	v.notify()
 }
 
@@ -426,7 +437,9 @@ func (v *Viewer) Send(e input.Event) {
 	if p == nil || off || p.AccessibilityDenied() {
 		return
 	}
-	_ = p.SendInput(e)
+	if p.SendInput(e) == nil {
+		v.held.Track(e)
+	}
 }
 
 // ViewOnly reports whether input forwarding is off.
