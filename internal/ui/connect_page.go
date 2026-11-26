@@ -180,42 +180,15 @@ func shareText(hs app.HostState) string {
 	return b.String()
 }
 
-// Tabs of the 控制其他电脑 form: a LAN address with the temporary password,
-// or a cross-network device code (KD-…).
-const (
-	viaLAN    = "lan"
-	viaRemote = "remote"
-)
-
-var viaOpts = []ui.Option{
-	{Label: "局域网", Value: viaLAN},
-	{Label: "跨网", Value: viaRemote},
-}
-
-// normalizeVia defaults the tab to 局域网 and moves a device code typed or
-// pasted into the address field to the 跨网 tab.
-func (f *Form) normalizeVia() {
-	if f.Via != viaRemote {
-		f.Via = viaLAN
+// connectTarget is what the 连接 button dials: a LAN address, or a device
+// code (remote) for a cross-network connection, with the password, which
+// is required for both.
+func (f *Form) connectTarget() (addr, password string, remote, ok bool) {
+	addr, password = strings.TrimSpace(f.PeerAddr), strings.TrimSpace(f.Password)
+	if rendezvous.IsCode(addr) {
+		addr, remote = rendezvous.NormalizeCode(addr), true
 	}
-	if f.Via == viaLAN && rendezvous.IsCode(f.PeerAddr) {
-		f.Via, f.PeerCode, f.PeerAddr = viaRemote, rendezvous.NormalizeCode(f.PeerAddr), ""
-	}
-}
-
-// connectTarget is what the 连接 button dials: the address or the device
-// code with the password (shared by both tabs; optional for a device code,
-// where it lets a host that does not ask for confirmation accept at once).
-func (f *Form) connectTarget() (addr, password string, ok bool) {
-	if f.Via == viaRemote {
-		code := rendezvous.NormalizeCode(f.PeerCode)
-		if !rendezvous.IsCode(code) {
-			return "", "", false
-		}
-		return code, strings.TrimSpace(f.Password), true
-	}
-	addr = strings.TrimSpace(f.PeerAddr)
-	return addr, strings.TrimSpace(f.Password), addr != ""
+	return addr, password, remote, addr != "" && password != ""
 }
 
 func (m *Main) connectCard(c *ui.Context) {
@@ -226,53 +199,38 @@ func (m *Main) connectCard(c *ui.Context) {
 	}
 	m.mu.Unlock()
 	st := m.o.Form
-	st.normalizeVia()
 	hasRemote := m.o.Store.Settings().RemoteURL != ""
+	addr, pw, remote, ok := st.connectTarget()
 	panel(c, func() {
 		cardHead(c, "控制其他电脑", "")
-		if ui.Segmented(c, &st.Via, viaOpts).A11yLabel("连接网络").Changed() {
-			m.mu.Lock()
-			m.connErr = ""
-			m.mu.Unlock()
-		}
 		var submit bool
-		if st.Via == viaRemote {
-			ui.Column(c, func() {
-				ui.Text(c, "对方的跨网设备码").Size(13).Secondary()
-				submit = ui.Input(c, &st.PeerCode).Size(ui.Large).Placeholder("KD- 开头，例如 KD-ABCD2345EFGH").A11yLabel("跨网设备码").Submitted()
-				code := strings.TrimSpace(st.PeerCode)
-				if code != "" && !rendezvous.IsCode(code) {
-					ui.Text(c, "设备码以 KD- 开头，共 15 位。局域网地址请切到「局域网」。").Size(12).Color(c.Theme.Error.Base)
-				}
-			}, layout.Gap(6), layout.Padding(insets(6, 0, 0, 0)))
-			ui.Column(c, func() {
-				ui.Text(c, "临时密码（可选）").Size(13).Secondary()
-				if ui.Input(c, &st.Password).Size(ui.Large).Password().Placeholder("对方的临时密码或固定密码").A11yLabel("跨网临时密码").Submitted() {
-					submit = true
-				}
-				ui.Text(c, "填对密码、且对方关闭了「连接前需要确认」时直接连上；不填则需要对方点接受。").Size(12).Tertiary()
-			}, layout.Gap(6), layout.Padding(insets(6, 0, 0, 0)))
-			if !hasRemote {
-				ui.Alert(c, "warning", "还没有配置跨网服务：请先在「设置 › 跨网连接」填写跨网服务地址和密钥（两台电脑填同一个）。").ShowIcon(true).Show()
-				if ui.Button(c, "去设置").Small().Clicked() {
-					m.nav, m.set.tab = "settings", "remote"
-				}
+		ui.Column(c, func() {
+			ui.Text(c, "对方地址或设备码").Size(13).Secondary()
+			ui.Input(c, &st.PeerAddr).Size(ui.Large).Placeholder("例如 192.168.1.20 或 KD-ABCD2345EFGH").A11yLabel("对方地址")
+			switch {
+			case addr == "":
+			case remote:
+				ui.Text(c, "跨网连接：经跨网服务连接不在同一个网络的电脑。").Size(12).Tertiary()
+			case strings.HasPrefix(strings.ToUpper(addr), "KD-"):
+				ui.Text(c, "设备码以 KD- 开头，共 15 位，请检查是否抄错。").Size(12).Color(c.Theme.Error.Base)
+			default:
+				ui.Text(c, "局域网直连：两台电脑需要在同一个路由器或 Wi-Fi 下。").Size(12).Tertiary()
 			}
-		} else {
-			ui.Column(c, func() {
-				ui.Text(c, "对方地址").Size(13).Secondary()
-				ui.Input(c, &st.PeerAddr).Size(ui.Large).Placeholder("对方连接页上的本机地址，例如 192.168.1.20").A11yLabel("对方地址")
-			}, layout.Gap(6), layout.Padding(insets(6, 0, 0, 0)))
-			ui.Column(c, func() {
-				ui.Text(c, "临时密码").Size(13).Secondary()
-				submit = ui.Input(c, &st.Password).Size(ui.Large).Password().Placeholder("6 位字母和数字，区分大小写").A11yLabel("临时密码").Submitted()
-			}, layout.Gap(6), layout.Padding(insets(6, 0, 0, 0)))
+		}, layout.Gap(6))
+		if remote && !hasRemote {
+			ui.Alert(c, "warning", "还没有配置跨网服务：请先在「设置 › 跨网连接」填写跨网服务地址和密钥（两台电脑填同一个）。").ShowIcon(true).Show()
+			if ui.Button(c, "去设置").Small().Clicked() {
+				m.nav, m.set.tab = "settings", "remote"
+			}
 		}
+		ui.Column(c, func() {
+			ui.Text(c, "临时密码").Size(13).Secondary()
+			submit = ui.Input(c, &st.Password).Size(ui.Large).Password().Placeholder("对方的临时密码或固定密码").A11yLabel("临时密码").Submitted()
+		}, layout.Gap(6), layout.Padding(insets(6, 0, 0, 0)))
 		ui.Row(c, func() {
 			ui.Text(c, "连接方式").Size(13).Tertiary()
 			ui.Segmented(c, &st.Mode, modeOpts).A11yLabel("连接方式")
 		}, layout.Gap(12), layout.Middle(), layout.WrapItems(), layout.Padding(insets(8, 0, 0, 0)))
-		addr, pw, ok := st.connectTarget()
 		b := ui.Button(c, "连接").AutoInsertSpace(false).Primary().Large().Block().Loading(connecting).Disabled(!ok)
 		b.Layout(layout.Margin(insets(8, 0, 0, 0)))
 		if (b.Clicked() || submit) && !connecting && ok {
@@ -282,12 +240,8 @@ func (m *Main) connectCard(c *ui.Context) {
 			ui.Alert(c, "error", errMsg).ShowIcon(true).Show()
 			// A LAN address the other computer cannot be reached at: it is
 			// probably on another network.
-			if st.Via == viaLAN && strings.Contains(errMsg, "不在同一个局域网") &&
-				ui.Button(c, "不在同一个网络？改用跨网设备码").Small().Clicked() {
-				st.Via = viaRemote
-				m.mu.Lock()
-				m.connErr = ""
-				m.mu.Unlock()
+			if !remote && strings.Contains(errMsg, "不在同一个局域网") {
+				ui.Text(c, "不在同一个网络？请对方在连接页复制「本机跨网设备码」发给你，填到上面的输入框。").Size(12).Tertiary()
 			}
 		}
 	}, layout.Grow(1), layout.Basis(340), layout.Pad(20), layout.Gap(8))

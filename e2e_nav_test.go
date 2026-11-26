@@ -113,10 +113,6 @@ func TestE2ENav(t *testing.T) {
 	accessibilityEntry(true)
 	nav := func(page string) { t.Helper(); w.Find(a11y.RoleMenuItem, page).Click() }
 	shot(w, "page-connect.png")
-	w.Find(a11y.RoleRadio, "跨网").Click()
-	w.Find(a11y.RoleTextbox, "跨网设备码").Wait()
-	shot(w, "page-connect-remote.png")
-	w.Find(a11y.RoleRadio, "局域网").Click()
 	w.Find(a11y.RoleTextbox, "对方地址").Wait()
 	dump := func(what string) { t.Helper(); t.Logf("%s:\n%s", what, w.Dump()) }
 

@@ -10,6 +10,7 @@ import (
 	"github.com/tangoui/tango/automation"
 	"github.com/tangoui/tango/ui/a11y"
 
+	"github.com/tangoui/kkdesk/internal/config"
 	"github.com/tangoui/kkdesk/internal/rendezvous"
 )
 
@@ -42,10 +43,10 @@ func TestE2ERemote(t *testing.T) {
 	server.StartTLS()
 	t.Cleanup(server.Close)
 
-	start := func() *automation.App {
+	start := func(cfgDir string) *automation.App {
 		app := automation.LaunchOptions(t, ".", automation.Options{
 			Args: []string{"-listen", "127.0.0.1:0", "-applog", ""},
-			Env:  []string{"KKDESK_CONFIG_DIR=" + t.TempDir(), "TANGO_LAUNCH_BACKGROUND=1"},
+			Env:  []string{"KKDESK_CONFIG_DIR=" + cfgDir, "TANGO_LAUNCH_BACKGROUND=1"},
 		})
 		t.Cleanup(func() {
 			if t.Failed() {
@@ -65,10 +66,16 @@ func TestE2ERemote(t *testing.T) {
 		w.Find(a11y.RoleMenuItem, "连接").Click()
 		return app
 	}
-	host, guest := start(), start()
+	hostCfg := t.TempDir()
+	host, guest := start(hostCfg), start(t.TempDir())
 	hostWindow, guestWindow := host.Window("kkdesk"), guest.Window("kkdesk")
 	code := hostWindow.FindRegexp(a11y.RoleText, "^KD-[A-Z2-7]{12}$").Name()
 	guestWindow.Find(a11y.RoleTextbox, "对方地址").SetValue(code)
+	store, err := config.Open(hostCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	guestWindow.Find(a11y.RoleTextbox, "临时密码").SetValue(store.TempPassword().Password)
 	guestWindow.Find(a11y.RoleRadio, "传文件").Click()
 	guestWindow.Find(a11y.RoleButton, "连接").Click()
 	hostWindow.FindContains(a11y.RoleButton, "接受").Click()
