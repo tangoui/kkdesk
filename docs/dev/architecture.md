@@ -22,11 +22,11 @@ kkdesk 是一个 Go 程序，平台相关的部分用 cgo 写在各自的包里�
 | `internal/session` | 信令和 WebRTC 会话（pion v4）：视频轨、数据通道、画质请求、时钟同步、剪贴板消息。 |
 | `internal/rendezvous` | 跨网服务的信令客户端和服务端：设备码上线、配对、交换连接信息、签发 TURN 凭据。 |
 | `internal/capture` | 采集主显示器为 NV12 帧。macOS：ScreenCaptureKit；Windows：DXGI Desktop Duplication。 |
-| `internal/codec` | H.264 编解码。macOS：VideoToolbox 硬件编解码；Windows：Media Foundation 编码（优先硬件，回退软件），解码尚未实现。 |
-| `internal/display` | macOS 原生视频视图（`AVSampleBufferDisplayLayer`），把视图里的指针位置换算成视频坐标。 |
+| `internal/codec` | H.264 编解码。macOS：VideoToolbox 硬件编解码；Windows：Media Foundation 编解码（优先硬件，回退软件）。 |
+| `internal/display` | 原生视频视图，把视图里的指针位置换算成视频坐标。macOS：`AVSampleBufferDisplayLayer`；Windows：自有窗口 + flip 交换链，由 Tango 嵌入会话窗口。 |
 | `internal/inject` | 执行对方的键盘鼠标操作。macOS：`CGEventPost`；Windows：`SendInput`。 |
 | `internal/input` | 输入事件的二进制编码。 |
-| `internal/winmedia` | Windows 采集和编码共用的 Direct3D 11 设备。 |
+| `internal/winmedia` | Windows 采集、编解码、显示共用的 Direct3D 11 设备。 |
 | `internal/files` | 文件传输协议的客户端和服务端。 |
 | `internal/clipsync` | 剪贴板同步：轮询本机剪贴板、发送变化、写入收到的内容、防回弹。 |
 | `internal/config` | 本机配置和通讯录（`kkdesk.json`），原子写入，损坏时备份并用默认值。 |

@@ -451,6 +451,9 @@ func (v *Viewer) video(frame []byte, captureAt time.Time) {
 			return
 		}
 		v.dec = d
+		if in, ok := d.(interface{ Info() string }); ok {
+			log.Printf("kkdesk viewer: decoder: %s", in.Info())
+		}
 		go func() { <-v.peerDone(); d.Close() }()
 		// The first frame means the host accepted and streams: start the
 		// clipboard sync now, so a copy made while it was still confirming
