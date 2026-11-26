@@ -459,6 +459,6 @@ func (h *Host) answerMobile(listener context.Context, cfg rendezvous.Config, exc
 			peer.Close()
 			return
 		}
-		h.handle(peer, remote, false, key, biometricKey)
+		h.handle(peer, listener, remote != nil, false, key, biometricKey)
 	})
 }

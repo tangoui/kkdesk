@@ -733,18 +733,19 @@ func (h *Host) acceptLoop(ctx context.Context, ln *session.Host) {
 		h.wg.Add(1)
 		go func() {
 			defer h.wg.Done()
-			h.handle(p, nil, true, "", "")
+			h.handle(p, ctx, false, true, "", "")
 		}()
 	}
 }
 
 // handle runs one incoming peer: busy check, confirmation, session.
-// handle runs one session. remoteCtx is set for cross-network sessions;
-// passwordOK reports that such a controller proved a password (LAN ones
-// always have).
-func (h *Host) handle(p *session.Peer, remoteCtx context.Context, passwordOK bool, phoneKey, biometricKey string) {
+// listenCtx is the context of the listener the request came in on; it ends
+// when remote control is turned off, which cancels a request still waiting
+// for the user. remote marks cross-network sessions; passwordOK reports
+// that such a controller proved a password (LAN ones always have).
+func (h *Host) handle(p *session.Peer, listenCtx context.Context, remote, passwordOK bool, phoneKey, biometricKey string) {
 	h.mu.Lock()
-	if h.closed || (remoteCtx != nil && (remoteCtx.Err() != nil || !h.wantOn)) {
+	if h.closed || listenCtx.Err() != nil || !h.wantOn {
 		h.mu.Unlock()
 		p.CloseWithReason("被控端已关闭远程连接")
 		return
@@ -754,7 +755,7 @@ func (h *Host) handle(p *session.Peer, remoteCtx context.Context, passwordOK boo
 		p.CloseWithReason("对方正在被其他设备控制")
 		return
 	}
-	confirm := (remoteCtx != nil && !passwordOK) || !h.cfg.AutoAccept
+	confirm := (remote && !passwordOK) || !h.cfg.AutoAccept
 	var enroll bool
 	if phoneKey != "" {
 		phone, ok := h.cfg.Pairing.Phone(phoneKey)
@@ -768,7 +769,7 @@ func (h *Host) handle(p *session.Peer, remoteCtx context.Context, passwordOK boo
 	}
 	h.busy = true
 	h.peer, h.since = p, time.Now()
-	h.remotePeer = remoteCtx != nil
+	h.remotePeer = remote
 	h.mobile.peerKey = phoneKey
 	h.mobile.biometricEnrollment = enroll
 	h.fileAccess.Store(!h.cfg.DisableSessionFiles)
@@ -805,10 +806,6 @@ func (h *Host) handle(p *session.Peer, remoteCtx context.Context, passwordOK boo
 	}()
 
 	if ch != nil {
-		var disabled <-chan struct{}
-		if remoteCtx != nil {
-			disabled = remoteCtx.Done()
-		}
 		t := time.NewTimer(ConfirmTimeout)
 		defer t.Stop()
 		ok := false
@@ -817,9 +814,12 @@ func (h *Host) handle(p *session.Peer, remoteCtx context.Context, passwordOK boo
 		case <-t.C:
 		case <-p.Done():
 			return
-		case <-disabled:
+		case <-listenCtx.Done():
 		}
-		if !ok || (remoteCtx != nil && remoteCtx.Err() != nil) {
+		h.mu.Lock()
+		on := h.wantOn && !h.closed
+		h.mu.Unlock()
+		if !ok || listenCtx.Err() != nil || !on {
 			p.CloseWithReason("对方拒绝了连接请求")
 			return
 		}

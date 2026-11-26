@@ -29,6 +29,12 @@ class LanRemoteSession extends ChangeNotifier implements RemoteSession {
   RemoteStatus _status = const RemoteStatus();
   Timer? _stats;
   Timer? _frameTimeout;
+
+  /// How long to wait for the first picture once connected. The computer
+  /// may still be asking its user (up to 30 s, internal/app ConfirmTimeout,
+  /// after which it closes the session itself) and then starts capture, so
+  /// this has to outlast both.
+  static const firstFrameTimeout = Duration(seconds: 45);
   Future<void>? _initializing;
   bool _closed = false;
 
@@ -74,7 +80,7 @@ class LanRemoteSession extends ChangeNotifier implements RemoteSession {
         await _session.connect(address, _password);
       }
       if (_closed || status.phase != RemotePhase.connecting) return;
-      _frameTimeout = Timer(const Duration(seconds: 20), () {
+      _frameTimeout = Timer(firstFrameTimeout, () {
         _onEnded('等待远程画面超时');
         unawaited(_session.close());
       });

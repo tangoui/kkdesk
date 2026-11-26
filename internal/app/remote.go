@@ -159,5 +159,5 @@ func (h *Host) answerRemote(ctx context.Context, cfg rendezvous.Config, conn *we
 		peer.Close()
 		return
 	}
-	h.handle(peer, ctx, passwordOK, "", "")
+	h.handle(peer, ctx, true, passwordOK, "", "")
 }

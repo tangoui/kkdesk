@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 )
@@ -106,6 +107,10 @@ func ValidFixedPassword(pw string) error {
 	if pw == "" {
 		return nil
 	}
+	if strings.TrimSpace(pw) != pw {
+		// The connect page trims what is typed or pasted.
+		return fmt.Errorf("固定密码首尾不能是空格")
+	}
 	if n := len([]rune(pw)); n < FixedMin || n > FixedMax {
 		return fmt.Errorf("固定密码需要 %d–%d 位", FixedMin, FixedMax)
 	}
@@ -119,6 +124,11 @@ func (s *Settings) repair() {
 	case RotateAfterSession, Rotate12h, Rotate24h, RotateNever:
 	default:
 		s.Rotate = d.Rotate
+	}
+	// Saved before whitespace was refused: it could never be typed on the
+	// connect page, which trims, so keep the part that can.
+	if t := strings.TrimSpace(s.FixedPassword); t != s.FixedPassword && ValidFixedPassword(t) == nil {
+		s.FixedPassword = t
 	}
 	if ValidFixedPassword(s.FixedPassword) != nil {
 		s.FixedPassword = ""

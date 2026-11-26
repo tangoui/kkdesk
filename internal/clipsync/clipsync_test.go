@@ -200,3 +200,54 @@ func TestReceiveDoesNotBlock(t *testing.T) {
 	close(b.release)
 	waitFor(t, "the newest text", func() bool { got, _ := b.ReadText(); return got == "4" })
 }
+
+// A copy whose send fails is tried again on the next ticks until it goes
+// through, then sent no more.
+func TestRetriesFailedSend(t *testing.T) {
+	b := &fakeBoard{}
+	var fails atomic.Int32
+	fails.Store(2)
+	var out sent
+	send := func(text string) error {
+		if fails.Add(-1) >= 0 {
+			return errors.New("channel busy")
+		}
+		return out.send(text)
+	}
+	s := Start(Options{Local: b, Send: send, Interval: tick})
+	defer s.Stop()
+	b.set("copied")
+	waitFor(t, "the copy to be sent after failures", func() bool { return len(out.list()) == 1 })
+	time.Sleep(5 * tick)
+	if got := out.list(); len(got) != 1 || got[0] != "copied" {
+		t.Fatalf("sent %q, want [copied] once", got)
+	}
+}
+
+// A pending copy is dropped when syncing is turned off.
+func TestPendingDroppedWhenNotAllowed(t *testing.T) {
+	b := &fakeBoard{}
+	var allowed atomic.Bool
+	allowed.Store(true)
+	var failing atomic.Bool
+	failing.Store(true)
+	var out sent
+	send := func(text string) error {
+		if failing.Load() {
+			return errors.New("channel busy")
+		}
+		return out.send(text)
+	}
+	s := Start(Options{Local: b, Send: send, Allowed: allowed.Load, Interval: tick})
+	defer s.Stop()
+	b.set("copied")
+	time.Sleep(5 * tick)
+	allowed.Store(false)
+	time.Sleep(5 * tick)
+	failing.Store(false)
+	allowed.Store(true)
+	time.Sleep(10 * tick)
+	if got := out.list(); len(got) != 0 {
+		t.Fatalf("sent %q after the permission was off", got)
+	}
+}
