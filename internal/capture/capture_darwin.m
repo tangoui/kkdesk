@@ -32,6 +32,7 @@ static BOOL waitSem(dispatch_semaphore_t sem) {
 API_AVAILABLE(macos(12.3))
 @interface MMCapture : NSObject <SCStreamOutput, SCStreamDelegate>
 @property(nonatomic, strong) SCStream *stream;
+@property(nonatomic) CGDirectDisplayID displayID;
 @property(nonatomic, strong) SCStreamConfiguration *config;
 @property(nonatomic, strong) dispatch_queue_t queue;
 @property(atomic) BOOL stopped;
@@ -100,8 +101,102 @@ static BOOL appMatches(SCRunningApplication *app, NSString *want) API_AVAILABLE(
 	return NO;
 }
 
+static SCContentFilter *captureFilter(CGDirectDisplayID displayID, BOOL useFallback,
+                                    const char *excludeApp, const uint32_t *ids, size_t count,
+                                    SCDisplay **outDisplay, char **err) API_AVAILABLE(macos(12.3)) {
+	__block SCShareableContent *content = nil;
+	__block NSError *contentErr = nil;
+	dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+	[SCShareableContent getShareableContentWithCompletionHandler:^(SCShareableContent *c, NSError *e) {
+		content = c;
+		contentErr = e;
+		dispatch_semaphore_signal(sem);
+	}];
+	if (!waitSem(sem)) {
+		*err = dupErr(@"capture: timed out getting shareable content");
+		return nil;
+	}
+	if (content == nil) {
+		*err = dupErr([NSString stringWithFormat:@"capture: shareable content: %@",
+		               contentErr.localizedDescription ?: @"unknown error"]);
+		return nil;
+	}
+
+	SCDisplay *display = nil;
+	for (SCDisplay *d in content.displays) {
+		if (d.displayID == displayID) {
+			display = d;
+			break;
+		}
+	}
+	if (display == nil && useFallback) {
+		display = content.displays.firstObject;
+	}
+	if (display == nil) {
+		*err = dupErr(@"capture: no display available");
+		return nil;
+	}
+
+	NSMutableArray<SCRunningApplication *> *apps = [NSMutableArray array];
+	NSMutableSet<NSNumber *> *excludedPIDs = [NSMutableSet set];
+	NSString *want = excludeApp != NULL ? [NSString stringWithUTF8String:excludeApp] : @"";
+	for (SCRunningApplication *app in content.applications) {
+		if (want.length > 0 && appMatches(app, want)) {
+			[apps addObject:app];
+			[excludedPIDs addObject:@(app.processID)];
+		}
+	}
+	NSMutableSet<NSNumber *> *pending = [NSMutableSet setWithCapacity:count];
+	for (size_t i = 0; i < count; ++i) {
+		[pending addObject:@(ids[i])];
+	}
+	NSMutableArray<SCWindow *> *windows = [NSMutableArray arrayWithCapacity:count];
+	for (SCWindow *window in content.windows) {
+		NSNumber *windowID = @(window.windowID);
+		if ([pending containsObject:windowID]) {
+			[pending removeObject:windowID];
+			if (![excludedPIDs containsObject:@(window.owningApplication.processID)]) {
+				[windows addObject:window];
+			}
+		}
+	}
+	if (pending.count != 0) {
+		*err = dupErr(@"无法在屏幕采集中过滤隐私遮罩窗口");
+		return nil;
+	}
+	*outDisplay = display;
+	if (apps.count == 0) {
+		return [[SCContentFilter alloc] initWithDisplay:display excludingWindows:windows];
+	}
+	// An exception in an included application is excluded. Avoid
+	// listing windows whose owner is already excluded: that includes them.
+	return [[SCContentFilter alloc] initWithDisplay:display excludingApplications:apps exceptingWindows:windows];
+}
+
+char *mmcap_exclude(void *s, const char *excludeApp, const uint32_t *ids, size_t count) {
+	@autoreleasepool {
+		MMCapture *cap = (__bridge MMCapture *)s;
+		SCDisplay *display = nil;
+		char *err = NULL;
+		SCContentFilter *filter = captureFilter(cap.displayID, NO, excludeApp, ids, count, &display, &err);
+		if (filter == nil) {
+			return err;
+		}
+		__block NSError *updateErr = nil;
+		dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+		[cap.stream updateContentFilter:filter completionHandler:^(NSError *e) {
+			updateErr = e;
+			dispatch_semaphore_signal(sem);
+		}];
+		if (!waitSem(sem)) {
+			return dupErr(@"更新屏幕采集过滤器超时");
+		}
+		return updateErr != nil ? dupErr(updateErr.localizedDescription) : NULL;
+	}
+}
+
 void *mmcap_start(int64_t intervalNs, int maxWidth, const char *excludeApp,
-                  uintptr_t handle, int *outW, int *outH, char **err) {
+                  const uint32_t *ids, size_t count, uintptr_t handle, int *outW, int *outH, char **err) {
 	@autoreleasepool {
 		if (@available(macOS 12.3, *)) {
 		} else {
@@ -114,52 +209,11 @@ void *mmcap_start(int64_t intervalNs, int maxWidth, const char *excludeApp,
 			return NULL;
 		}
 
-		__block SCShareableContent *content = nil;
-		__block NSError *contentErr = nil;
-		dispatch_semaphore_t sem = dispatch_semaphore_create(0);
-		[SCShareableContent getShareableContentWithCompletionHandler:^(SCShareableContent *c, NSError *e) {
-			content = c;
-			contentErr = e;
-			dispatch_semaphore_signal(sem);
-		}];
-		if (!waitSem(sem)) {
-			*err = dupErr(@"capture: timed out getting shareable content");
-			return NULL;
-		}
-		if (content == nil) {
-			*err = dupErr([NSString stringWithFormat:@"capture: shareable content: %@",
-			               contentErr.localizedDescription ?: @"unknown error"]);
-			return NULL;
-		}
-
-		CGDirectDisplayID mainID = CGMainDisplayID();
 		SCDisplay *display = nil;
-		for (SCDisplay *d in content.displays) {
-			if (d.displayID == mainID) {
-				display = d;
-				break;
-			}
-		}
-		if (display == nil) {
-			display = content.displays.firstObject;
-		}
-		if (display == nil) {
-			*err = dupErr(@"capture: no display available");
+		SCContentFilter *filter = captureFilter(CGMainDisplayID(), YES, excludeApp, ids, count, &display, err);
+		if (filter == nil) {
 			return NULL;
 		}
-
-		NSMutableArray<SCRunningApplication *> *excluded = [NSMutableArray array];
-		NSString *want = excludeApp != NULL ? [NSString stringWithUTF8String:excludeApp] : @"";
-		if (want.length > 0) {
-			for (SCRunningApplication *app in content.applications) {
-				if (appMatches(app, want)) {
-					[excluded addObject:app];
-				}
-			}
-		}
-		SCContentFilter *filter = [[SCContentFilter alloc] initWithDisplay:display
-		                                             excludingApplications:excluded
-		                                                  exceptingWindows:@[]];
 
 		size_t pw = 0, ph = 0;
 		CGDisplayModeRef mode = CGDisplayCopyDisplayMode(display.displayID);
@@ -191,6 +245,7 @@ void *mmcap_start(int64_t intervalNs, int maxWidth, const char *excludeApp,
 
 		MMCapture *cap = [[MMCapture alloc] init];
 		cap.handle = handle;
+		cap.displayID = display.displayID;
 		cap.config = cfg;
 		cap.queue = dispatch_queue_create("kkdesk.capture", DISPATCH_QUEUE_SERIAL);
 		dispatch_queue_set_specific(cap.queue, kQueueKey, (__bridge void *)cap, NULL);

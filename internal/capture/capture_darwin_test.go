@@ -72,3 +72,23 @@ func TestCaptureMainDisplay(t *testing.T) {
 		}
 	}
 }
+
+func TestCaptureWindowExclusionRejectsMissingWindow(t *testing.T) {
+	if !HasPermission() {
+		t.Skip("Screen Recording permission missing")
+	}
+	s, err := Start(Options{FPS: 30, MaxWidth: 320}, func(Frame) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := ExcludeWindows(s, []uint32{^uint32(0)}); err == nil {
+		t.Fatal("capture accepted an unresolvable window exclusion")
+	}
+	if err := ExcludeWindows(s, nil); err != nil {
+		t.Fatalf("restore default filter: %v", err)
+	}
+	if err := s.(*darwinSession).reopen(); err != nil {
+		t.Fatalf("invalid exclusion was retained on reopen: %v", err)
+	}
+}

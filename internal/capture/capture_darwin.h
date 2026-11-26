@@ -2,13 +2,15 @@
 #define KKDESK_CAPTURE_DARWIN_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 // mmcap_start starts a ScreenCaptureKit stream of the main display with
 // minimumFrameInterval = intervalNs. On
 // success it returns an opaque session and stores the output size; on
 // failure it returns NULL and stores a malloc'ed message in *err.
 void *mmcap_start(int64_t intervalNs, int maxWidth, const char *excludeApp,
-                  uintptr_t handle, int *outW, int *outH, char **err);
+                  const uint32_t *ids, size_t count, uintptr_t handle, int *outW, int *outH, char **err);
+char *mmcap_exclude(void *s, const char *excludeApp, const uint32_t *ids, size_t count);
 void mmcap_set_fps(void *s, int64_t intervalNs);
 // mmcap_stop stops the stream, waits until no frame callback is running
 // and releases the session.

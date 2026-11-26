@@ -995,7 +995,7 @@ func (h *Host) stream(p *session.Peer) error {
 	p.OnQuality(vs.setQuality)
 	requests := make(chan session.PrivacyMessage, 16)
 	h.mu.Lock()
-	ps := newHostPrivacy(h.cfg.PrivacyPolicy, h.cfg.privacyScreen(), nil,
+	ps := newHostPrivacy(h.cfg.PrivacyPolicy, h.cfg.privacyScreen(), func(ids []uint32) error { return capture.ExcludeWindows(capt, ids) },
 		func(status session.PrivacyStatus, detail string) {
 			_ = p.SendPrivacy(session.PrivacyMessage{Kind: session.PrivacyState, Status: status, Detail: detail})
 		}, h.notify)
