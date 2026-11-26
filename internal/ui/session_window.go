@@ -65,6 +65,7 @@ type sessionWin struct {
 	// UI thread
 	focused                      bool
 	accessibilityNoticeDismissed bool
+	dismissedPrivacyMessage      string
 	pressed                      [8]bool // buttons pressed inside the video, released remotely
 	viewport                     sessionViewport
 	menuOpen                     atomic.Bool
@@ -139,6 +140,23 @@ func (w *sessionWin) page(c *ui.Context) {
 					Banner().Closable().Show()
 				if notice.Closed() {
 					w.accessibilityNoticeDismissed = true
+					c.Invalidate()
+				}
+			}, layout.H(noticeHeight), layout.Shrink(0))
+			space.H -= noticeHeight
+		}
+		message := st.PrivacyMessage
+		if st.PrivacyPending {
+			message = "等待对方同意…"
+		}
+		if message != w.dismissedPrivacyMessage {
+			w.dismissedPrivacyMessage = ""
+		}
+		if message != "" && message != w.dismissedPrivacyMessage && st.Phase == app.ViewerStreaming {
+			const noticeHeight = 38
+			ui.Column(c, func() {
+				if ui.Alert(c, "info", message).Banner().Closable().Show().Closed() {
+					w.dismissedPrivacyMessage = message
 					c.Invalidate()
 				}
 			}, layout.H(noticeHeight), layout.Shrink(0))
@@ -253,6 +271,7 @@ func (w *sessionWin) popupMenu(x, y int, st app.ViewerState) {
 	m.Check("中继连接", st.Relayed, nil).SetDisabled(true)
 	m.Separator()
 	m.Check("仅查看", st.ViewOnly, func() { v.SetViewOnly(!st.ViewOnly) })
+	addPrivacyMenu(m, v, st)
 	m.Separator()
 	t := m.Submenu("工具")
 	t.Add("文件传输", func() {
@@ -273,6 +292,20 @@ func (w *sessionWin) popupMenu(x, y int, st app.ViewerState) {
 		}
 		w.invalidate()
 	}()
+}
+
+func addPrivacyMenu(m *menu.Menu, v *app.Viewer, st app.ViewerState) {
+	if v.FilesOnly() {
+		return
+	}
+	disabled := st.Phase != app.ViewerStreaming
+	m.Check("隐私屏", st.PrivacyScreen, func() {
+		go v.SetPrivacyScreen(!st.PrivacyScreen && !st.PrivacyPending)
+	}).SetDisabled(disabled)
+	m.Check("本次断开后锁屏", st.LockAfterDisconnect, func() {
+		go v.SetLockAfterDisconnect(!st.LockAfterDisconnect)
+	}).SetDisabled(disabled)
+	m.Add("锁屏并断开", func() { go v.LockAndDisconnect() }).SetDisabled(disabled)
 }
 
 func (w *sessionWin) toggleFullscreen() {
