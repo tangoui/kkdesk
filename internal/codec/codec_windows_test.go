@@ -23,6 +23,11 @@ type encodedAU struct {
 // at 30 fps, and returns the access units in output order. Frame forceKey
 // (if ≥ 0) requests a keyframe.
 func encodeSolid(t *testing.T, w, h, n int, y uint8, forceKey int) []encodedAU {
+	return encodeColor(t, w, h, n, y, 128, 128, forceKey)
+}
+
+// encodeColor is encodeSolid with a (y, u, v) picture.
+func encodeColor(t *testing.T, w, h, n int, y, u, v uint8, forceKey int) []encodedAU {
 	t.Helper()
 	var mu sync.Mutex
 	var outs []encodedAU
@@ -34,7 +39,7 @@ func encodeSolid(t *testing.T, w, h, n int, y uint8, forceKey int) []encodedAU {
 	if err != nil {
 		t.Fatalf("NewEncoder: %v", err)
 	}
-	tex, err := newSolidNV12(w, h, y, 128, 128)
+	tex, err := newSolidNV12(w, h, y, u, v)
 	if err != nil {
 		t.Fatalf("newSolidNV12: %v", err)
 	}
@@ -238,4 +243,52 @@ func TestDecodeAfterClose(t *testing.T) {
 	if err := dec.Decode([]byte{0, 0, 0, 1, 0x65, 0x88}, time.Now()); err == nil {
 		t.Fatal("Decode after Close returned nil")
 	}
+}
+
+// checkChroma decodes a solid (150, 90, 200) 1920x1080 picture and checks
+// U and V at the center and on the first and last chroma rows.
+func checkChroma(t *testing.T) {
+	aus := encodeColor(t, 1920, 1080, 10, 150, 90, 200, -1)
+	var mu sync.Mutex
+	var got [][6]uint8
+	dec, err := NewDecoder(func(pix uintptr, _ time.Time) {
+		u, v, err := chromaAt(pix, 960, 540)
+		if err != nil {
+			t.Errorf("chromaAt center: %v", err)
+		}
+		bu, bv, err := chromaAt(pix, 960, 1079)
+		if err != nil {
+			t.Errorf("chromaAt bottom: %v", err)
+		}
+		tu, tv, err := chromaAt(pix, 960, 0)
+		if err != nil {
+			t.Errorf("chromaAt top: %v", err)
+		}
+		mu.Lock()
+		got = append(got, [6]uint8{u, v, bu, bv, tu, tv})
+		mu.Unlock()
+	})
+	if err != nil {
+		t.Fatalf("NewDecoder: %v", err)
+	}
+	defer dec.Close()
+	decodeAll(t, dec, aus)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) == 0 {
+		t.Fatal("no pictures decoded")
+	}
+	near6 := func(a, b uint8) bool { return int(a) >= int(b)-6 && int(a) <= int(b)+6 }
+	for i, c := range got {
+		if !near6(c[0], 90) || !near6(c[1], 200) || !near6(c[2], 90) || !near6(c[3], 200) || !near6(c[4], 90) || !near6(c[5], 200) {
+			t.Fatalf("picture %d: UV center %d,%d bottom %d,%d top %d,%d, want ≈90,200", i, c[0], c[1], c[2], c[3], c[4], c[5])
+		}
+	}
+}
+
+func TestDecodeChroma(t *testing.T) { checkChroma(t) }
+
+func TestDecodeChromaSoftware(t *testing.T) {
+	t.Setenv("KKDESK_DECODER", "software")
+	checkChroma(t)
 }

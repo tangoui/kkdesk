@@ -75,9 +75,11 @@ func (v *View) Enqueue(pix uintptr, captureAt time.Time) (enqueuedAt time.Time, 
 	var w, h C.int32_t
 	hr := int32(C.mmdispw_enqueue(v.d, winmedia.Ptr(pix), &w, &h))
 	enqueuedAt = time.Now()
-	v.sizeMu.Lock()
-	v.w, v.h = int(w), int(h)
-	v.sizeMu.Unlock()
+	if w > 0 && h > 0 { // 0 when the texture was rejected
+		v.sizeMu.Lock()
+		v.w, v.h = int(w), int(h)
+		v.sizeMu.Unlock()
+	}
 	if hr < 0 {
 		return enqueuedAt, winmedia.Check("display: presenting the frame", hr)
 	}
@@ -126,6 +128,18 @@ func (v *View) hold(on bool) {
 		n = 1
 	}
 	C.mmdispw_hold(v.d, n)
+}
+
+// counts returns how many video processors and output views were created
+// (tests).
+func (v *View) counts() (processors, outputViews int) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	var p, o C.int32_t
+	if v.d != nil {
+		C.mmdispw_counts(v.d, &p, &o)
+	}
+	return int(p), int(o)
 }
 
 // presents returns the number of successful Present calls (tests).

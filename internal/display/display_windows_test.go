@@ -112,8 +112,8 @@ func TestNextVsyncWindows(t *testing.T) {
 	v := newTestView(t)
 	after := time.Now()
 	got := v.NextVsync(after)
-	if !got.After(after) || got.Sub(after) > 50*time.Millisecond {
-		t.Fatalf("NextVsync(%v) = %v (+%v), want within (0, 50ms]", after, got, got.Sub(after))
+	if got.Before(after) || got.Sub(after) > 50*time.Millisecond {
+		t.Fatalf("NextVsync(%v) = %v (+%v), want within [0, 50ms]", after, got, got.Sub(after))
 	}
 }
 
@@ -230,5 +230,118 @@ func TestResizeDoesNotWaitForPresent(t *testing.T) {
 	pump(300 * time.Millisecond)
 	if got := v.presents(); got <= n {
 		t.Fatalf("presents = %d, want > %d: the skipped repaint was not retried", got, n)
+	}
+}
+
+func TestNoSwapChainBeforePlacement(t *testing.T) {
+	v := newTestView(t) // 1×1 until the UI toolkit places it
+	if _, err := v.Enqueue(solid(t, 640, 360, 128), time.Now()); err != nil {
+		t.Fatalf("Enqueue before placement: %v", err)
+	}
+	if n := v.presents(); n != 0 {
+		t.Fatalf("presented %d times into an unplaced 1×1 window", n)
+	}
+	resize(t, v.Handle(), 320, 180)
+	if n := v.presents(); n == 0 {
+		t.Fatal("the frame received before placement was not shown once placed")
+	}
+}
+
+func TestEnqueueWrongFormatKeepsFrameSize(t *testing.T) {
+	v := newTestView(t)
+	resize(t, v.Handle(), 320, 180)
+	if _, err := v.Enqueue(solid(t, 640, 360, 128), time.Now()); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	bgra, err := newBGRA(100, 50)
+	if err != nil {
+		t.Fatalf("newBGRA: %v", err)
+	}
+	defer winmedia.Release(bgra)
+	if _, err := v.Enqueue(bgra, time.Now()); err == nil {
+		t.Fatal("Enqueue of a BGRA texture returned nil")
+	}
+	if w, h := v.FrameSize(); w != 640 || h != 360 {
+		t.Fatalf("FrameSize = %dx%d after a rejected frame, want 640x360", w, h)
+	}
+}
+
+func TestResizeReusesVideoProcessor(t *testing.T) {
+	v := newTestView(t)
+	resize(t, v.Handle(), 320, 180)
+	tex := solid(t, 640, 360, 128)
+	for i := 0; i < 5; i++ {
+		if _, err := v.Enqueue(tex, time.Now()); err != nil {
+			t.Fatalf("Enqueue %d: %v", i, err)
+		}
+	}
+	if _, views := v.counts(); views > 2 {
+		t.Errorf("%d output views for 5 frames into a 2-buffer swap chain, want ≤ 2", views)
+	}
+	for _, s := range [][2]int{{400, 300}, {500, 280}, {640, 480}} {
+		resize(t, v.Handle(), s[0], s[1])
+	}
+	if procs, _ := v.counts(); procs != 1 {
+		t.Errorf("%d video processors after 3 resizes with the same frame size, want 1", procs)
+	}
+}
+
+func TestEnqueueAcrossDevices(t *testing.T) {
+	v := newTestView(t)
+	resize(t, v.Handle(), 320, 180)
+	a := solid(t, 640, 360, 100)
+	b, err := newOtherDeviceNV12(640, 360, 200)
+	if err != nil {
+		t.Skipf("second device: %v", err)
+	}
+	defer winmedia.Release(b)
+	for i, tex := range []uintptr{a, b, a, b} {
+		if _, err := v.Enqueue(tex, time.Now()); err != nil {
+			t.Fatalf("Enqueue %d (device switch): %v", i, err)
+		}
+	}
+	if n := v.presents(); n != 4 {
+		t.Fatalf("presents = %d after 4 frames alternating devices, want 4", n)
+	}
+}
+
+func TestEnqueueFromAnotherThreadWhileResizing(t *testing.T) {
+	v := newTestView(t)
+	resize(t, v.Handle(), 320, 180)
+	tex := solid(t, 640, 360, 128)
+	stop := make(chan struct{})
+	errs := make(chan error, 1)
+	go func() { // the decoder thread
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+		for {
+			select {
+			case <-stop:
+				errs <- nil
+				return
+			default:
+			}
+			if _, err := v.Enqueue(tex, time.Now()); err != nil {
+				errs <- err
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}()
+	for i := 0; i < 40; i++ { // the window thread
+		resize(t, v.Handle(), 300+i*10, 200+i*5)
+		pump(5 * time.Millisecond)
+	}
+	close(stop)
+	select {
+	case err := <-errs:
+		if err != nil {
+			t.Fatalf("Enqueue on the decoder thread: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("decoder thread did not stop: deadlock between Enqueue and window messages?")
+	}
+	if n := v.presents(); n == 0 {
+		t.Error("nothing was presented")
 	}
 }
