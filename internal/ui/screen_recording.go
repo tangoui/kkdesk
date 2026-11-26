@@ -42,7 +42,7 @@ func (g *screenRecordingGuide) refresh(missing bool) {
 }
 
 func (g *screenRecordingGuide) entry(c *ui.Context) {
-	if g.missing && ui.Button(c, "配置屏幕录制权限").Clicked() {
+	if g.missing && ui.Button(c, "配置屏幕录制权限").Small().Clicked() {
 		g.open = true
 		c.Invalidate()
 	}

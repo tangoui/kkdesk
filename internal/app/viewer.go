@@ -58,14 +58,15 @@ const (
 
 // ViewerState is a snapshot for the UI.
 type ViewerState struct {
-	Phase      ViewerPhase
-	Addr       string
-	Err        string // why it ended, "" for a normal exit
-	ViewOnly   bool
-	BitrateBps int // 0 = auto
-	FPS        int
-	Stats      stats.Second // latest per-second aggregate
-	Relayed    bool
+	Phase               ViewerPhase
+	Addr                string
+	Err                 string // why it ended, "" for a normal exit
+	ViewOnly            bool
+	AccessibilityDenied bool
+	BitrateBps          int // 0 = auto
+	FPS                 int
+	Stats               stats.Second // latest per-second aggregate
+	Relayed             bool
 }
 
 // Viewer connects to a host and shows its screen. Methods are safe for
@@ -223,6 +224,7 @@ func (v *Viewer) Connect(ctx context.Context) error {
 	v.relayed = isRemote && p.Relayed()
 	fps, bps := v.fps, v.bitrate
 	v.mu.Unlock()
+	p.OnAccessibilityChange(v.notify)
 	p.OnVideo(v.video)
 	go v.watch(p)
 	addSession(v)
@@ -351,6 +353,9 @@ func (v *Viewer) State() ViewerState {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	s := ViewerState{Phase: v.phase, Addr: v.cfg.Addr, Err: v.errMsg, ViewOnly: v.viewOnly, BitrateBps: v.bitrate, FPS: v.fps, Relayed: v.relayed}
+	if v.peer != nil {
+		s.AccessibilityDenied = v.peer.AccessibilityDenied()
+	}
 	if v.rec != nil {
 		s.Stats = v.rec.Last()
 	}
@@ -412,7 +417,7 @@ func (v *Viewer) Send(e input.Event) {
 	v.mu.Lock()
 	p, off := v.peer, v.viewOnly
 	v.mu.Unlock()
-	if p == nil || off {
+	if p == nil || off || p.AccessibilityDenied() {
 		return
 	}
 	_ = p.SendInput(e)

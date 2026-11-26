@@ -270,7 +270,7 @@ class KOptionGroup extends StatelessWidget {
   );
 }
 
-enum KNoticeKind { success, error, info }
+enum KNoticeKind { success, error, info, warning }
 
 class KNotice {
   static final _active = <OverlayState, VoidCallback>{};
@@ -283,11 +283,6 @@ class KNotice {
   }) {
     final overlay = Overlay.of(context);
     _active[overlay]?.call();
-    final (color, icon) = switch (kind) {
-      KNoticeKind.success => (green, CupertinoIcons.check_mark),
-      KNoticeKind.error => (red, CupertinoIcons.exclamationmark),
-      KNoticeKind.info => (blue, CupertinoIcons.info),
-    };
     late final OverlayEntry entry;
     Timer? timer;
     void dismiss() {
@@ -317,45 +312,11 @@ class KNotice {
                     child: child,
                   ),
                 ),
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: context.card,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: context.line),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Colors.black26,
-                        blurRadius: 18,
-                        offset: Offset(0, 5),
-                      ),
-                    ],
-                  ),
-                  child: Semantics(
-                    liveRegion: true,
-                    child: _overlayText(
-                      context,
-                      KRow(
-                        title: title,
-                        subtitle: detail,
-                        leading: Container(
-                          width: 33,
-                          height: 33,
-                          decoration: BoxDecoration(
-                            color: color,
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(icon, color: Colors.white, size: 19),
-                        ),
-                        trailing: KIconButton(
-                          tooltip: '关闭提示',
-                          extent: 37,
-                          color: context.muted,
-                          icon: const Icon(CupertinoIcons.xmark, size: 15),
-                          onPressed: dismiss,
-                        ),
-                      ),
-                    ),
-                  ),
+                child: KNoticeBar(
+                  title: title,
+                  detail: detail,
+                  kind: kind,
+                  onDismiss: dismiss,
                 ),
               ),
             ),
@@ -366,5 +327,68 @@ class KNotice {
     _active[overlay] = dismiss;
     overlay.insert(entry);
     timer = Timer(const Duration(seconds: 4), dismiss);
+  }
+}
+
+/// Notice content shared by transient overlays and persistent page notices.
+class KNoticeBar extends StatelessWidget {
+  const KNoticeBar({
+    super.key,
+    required this.title,
+    this.detail,
+    this.kind = KNoticeKind.info,
+    required this.onDismiss,
+  });
+
+  final String title;
+  final String? detail;
+  final KNoticeKind kind;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final (color, icon) = switch (kind) {
+      KNoticeKind.success => (green, CupertinoIcons.check_mark),
+      KNoticeKind.error => (red, CupertinoIcons.exclamationmark),
+      KNoticeKind.warning => (amber, CupertinoIcons.exclamationmark),
+      KNoticeKind.info => (blue, CupertinoIcons.info),
+    };
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: context.card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: context.line),
+        boxShadow: const [
+          BoxShadow(
+            color: Colors.black26,
+            blurRadius: 18,
+            offset: Offset(0, 5),
+          ),
+        ],
+      ),
+      child: Semantics(
+        liveRegion: true,
+        child: _overlayText(
+          context,
+          KRow(
+            title: title,
+            subtitle: detail,
+            leading: Container(
+              width: 33,
+              height: 33,
+              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+              child: Icon(icon, color: Colors.white, size: 19),
+            ),
+            trailing: KIconButton(
+              tooltip: '关闭提示',
+              extent: 37,
+              color: context.muted,
+              icon: const Icon(CupertinoIcons.xmark, size: 15),
+              onPressed: onDismiss,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

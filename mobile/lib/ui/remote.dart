@@ -40,6 +40,8 @@ class RemotePage extends StatefulWidget {
   State<RemotePage> createState() => _RemotePageState();
 }
 
+const _accessibilityWarning = '对方未允许键盘鼠标控制，当前只能查看';
+
 enum _Panel { menu, touch, screens, quality, more }
 
 class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
@@ -57,6 +59,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   Timer? _imeDismiss;
   _Panel? _panel;
   String? _caption;
+  bool _accessibilityNoticeDismissed = false;
   bool _keyboard = false;
   bool _imeWasVisible = false;
   bool _draggingBall = false;
@@ -134,6 +137,13 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
       _connectedAt ??= DateTime.now();
       _connectedClock.start();
       _connectionPath = status.path;
+    }
+    if (!status.accessibilityDenied) {
+      _accessibilityNoticeDismissed = false;
+    } else {
+      _hold?.cancel();
+      _touch.cancel();
+      _closeKeyboard();
     }
     if (status.phase == RemotePhase.ended) {
       _recordConnection();
@@ -258,6 +268,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
 
   void _pointerDown(PointerDownEvent event) {
     if (widget.viewOnly ||
+        widget.session.status.accessibilityDenied ||
         widget.session.status.phase != RemotePhase.connected) {
       return;
     }
@@ -337,7 +348,29 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                   ),
                 if (widget.session.status.phase != RemotePhase.connected)
                   _connectionOverlay(),
+                if (widget.session.status.accessibilityDenied &&
+                    !_accessibilityNoticeDismissed &&
+                    _panel == null &&
+                    widget.session.status.phase == RemotePhase.connected)
+                  Positioned(
+                    top: safe.top + 9,
+                    left: safe.left + 16,
+                    right: safe.right + 16,
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 460),
+                        child: KNoticeBar(
+                          title: _accessibilityWarning,
+                          kind: KNoticeKind.warning,
+                          onDismiss: () => setState(
+                            () => _accessibilityNoticeDismissed = true,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 if (widget.viewOnly &&
+                    !widget.session.status.accessibilityDenied &&
                     widget.session.status.phase == RemotePhase.connected)
                   Positioned(
                     top: safe.top + 9,
@@ -414,6 +447,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                     child: video!,
                   ),
                   if (!widget.viewOnly &&
+                      !widget.session.status.accessibilityDenied &&
                       _touch.mode == TouchMode.trackpad &&
                       widget.session.status.phase == RemotePhase.connected)
                     Positioned(
@@ -594,7 +628,8 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   List<Widget> _menuRows() {
     final session = widget.session;
     final connected = session.status.phase == RemotePhase.connected;
-    final touchAllowed = connected && !widget.viewOnly;
+    final touchAllowed =
+        connected && !widget.viewOnly && !session.status.accessibilityDenied;
     final trackpad = _touch.mode == TouchMode.trackpad;
     switch (_panel!) {
       case _Panel.menu:
@@ -872,8 +907,8 @@ class _ConnectionStatus extends StatelessWidget {
     final label = connected
         ? '${latency == null ? '—' : '$latency ms'} · ${status.path.label} · ${fps == null ? '—' : '$fps 帧'}'
         : '正在连接…';
-    return SizedBox(
-      height: 37,
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 37),
       child: Row(
         children: [
           const SizedBox(width: 5),
@@ -881,7 +916,10 @@ class _ConnectionStatus extends StatelessWidget {
             width: 7,
             height: 7,
             decoration: BoxDecoration(
-              color: !connected || status.path == ConnectionPath.relay
+              color:
+                  !connected ||
+                      status.accessibilityDenied ||
+                      status.path == ConnectionPath.relay
                   ? amber
                   : green,
               shape: BoxShape.circle,
@@ -889,9 +927,23 @@ class _ConnectionStatus extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              label,
-              style: TextStyle(color: context.muted, fontSize: 13),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 7),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    label,
+                    style: TextStyle(color: context.muted, fontSize: 13),
+                  ),
+                  if (status.accessibilityDenied)
+                    const Text(
+                      _accessibilityWarning,
+                      style: TextStyle(color: amber, fontSize: 12),
+                    ),
+                ],
+              ),
             ),
           ),
         ],

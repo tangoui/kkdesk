@@ -62,11 +62,12 @@ type sessionWin struct {
 	surface atomic.Pointer[tango.Surface]
 
 	// UI thread
-	focused    bool
-	pressed    [8]bool // buttons pressed inside the video, released remotely
-	viewport   sessionViewport
-	menuOpen   atomic.Bool
-	fullscreen atomic.Bool
+	focused                      bool
+	accessibilityNoticeDismissed bool
+	pressed                      [8]bool // buttons pressed inside the video, released remotely
+	viewport                     sessionViewport
+	menuOpen                     atomic.Bool
+	fullscreen                   atomic.Bool
 }
 
 // OpenSession opens the session window for a connected viewer. onEnd gets
@@ -121,11 +122,26 @@ func (w *sessionWin) invalidate() {
 
 func (w *sessionWin) page(c *ui.Context) {
 	st := w.v.State()
+	if !st.AccessibilityDenied {
+		w.accessibilityNoticeDismissed = false
+	}
 	ui.Column(c, func() {
 		w.strip(c, st)
 		fw, fh := w.v.FrameSize()
 		space := c.Size()
 		space.H -= sessionStripHeight
+		if st.AccessibilityDenied && st.Phase != app.ViewerClosed && !w.accessibilityNoticeDismissed {
+			const noticeHeight = 38
+			ui.Column(c, func() {
+				notice := ui.Alert(c, "warning", "对方未允许键盘鼠标控制，当前只能查看").
+					Banner().Closable().Show()
+				if notice.Closed() {
+					w.accessibilityNoticeDismissed = true
+					c.Invalidate()
+				}
+			}, layout.H(noticeHeight), layout.Shrink(0))
+			space.H -= noticeHeight
+		}
 		w.viewport.render(c, space, fw, fh, func(viewport ui.ID, opts ...layout.Option) {
 			w.screen(c, st, viewport, fw, fh, opts...)
 		})
@@ -175,7 +191,7 @@ func (w *sessionWin) phaseTags(c *ui.Context, st app.ViewerState) {
 		}
 		ui.Tag(c, msg).Color("error")
 	}
-	if st.ViewOnly {
+	if st.ViewOnly || st.AccessibilityDenied {
 		ui.Tag(c, "仅查看").Color("blue")
 	}
 }

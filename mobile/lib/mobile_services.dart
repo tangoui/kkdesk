@@ -118,6 +118,7 @@ class RemoteStatus {
     this.latency,
     this.fps,
     this.detail,
+    this.accessibilityDenied = false,
   });
 
   final RemotePhase phase;
@@ -125,6 +126,7 @@ class RemoteStatus {
   final int? latency;
   final int? fps;
   final String? detail;
+  final bool accessibilityDenied;
 }
 
 abstract interface class RemoteSession implements Listenable {

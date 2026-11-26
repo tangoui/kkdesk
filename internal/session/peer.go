@@ -81,11 +81,13 @@ type Peer struct {
 	t0        time.Time
 	started   bool
 
-	mu         sync.Mutex
-	onVideo    func([]byte, time.Time)
-	onInput    func(input.Event)
-	onKeyframe func()
-	onQuality  func(Quality)
+	mu                    sync.Mutex
+	onVideo               func([]byte, time.Time)
+	onInput               func(input.Event)
+	onKeyframe            func()
+	onQuality             func(Quality)
+	accessibilityDenied   bool
+	onAccessibilityChange func()
 	// onClipboard receives clipboard text; clip joins its chunks (meta
 	// channel callback only).
 	onClipboard func(string)
@@ -277,6 +279,8 @@ func (p *Peer) handleMeta(msg webrtc.DataChannelMessage) {
 		p.handleClip(b)
 	case metaPing, metaPong:
 		p.handleClock(b)
+	case metaAccessibility:
+		p.handleAccessibility(msg)
 	case metaCapture:
 		if len(b) != 13 || p.isHost {
 			return
