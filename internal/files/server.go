@@ -27,6 +27,8 @@ type Server struct {
 	downloads map[uint64]context.CancelCauseFunc
 	canceled  map[uint64]bool
 	sendSem   chan struct{} // one download sends at a time
+
+	uploadEpoch uint64 // incremented when access is revoked or the channel closes
 }
 
 // NewServer serves files over ch. allowed is consulted on every request and
@@ -94,6 +96,7 @@ func (s *Server) active() int {
 // abortAll stops every transfer; notify tells the client why.
 func (s *Server) abortAll(cause error, notify bool) {
 	s.mu.Lock()
+	s.uploadEpoch++
 	ups := s.uploads
 	s.uploads = map[uint64]*incoming{}
 	for _, cancel := range s.downloads {
@@ -190,6 +193,13 @@ func (s *Server) cancel(id uint64) {
 }
 
 func (s *Server) uploadBegin(m *msg) error {
+	s.mu.Lock()
+	epoch := s.uploadEpoch
+	err := s.uploadStatusLocked(m.Transfer, epoch)
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
 	dir, err := absPath(m.Dir)
 	if err != nil {
 		return err
@@ -207,21 +217,39 @@ func (s *Server) uploadBegin(m *msg) error {
 	if err := root.MkdirAll(parent, 0o755); err != nil {
 		return localError(err)
 	}
-	s.mu.Lock()
-	canceled := s.canceled[m.Transfer]
-	s.mu.Unlock()
-	if canceled {
-		return ErrCanceled
-	}
 	in, err := newIncoming(root, parts, m.Size, m.Mode, m.MTime)
 	if err != nil {
 		return localError(err)
 	}
 	in.rel = m.Rel
+	return s.registerUpload(m.Transfer, epoch, in)
+}
+
+func (s *Server) uploadStatusLocked(id, epoch uint64) error {
+	switch {
+	case s.ep.isClosed():
+		return ErrClosed
+	case epoch != s.uploadEpoch || !s.allowed():
+		return ErrDenied
+	case s.canceled[id]:
+		return ErrCanceled
+	default:
+		return nil
+	}
+}
+
+func (s *Server) registerUpload(id, epoch uint64, in *incoming) error {
 	s.mu.Lock()
-	old := s.uploads[m.Transfer]
-	s.uploads[m.Transfer] = in
+	err := s.uploadStatusLocked(id, epoch)
+	old := s.uploads[id]
+	if err == nil {
+		s.uploads[id] = in
+	}
 	s.mu.Unlock()
+	if err != nil {
+		in.abort()
+		return err
+	}
 	if old != nil {
 		old.abort()
 	}
@@ -230,22 +258,64 @@ func (s *Server) uploadBegin(m *msg) error {
 
 func (s *Server) uploadEnd(m *msg) (string, error) {
 	s.mu.Lock()
-	in := s.uploads[m.Transfer]
-	delete(s.uploads, m.Transfer)
+	id, epoch := m.Transfer, s.uploadEpoch
+	in := s.uploads[id]
+	err := s.uploadStatusLocked(id, epoch)
+	if err != nil {
+		delete(s.uploads, id)
+	}
 	s.mu.Unlock()
+	if err != nil {
+		if in != nil {
+			in.abort()
+		}
+		return "", err
+	}
 	if in == nil {
 		return "", &RemoteError{Code: codeInvalid, Detail: "no file in progress"}
 	}
+	defer func() {
+		s.mu.Lock()
+		if s.uploads[id] == in {
+			delete(s.uploads, id)
+		}
+		s.mu.Unlock()
+	}()
 	if m.Error != "" {
 		in.abort()
 		return "", errorFor(m.Error, m.Detail)
 	}
-	dir := in.parent.Name()
-	name, err := in.finish(m.SHA256)
+	name, err := in.finish(m.SHA256, func(place func() error) error {
+		return s.commitUpload(id, epoch, in, place)
+	})
+	if err != nil {
+		s.mu.Lock()
+		if stop := s.uploadStatusLocked(id, epoch); stop != nil {
+			err = stop
+		}
+		s.mu.Unlock()
+	}
 	el := time.Since(in.started)
 	s.log("files: received %s: %d bytes in %v (%.1f MB/s), err=%v",
-		filepath.Join(dir, name), in.wrote, el.Round(time.Millisecond), float64(in.wrote)/max(el.Seconds(), 1e-9)/1e6, err)
+		filepath.Join(in.logDir, name), in.wrote, el.Round(time.Millisecond), float64(in.wrote)/max(el.Seconds(), 1e-9)/1e6, err)
 	return name, err
+}
+
+// commitUpload orders each attempt to publish the file against abortAll.
+func (s *Server) commitUpload(id, epoch uint64, in *incoming, place func() error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.uploadStatusLocked(id, epoch); err != nil {
+		return err
+	}
+	if s.uploads[id] != in {
+		return ErrCanceled
+	}
+	err := place()
+	if err == nil {
+		delete(s.uploads, id)
+	}
+	return err
 }
 
 // download walks the requested path and streams it to the client.

@@ -62,6 +62,7 @@ type incoming struct {
 	root        *os.Root // bounds the final placement
 	parent      *os.Root // holds the temporary file's directory for cleanup
 	dir         string   // parent path relative to root
+	logDir      string   // parent path as displayed in server logs
 	name        string   // wanted (sanitized) name
 	tmp         string
 	f           *os.File
@@ -126,7 +127,7 @@ func newIncoming(root *os.Root, parts []string, size int64, mode uint32, mtime i
 			placement.Close()
 			return nil, err
 		}
-		return &incoming{root: placement, parent: parent, dir: dir, name: name, tmp: tmp, f: f, size: size, h: sha256.New(), mode: mode, mtime: mtime, started: time.Now()}, nil
+		return &incoming{root: placement, parent: parent, dir: dir, logDir: parent.Name(), name: name, tmp: tmp, f: f, size: size, h: sha256.New(), mode: mode, mtime: mtime, started: time.Now()}, nil
 	}
 	parent.Close()
 	placement.Close()
@@ -182,8 +183,9 @@ func (in *incoming) abortLocked() {
 }
 
 // finish verifies the file and moves it into place without overwriting
-// anything, returning the final name.
-func (in *incoming) finish(sum string) (string, error) {
+// anything, returning the final name. authorize, if set, guards the placement
+// against an upload being canceled or losing permission.
+func (in *incoming) finish(sum string, authorize func(func() error) error) (string, error) {
 	in.mu.Lock()
 	defer in.mu.Unlock()
 	err := in.err
@@ -220,7 +222,7 @@ func (in *incoming) finish(sum string) (string, error) {
 		t := time.Unix(0, in.mtime)
 		_ = in.root.Chtimes(tmp, t, t) // best effort
 	}
-	name, err := placeFile(in.root, in.dir, tmp, in.name)
+	name, err := placeFile(in.root, in.dir, tmp, in.name, authorize)
 	if err != nil {
 		in.abortLocked()
 		return "", localError(err)
@@ -239,23 +241,29 @@ func (in *incoming) finish(sum string) (string, error) {
 // placeFile moves tmp to dir under name or the first free "name (n)". A hard
 // link refuses to replace an existing file; file systems without hard links
 // fall back to a checked rename.
-func placeFile(root *os.Root, dir, tmp, name string) (string, error) {
+func placeFile(root *os.Root, dir, tmp, name string, authorize func(func() error) error) (string, error) {
+	if authorize == nil {
+		authorize = func(place func() error) error { return place() }
+	}
 	for i := 0; i < 10000; i++ {
 		candidate := numberedName(name, i)
 		dst := filepath.Join(dir, candidate)
-		err := root.Link(tmp, dst)
+		err := authorize(func() error { return root.Link(tmp, dst) })
 		if err == nil {
 			return candidate, nil
 		}
 		if errors.Is(err, os.ErrExist) {
 			continue // lost a race; pick another name
 		}
+		if errors.Is(err, ErrDenied) || errors.Is(err, ErrClosed) || errors.Is(err, ErrCanceled) {
+			return "", err
+		}
 		if _, statErr := root.Lstat(dst); statErr == nil {
 			continue
 		} else if !errors.Is(statErr, os.ErrNotExist) {
 			return "", statErr
 		}
-		if err := root.Rename(tmp, dst); err != nil {
+		if err := authorize(func() error { return root.Rename(tmp, dst) }); err != nil {
 			return "", err
 		}
 		return candidate, nil

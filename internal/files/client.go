@@ -313,7 +313,7 @@ func (t *Transfer) handle(m *msg) {
 			in.abort()
 			err = errorFor(m.Error, m.Detail)
 		} else {
-			name, err = in.finish(m.SHA256)
+			name, err = in.finish(m.SHA256, nil)
 		}
 		if err != nil {
 			t.addFailure(t.curRel, err)

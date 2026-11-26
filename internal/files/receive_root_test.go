@@ -56,7 +56,7 @@ func TestIncomingDoesNotCommitAfterParentMovesOut(t *testing.T) {
 	if err := os.Rename(parent, moved); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := in.finish(fmt.Sprintf("%x", sha256.Sum256(nil))); err == nil {
+	if _, err := in.finish(fmt.Sprintf("%x", sha256.Sum256(nil)), nil); err == nil {
 		t.Error("committed a file after its parent moved out of the receive root")
 	}
 	if entries, err := os.ReadDir(moved); err != nil || len(entries) != 0 {
