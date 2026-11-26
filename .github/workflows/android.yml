@@ -35,7 +35,8 @@ jobs:
         run: |
           echo "$GITHUB_WORKSPACE/.flutter/bin" >> "$GITHUB_PATH"
           .flutter/bin/flutter precache --android
-          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358"
       - name: Verify the app
         working-directory: mobile
         run: |
