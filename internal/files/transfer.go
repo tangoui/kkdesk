@@ -373,6 +373,12 @@ type Transfer struct {
 	curRel        string
 	receivedFiles int // matching end and skip events, including local failures
 	failed        map[string]bool
+	// want is the name the download must arrive under (the last element of
+	// the requested path): one file of that name, or one folder of that
+	// name and content below it. kind is 0 until the first entry, then
+	// kindFile or kindDir.
+	want string
+	kind int
 }
 
 func (t *Transfer) addFailure(rel string, err error) {
