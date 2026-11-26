@@ -385,3 +385,39 @@ func TestClampQuality(t *testing.T) {
 		}
 	}
 }
+
+// A click meant for one request (say it timed out as the user clicked) must
+// not accept the request that replaced it.
+func TestAcceptRequestIsBoundToTheRequest(t *testing.T) {
+	h := NewHost(HostConfig{Pairing: testHostIdentity(t), Addr: "127.0.0.1:0", Password: "123456", Rotate: config.RotateNever}, nil)
+	defer h.Close()
+	if err := h.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	first, err := dialFiles(t, h.ListenAddr(), "123456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "first request", func() bool { return h.State().Phase == HostPending })
+	old := h.State().Request
+	if old == 0 {
+		t.Fatal("a pending request has no id")
+	}
+	closeAndWait(t, h, first) // the first request goes away
+	second, err := dialFiles(t, h.ListenAddr(), "123456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	waitFor(t, "second request", func() bool { return h.State().Phase == HostPending })
+	if h.State().Request == old {
+		t.Fatal("the new request reused the old id")
+	}
+	h.AcceptRequest(old)
+	time.Sleep(200 * time.Millisecond)
+	if p := h.State().Phase; p != HostPending {
+		t.Fatalf("accepting the old request changed the new one to %v", p)
+	}
+	h.AcceptRequest(h.State().Request)
+	waitFor(t, "accepted", func() bool { return h.State().Phase == HostActive })
+}

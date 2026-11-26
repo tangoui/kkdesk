@@ -107,6 +107,9 @@ type HostState struct {
 	AutoAccept    bool      // connections are accepted without asking
 	Peer          string    // remote address while pending or active
 	Since         time.Time // active: session start; pending: request time
+	// Request identifies the pending request; pass it to AcceptRequest or
+	// RejectRequest so a click cannot answer a request that replaced it.
+	Request uint64
 	Deadline      time.Time // pending: automatic rejection
 	Err           string    // last error or permission guidance
 	Notice        string    // informational message (e.g. last session ended)
@@ -145,6 +148,8 @@ type Host struct {
 	peer              *session.Peer
 	since             time.Time
 	decide            chan bool
+	request           uint64 // id of the request waiting in decide (0: none)
+	requestSeq        uint64
 	errMsg            string
 	notice            string
 	busy              bool
@@ -491,6 +496,7 @@ func (h *Host) State() HostState {
 		}
 		s.RemotePeer = h.remotePeer
 		s.Since = h.since
+		s.Request = h.request
 		s.FilesOnly = h.peer.Mode() == session.ModeFiles
 		if h.phase == HostPending {
 			s.Deadline = h.since.Add(ConfirmTimeout)
@@ -690,16 +696,28 @@ func (h *Host) RefreshPassword() {
 	h.notify()
 }
 
-// Accept accepts the pending connection.
-func (h *Host) Accept() { h.answer(true) }
+// Accept accepts whatever connection is pending.
+func (h *Host) Accept() { h.answer(0, true) }
 
-// Reject rejects the pending connection.
-func (h *Host) Reject() { h.answer(false) }
+// Reject rejects whatever connection is pending.
+func (h *Host) Reject() { h.answer(0, false) }
 
-func (h *Host) answer(ok bool) {
+// AcceptRequest accepts the pending connection if it is still request id
+// (HostState.Request).
+func (h *Host) AcceptRequest(id uint64) { h.answer(id, true) }
+
+// RejectRequest rejects the pending connection if it is still request id.
+func (h *Host) RejectRequest(id uint64) { h.answer(id, false) }
+
+// answer decides the pending request; id 0 means whichever is pending.
+func (h *Host) answer(id uint64, ok bool) {
 	h.mu.Lock()
+	if id != 0 && id != h.request {
+		h.mu.Unlock()
+		return
+	}
 	ch := h.decide
-	h.decide = nil
+	h.decide, h.request = nil, 0
 	h.mu.Unlock()
 	if ch != nil {
 		ch <- ok
@@ -840,7 +858,8 @@ func (h *Host) handle(p *session.Peer, listenCtx context.Context, remote bool, p
 	var ch chan bool
 	if confirm {
 		ch = make(chan bool, 1)
-		h.decide = ch
+		h.requestSeq++
+		h.decide, h.request = ch, h.requestSeq
 		h.phase = HostPending
 	}
 	h.mu.Unlock()
@@ -851,6 +870,7 @@ func (h *Host) handle(p *session.Peer, listenCtx context.Context, remote bool, p
 		p.Close()
 		h.mu.Lock()
 		h.busy, h.peer, h.decide, h.fsrv = false, nil, nil, nil
+		h.request = 0
 		h.remotePeer = false
 		h.mobile.peerKey = ""
 		h.mobile.biometricEnrollment = false

@@ -108,9 +108,9 @@ func (m *Main) confirm(c *ui.Context, hs app.HostState) {
 	})
 	switch {
 	case accept:
-		go m.o.Host.Accept()
+		go m.o.Host.AcceptRequest(hs.Request)
 	case reject || md.Cancelled() || !open:
-		go m.o.Host.Reject()
+		go m.o.Host.RejectRequest(hs.Request)
 	}
 }
 
