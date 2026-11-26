@@ -1,6 +1,7 @@
 package appui
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -330,7 +331,7 @@ func (w *sessionWin) screen(c *ui.Context, st app.ViewerState, viewport ui.ID, f
 		c.SetFocus(id)
 	}
 	if err := nh.Err(); err != nil {
-		ui.Text(c, "无法显示远程画面："+err.Error())
+		screenError(c, err)
 	}
 	if st.Phase == app.ViewerClosed {
 		return
@@ -398,4 +399,20 @@ func (w *sessionWin) anyPressed() bool {
 		}
 	}
 	return false
+}
+
+// screenError tells why the remote screen cannot be shown, on a card over
+// the (black) screen box so it is not lost under it.
+func screenError(c *ui.Context, err error) {
+	th := c.Theme
+	msg := "无法显示远程画面：" + err.Error()
+	if errors.Is(err, uihost.ErrNoNativeHost) {
+		// tan dev renders the window in another process, which cannot embed
+		// the native video view.
+		msg = "无法显示远程画面：当前窗口不能嵌入视频画面（例如在 tan dev 热重载下运行）。请用正式构建的 kkdesk 连接。"
+	}
+	ui.Column(c, func() {
+		ui.Text(c, msg).Color(th.Error.Base)
+	}, layout.Abs(16, 16, 16, layout.Unset), layout.Pad(12)).
+		Bg(th.BgElevated).Radius(th.RadiusLG).Border(1, th.Error.Border)
 }
