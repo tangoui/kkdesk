@@ -33,3 +33,39 @@ func TestQualityMenuLabelsAndSelection(t *testing.T) {
 		t.Fatalf("8 Mbps selected the wrong quality: %+v", st)
 	}
 }
+
+func TestPrivacyMenuUsesHostState(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  app.ViewerConfig
+		st   app.ViewerState
+		want int
+	}{
+		{"desktop", app.ViewerConfig{}, app.ViewerState{Phase: app.ViewerStreaming}, 3},
+		{"view-only", app.ViewerConfig{ViewOnly: true}, app.ViewerState{
+			Phase: app.ViewerStreaming, ViewOnly: true, PrivacyScreen: true, LockAfterDisconnect: true,
+		}, 3},
+		{"files", app.ViewerConfig{FilesOnly: true}, app.ViewerState{Phase: app.ViewerStreaming}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := app.NewViewer(tc.cfg, nil)
+			m := menu.New()
+			addPrivacyMenu(m, v, tc.st)
+			if len(m.Items) != tc.want {
+				t.Fatalf("got %d entries, want %d", len(m.Items), tc.want)
+			}
+			if tc.want == 0 {
+				return
+			}
+			if m.Items[0].Label != "隐私屏" || !m.Items[0].Checkable || m.Items[0].Checked != tc.st.PrivacyScreen {
+				t.Fatalf("privacy screen item = %+v", m.Items[0])
+			}
+			if m.Items[1].Label != "本次断开后锁屏" || !m.Items[1].Checkable || m.Items[1].Checked != tc.st.LockAfterDisconnect {
+				t.Fatalf("lock on disconnect item = %+v", m.Items[1])
+			}
+			if m.Items[2].Label != "锁屏并断开" || m.Items[2].Checkable {
+				t.Fatalf("lock now item = %+v", m.Items[2])
+			}
+		})
+	}
+}

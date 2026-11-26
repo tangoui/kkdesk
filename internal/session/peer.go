@@ -86,6 +86,8 @@ type Peer struct {
 	onInput               func(input.Event)
 	onKeyframe            func()
 	onQuality             func(Quality)
+	onPrivacy             func(PrivacyMessage)
+	receivedBye           atomic.Bool
 	accessibilityDenied   bool
 	onAccessibilityChange func()
 	// onClipboard receives clipboard text; clip joins its chunks (meta
@@ -291,7 +293,10 @@ func (p *Peer) handleMeta(msg webrtc.DataChannelMessage) {
 		p.mu.Lock()
 		p.reason = string(b[1:])
 		p.mu.Unlock()
+		p.receivedBye.Store(true)
 		p.shutdown()
+	case byte(PrivacyRequest), byte(PrivacyState), byte(LockOnDisconnectRequest), byte(LockOnDisconnectState), byte(LockNowRequest), byte(LockNowResult):
+		p.handlePrivacy(msg)
 	case metaQuality:
 		p.handleQuality(b)
 	case metaClip:
@@ -705,9 +710,9 @@ func (p *Peer) CloseWithReason(reason string) error {
 			meta := p.dcMeta
 			p.mu.Unlock()
 			if meta != nil && meta.ReadyState() == webrtc.DataChannelStateOpen {
-				if meta.Send(append([]byte{metaBye}, reason...)) == nil && reason != "" {
-					// The other side may notice the closed connection before
-					// the bye message; give the reason a moment to arrive.
+				if meta.Send(append([]byte{metaBye}, reason...)) == nil && (reason != "" || (!p.isHost && p.mode == ModeDesktop)) {
+					// Let the bye arrive before closing the transport. A
+					// desktop host uses even an empty bye to decide when to lock.
 					time.Sleep(reasonWait)
 				}
 			}

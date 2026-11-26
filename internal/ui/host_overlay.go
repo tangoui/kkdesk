@@ -114,6 +114,36 @@ func (m *Main) confirm(c *ui.Context, hs app.HostState) {
 	}
 }
 
+func privacyConsentDialog(c *ui.Context, deadline time.Time) (allow, reject bool) {
+	open := true
+	left := max(0, int((time.Until(deadline)+time.Second-1)/time.Second))
+	c.WakeAt(time.Now().Add(time.Second))
+	dialog := ui.Modal(c, &open, "隐私屏请求").Width(min(420, c.Size().W-32)).MaskClosable(false).
+		Footer(func() {
+			reject, allow = confirmFooter(c, "拒绝", "允许", "自动拒绝", left)
+		}).Body(func() {
+		ui.Alert(c, "warning", "对方请求开启隐私屏。你的屏幕会变黑，对方仍能看到并操作你的电脑。").ShowIcon(true).Show()
+	})
+	return allow, reject || dialog.Cancelled() || !open
+}
+
+func lockGraceText(remaining time.Duration) string {
+	if remaining <= 0 {
+		return "正在锁屏…"
+	}
+	return fmt.Sprintf("连接已断开，%d 秒后锁屏", (remaining+time.Second-1)/time.Second)
+}
+
+func (m *Main) lockGrace(c *ui.Context, deadline time.Time) {
+	c.WakeAt(time.Now().Add(time.Second))
+	ui.Row(c, func() {
+		ui.Alert(c, "warning", lockGraceText(time.Until(deadline))).ShowIcon(true).Show()
+		if ui.Button(c, "取消锁屏").Small().Clicked() {
+			m.o.Host.CancelPendingLock()
+		}
+	}, layout.Middle(), layout.WrapItems(), layout.Gap(8))
+}
+
 // controlledPanel is the bottom-right card shown while being controlled.
 func (m *Main) controlledPanel(c *ui.Context, hs app.HostState) {
 	th := c.Theme
@@ -140,6 +170,12 @@ func (m *Main) controlledPanel(c *ui.Context, hs app.HostState) {
 				}
 			}
 		}, layout.GapXY(6, 6), layout.WrapItems())
+		if hs.PrivacyScreen {
+			ui.Text(c, "隐私屏已开启").Size(12).Secondary()
+		}
+		if hs.LockAfterDisconnect {
+			ui.Text(c, "本次会话结束后将锁屏").Size(12).Secondary()
+		}
 		ui.Row(c, func() {
 			ui.Spacer(c)
 			if ui.Button(c, "断开").AutoInsertSpace(false).Danger().Small().Clicked() {

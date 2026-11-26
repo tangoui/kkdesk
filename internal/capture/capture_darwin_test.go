@@ -3,6 +3,7 @@
 package capture
 
 import (
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -29,6 +30,9 @@ func TestCaptureMainDisplay(t *testing.T) {
 		frames = append(frames, r)
 		mu.Unlock()
 	})
+	if errors.Is(err, errNoDisplay) {
+		t.Skip("ScreenCaptureKit has no display in this login session")
+	}
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -70,5 +74,28 @@ func TestCaptureMainDisplay(t *testing.T) {
 		if d := time.Since(f.at); d < 0 || d > 10*time.Second {
 			t.Errorf("frame %d: CaptureAt %v implausible (age %v)", i, f.at, d)
 		}
+	}
+}
+
+func TestCaptureWindowExclusionRejectsMissingWindow(t *testing.T) {
+	if !HasPermission() {
+		t.Skip("Screen Recording permission missing")
+	}
+	s, err := Start(Options{FPS: 30, MaxWidth: 320}, func(Frame) {})
+	if errors.Is(err, errNoDisplay) {
+		t.Skip("ScreenCaptureKit has no display in this login session")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := ExcludeWindows(s, []uint32{^uint32(0)}); err == nil {
+		t.Fatal("capture accepted an unresolvable window exclusion")
+	}
+	if err := ExcludeWindows(s, nil); err != nil {
+		t.Fatalf("restore default filter: %v", err)
+	}
+	if err := s.(*darwinSession).reopen(); err != nil {
+		t.Fatalf("invalid exclusion was retained on reopen: %v", err)
 	}
 }

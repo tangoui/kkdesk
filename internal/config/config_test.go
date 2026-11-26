@@ -458,3 +458,15 @@ func TestConfigReadRetry(t *testing.T) {
 		t.Fatalf("Open = %v, allowRemote %v; want the file loaded on retry", err, s.Settings().AllowRemote)
 	}
 }
+
+func TestLegacySettingsPrivacyDefaults(t *testing.T) {
+	dir := t.TempDir()
+	s := open(t, dir)
+	if err := os.WriteFile(s.Path(), []byte(`{"settings":{"privacy":"unknown"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got := open(t, dir).Settings()
+	if got.Privacy != PrivacyAsk || got.LockAfterDisconnect {
+		t.Fatalf("privacy = %q, lock after disconnect = %v", got.Privacy, got.LockAfterDisconnect)
+	}
+}
