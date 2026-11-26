@@ -1,7 +1,6 @@
 package appui
 
 import (
-	"fmt"
 	"image"
 	"strings"
 	"time"
@@ -111,10 +110,7 @@ func (m *Main) pairingConfirm(c *ui.Context, req *app.PairingRequest) {
 			}, layout.Gap(2), layout.Grow(1), layout.MinW(0))
 		}, layout.Gap(12), layout.Middle())
 	}).Footer(func() {
-		ui.Row(c, func() {
-			reject = ui.Button(c, "拒绝").AutoInsertSpace(false).Clicked()
-			accept = ui.Button(c, fmt.Sprintf("允许配对（%d）", left)).Primary().Clicked()
-		}, layout.Gap(8), layout.JustifyContent(layout.JustifyEnd))
+		reject, accept = confirmFooter(c, "拒绝", "允许配对", "自动拒绝", left)
 	}).Body(func() {
 		ui.Column(c, func() {
 			ui.Row(c, func() {
