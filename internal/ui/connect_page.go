@@ -258,7 +258,7 @@ func (m *Main) connectCard(c *ui.Context) {
 			}, layout.Gap(6), layout.Padding(insets(6, 0, 0, 0)))
 			ui.Column(c, func() {
 				ui.Text(c, "临时密码").Size(13).Secondary()
-				submit = ui.Input(c, &st.Password).Size(ui.Large).Password().Placeholder("6 位数字").A11yLabel("临时密码").Submitted()
+				submit = ui.Input(c, &st.Password).Size(ui.Large).Password().Placeholder("6 位字母和数字，区分大小写").A11yLabel("临时密码").Submitted()
 			}, layout.Gap(6), layout.Padding(insets(6, 0, 0, 0)))
 		}
 		ui.Row(c, func() {

@@ -12,12 +12,29 @@ import (
 	"github.com/tangoui/kkdesk/internal/session"
 )
 
+// Temporary passwords are 6 characters mixing digits, upper- and lowercase
+// letters, without the look-alikes 0 O o 1 l I.
 func TestNewPassword(t *testing.T) {
-	for range 100 {
+	seen := map[string]bool{}
+	for range 1000 {
 		pw := NewPassword()
-		if len(pw) != 6 || strings.Trim(pw, "0123456789") != "" {
-			t.Fatalf("NewPassword() = %q, want 6 digits", pw)
+		if len(pw) != 6 {
+			t.Fatalf("NewPassword() = %q, want 6 characters", pw)
 		}
+		if strings.ContainsAny(pw, "0Oo1lI") {
+			t.Fatalf("NewPassword() = %q has a look-alike character", pw)
+		}
+		if strings.Trim(pw, passwordAlphabet) != "" {
+			t.Fatalf("NewPassword() = %q outside the alphabet", pw)
+		}
+		if !strings.ContainsAny(pw, "23456789") || !strings.ContainsAny(pw, "ABCDEFGHJKLMNPQRSTUVWXYZ") ||
+			!strings.ContainsAny(pw, "abcdefghijkmnpqrstuvwxyz") {
+			t.Fatalf("NewPassword() = %q does not mix digits, upper- and lowercase", pw)
+		}
+		seen[pw] = true
+	}
+	if len(seen) < 990 {
+		t.Fatalf("only %d distinct passwords out of 1000", len(seen))
 	}
 }
 
