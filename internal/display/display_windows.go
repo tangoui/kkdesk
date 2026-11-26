@@ -12,6 +12,7 @@ import "C"
 import (
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -32,8 +33,9 @@ const fallbackPeriod = time.Second / 60
 // thread, which runs the message loop). Enqueue, NextVsync and FrameSize
 // may be called from any goroutine; calls are serialized internally.
 type View struct {
-	mu sync.Mutex // serializes the C calls; held while a frame is presented
-	d  *C.mmDispW // nil after Release
+	mu      sync.Mutex // serializes the C calls; held while a frame is presented
+	d       *C.mmDispW // nil after Release
+	closing atomic.Bool
 
 	// sizeMu guards hwnd and the frame size, so the UI thread reading them
 	// every frame never waits for a present on the decoder thread.
@@ -66,6 +68,9 @@ func (v *View) Handle() uintptr {
 func (v *View) Enqueue(pix uintptr, captureAt time.Time) (enqueuedAt time.Time, err error) {
 	if pix == 0 {
 		return time.Time{}, errors.New("display: nil texture")
+	}
+	if v.closing.Load() {
+		return time.Time{}, errors.New("display: view released")
 	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -155,7 +160,14 @@ func (v *View) presents() int {
 // Release destroys the window and the swap chain. It is idempotent and must
 // be called on the UI thread.
 func (v *View) Release() {
-	v.mu.Lock()
+	v.closing.Store(true) // no new presents
+	// A present in progress on the decoder thread may wait for this (the
+	// window's) thread: DXGI can SendMessage to the window. Keep answering
+	// sent messages until it is done.
+	for !v.mu.TryLock() {
+		C.mmdispw_pump_sent()
+		time.Sleep(time.Millisecond)
+	}
 	defer v.mu.Unlock()
 	if v.d == nil {
 		return

@@ -117,8 +117,11 @@ func (c *Client) request(ctx context.Context, m msg, onReply func(*msg)) (*msg, 
 
 func (c *Client) onJSON(m *msg) {
 	if m.isResponse() {
+		// The first reply claims the call; a repeated one finds nothing (and
+		// cannot block on the call's one-slot channel).
 		c.mu.Lock()
 		pc := c.pending[m.ID]
+		delete(c.pending, m.ID)
 		c.mu.Unlock()
 		if pc != nil {
 			if pc.onReply != nil && *m.OK {
@@ -193,7 +196,23 @@ func (c *Client) List(ctx context.Context, path string) (Listing, error) {
 	if r.Listing == nil {
 		return Listing{}, &RemoteError{Code: codeInvalid, Detail: "empty listing"}
 	}
-	return *r.Listing, nil
+	return checkedListing(*r.Listing), nil
+}
+
+// checkedListing drops entries whose name is not the last element of their
+// path. A download asks for Entry.Path and must arrive under that element
+// (replyNameMatches), so this keeps the name the user picks and the name that
+// lands on disk the same: a host cannot show "report.pdf" and deliver
+// ".zshenv".
+func checkedListing(l Listing) Listing {
+	kept := l.Entries[:0:0]
+	for _, e := range l.Entries {
+		if replyNameMatches(e.Path, e.Name) {
+			kept = append(kept, e)
+		}
+	}
+	l.Entries = kept
+	return l
 }
 
 // Stat describes one path on the host.
@@ -235,19 +254,44 @@ func (c *Client) Download(ctx context.Context, remotePath, localDir string, prog
 		return nil, err
 	}
 	t := c.newTransfer(ctx, false, root, progress)
+	badName := ""
 	_, err = c.request(ctx, msg{Op: "download", Path: remotePath, Transfer: t.id}, func(r *msg) {
 		// On the message goroutine, before any content of this transfer.
 		t.mu.Lock()
+		if replyNameMatches(remotePath, r.Name) {
+			t.want = r.Name
+		} else {
+			// t.want stays empty: every entry is refused until finish.
+			badName = r.Name
+		}
 		t.res.Name = r.Name
 		t.res.Skipped = r.Skipped
 		t.mu.Unlock()
 		t.meter.update(true, func(p *Progress) { p.Total, p.Files, p.Name = r.Size, r.Files, r.Name })
 	})
+	if err == nil && badName != "" {
+		err = &RemoteError{Code: codeInvalid, Detail: fmt.Sprintf("download of %q answered as %q", remotePath, badName)}
+		c.sendCancel(t.id)
+	}
 	if err != nil {
 		t.finish(err)
 		return nil, err
 	}
 	return t, nil
+}
+
+// replyNameMatches reports whether name, as the host announced a download,
+// is one path element and the last element of the requested path (in either
+// separator style, since the host's may differ from ours).
+func replyNameMatches(path, name string) bool {
+	if name == "" || name == "." || name == ".." || strings.Contains(name, "/") {
+		return false
+	}
+	path = strings.TrimRight(path, `/\`)
+	if path == name {
+		return true
+	}
+	return strings.HasSuffix(path, "/"+name) || strings.HasSuffix(path, `\`+name)
 }
 
 // handle processes a server notification for a download or upload.
@@ -296,7 +340,9 @@ func (t *Transfer) handle(m *msg) {
 		t.curRel = m.Rel
 		parts, err := t.localParts(m.Rel)
 		if err == nil {
-			t.cur, err = newIncoming(t.localRoot, parts, m.Size, m.Mode, m.MTime)
+			// Never make a downloaded file executable: the host chooses
+			// its name and content.
+			t.cur, err = newIncoming(t.localRoot, parts, m.Size, m.Mode&^0o111, m.MTime)
 			err = localError(err)
 		}
 		if err != nil {
@@ -323,6 +369,7 @@ func (t *Transfer) handle(m *msg) {
 		if err != nil {
 			t.addFailure(t.curRel, err)
 		} else {
+			markFromInternet(filepath.Join(t.localRoot.Name(), in.dir, name))
 			t.res.Files++
 			t.res.Bytes += in.size
 			if !strings.Contains(t.curRel, "/") {
@@ -362,10 +409,45 @@ func (t *Transfer) invalidDownloadEvent(m *msg) string {
 		if t.receiving {
 			return fmt.Sprintf("received %s before file end for %q", m.Op, t.curRel)
 		}
+		if m.Op == "dir" || m.Op == "file" {
+			if detail := t.outsideRequest(m); detail != "" {
+				return detail
+			}
+		}
 		if m.Op == "done" {
 			if total, accounted := t.meter.snapshot().Files, t.receivedFiles+len(m.Failed); accounted != total {
 				return fmt.Sprintf("download accounted for %d of %d announced files", accounted, total)
 			}
+		}
+	}
+	return ""
+}
+
+const (
+	kindFile = 1
+	kindDir  = 2
+)
+
+// outsideRequest refuses an entry that is not the requested file or folder
+// or below it, so a host cannot add files of its own choosing next to the
+// download (a shell profile in the home folder, say). The first entry sets
+// the kind. t.mu is held.
+func (t *Transfer) outsideRequest(m *msg) string {
+	top, _, nested := strings.Cut(m.Rel, "/")
+	switch t.kind {
+	case 0:
+		if nested || top != t.want {
+			return fmt.Sprintf("%s %q is not the requested %q", m.Op, m.Rel, t.want)
+		}
+		t.kind = kindFile
+		if m.Op == "dir" {
+			t.kind = kindDir
+		}
+	case kindFile:
+		return fmt.Sprintf("%s %q after the requested file %q", m.Op, m.Rel, t.want)
+	case kindDir:
+		if !nested || top != t.want {
+			return fmt.Sprintf("%s %q is outside the requested folder %q", m.Op, m.Rel, t.want)
 		}
 	}
 	return ""

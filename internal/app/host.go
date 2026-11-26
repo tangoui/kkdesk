@@ -208,9 +208,11 @@ func NewHost(cfg HostConfig, notify func()) *Host {
 }
 
 // newPasswordLocked makes a new temporary password: the listener accepts
-// it (and no longer the old one) from the next connection on.
+// it (and no longer the old one) from the next connection on. Earlier wrong
+// guesses no longer matter, so every password pause is lifted.
 func (h *Host) newPasswordLocked() {
 	h.password, h.pwSince = NewPassword(), time.Now()
+	h.passwordGate.Reset()
 	if h.cfg.OnPassword != nil {
 		h.cfg.OnPassword(config.TempPassword{Password: h.password, Since: h.pwSince})
 	}
@@ -267,6 +269,9 @@ func (h *Host) SetRotate(policy string) {
 // stops working at the next connection; running sessions go on.
 func (h *Host) SetFixedPassword(pw string) {
 	h.mu.Lock()
+	if pw != h.cfg.Fixed {
+		h.passwordGate.Reset()
+	}
 	h.cfg.Fixed = pw
 	h.mu.Unlock()
 	h.notify()
@@ -585,11 +590,11 @@ func (h *Host) startLocked() error {
 	h.errMsg = ""
 	ctx, cancel := context.WithCancel(context.Background())
 	if h.cfg.Pairing != nil {
+		// Runs on the connection's handshake goroutine, which keeps its
+		// handshake slot until the exchange ends.
 		ln.SetMobileHandler(func(ctx context.Context, exchange *session.MobileLAN, release func()) {
-			h.wg.Go(func() {
-				defer release()
-				h.serveMobile(ctx, ctx, rendezvous.Config{}, exchange)
-			})
+			defer release()
+			h.serveMobile(ctx, ctx, rendezvous.Config{}, exchange)
 		})
 	}
 	h.ln, h.cancel = ln, cancel
@@ -735,38 +740,55 @@ func (h *Host) Close() {
 	})
 }
 
-// acceptWorkers is how many LAN handshakes run at once: one that stalls
-// (up to the signaling timeout) does not hold up the others, and a flood
-// of connections cannot start unbounded handshakes. Only one session runs
-// at a time all the same (handle's busy check).
-const acceptWorkers = 4
+// LAN handshakes run one goroutine per connection, at most
+// maxHandshakes at once and maxHandshakesPerIP per remote address: a
+// connection that stalls (or a flood of them from one address) does not hold
+// up anyone else, and connections beyond the limits are closed at once
+// instead of queuing. Only one session runs at a time all the same
+// (handle's busy check).
+const (
+	maxHandshakes      = 64
+	maxHandshakesPerIP = 4 // a viewer's session, file window and probe at once
+)
 
 func (h *Host) acceptLoop(ctx context.Context, ln *session.Host) {
 	defer h.wg.Done()
-	var workers sync.WaitGroup
-	for range acceptWorkers {
-		workers.Go(func() { h.acceptWorker(ctx, ln) })
-	}
-	workers.Wait()
-}
-
-func (h *Host) acceptWorker(ctx context.Context, ln *session.Host) {
+	limit := newHandshakeLimiter(maxHandshakes, maxHandshakesPerIP)
+	var handshakes sync.WaitGroup
+	defer handshakes.Wait()
 	for {
-		p, err := ln.Accept(ctx)
+		c, err := ln.AcceptConn(ctx)
 		if err != nil {
 			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
 				return
 			}
-			if !errors.Is(err, session.ErrBadPassword) && !errors.Is(err, session.ErrProbe) && !errors.As(err, new(*session.PasswordLockedError)) {
-				log.Printf("kkdesk host: accept: %v", err)
-			}
+			log.Printf("kkdesk host: accept: %v", err)
 			continue
 		}
-		h.wg.Add(1)
-		go func() {
-			defer h.wg.Done()
-			h.handle(p, ctx, false, "", "")
-		}()
+		ip := c.RemoteAddr().String()
+		if host, _, err := net.SplitHostPort(ip); err == nil {
+			ip = host
+		}
+		release, ok := limit.acquire(session.SourceKey(ip)) // an IPv6 /64 counts once
+		if !ok {
+			_ = c.Close()
+			continue
+		}
+		handshakes.Go(func() {
+			p, err := ln.Handshake(ctx, c)
+			release()
+			if err != nil {
+				if ctx.Err() == nil && !errors.Is(err, session.ErrBadPassword) && !errors.Is(err, session.ErrProbe) && !errors.As(err, new(*session.PasswordLockedError)) {
+					log.Printf("kkdesk host: accept: %v", err)
+				}
+				return
+			}
+			h.wg.Add(1)
+			go func() {
+				defer h.wg.Done()
+				h.handle(p, ctx, false, "", "")
+			}()
+		})
 	}
 }
 
@@ -1157,12 +1179,30 @@ func (v *videoSender) encoded(nal []byte, captureAt time.Time, keyframe bool) {
 	v.rec.Frame(stats.FrameTimes{Seq: v.seq.Add(1), Capture: captureAt, Encoded: encodedAt, Sent: sentAt})
 }
 
+// Bounds on what a controller may ask for (the viewer offers up to 144 fps
+// and 30 Mbps); the wire allows up to 4 Gbps and 65535 fps, and encoders
+// take int32 bitrates.
+const (
+	maxFPS     = 144
+	minBitrate = 500_000
+	maxBitrate = 100_000_000
+)
+
+// clampQuality bounds a quality request from the controller; 0 bitrate
+// means automatic, 0 fps leaves the frame rate unchanged.
+func clampQuality(q session.Quality) session.Quality {
+	if q.BitrateBps <= 0 {
+		q.BitrateBps = AutoBitrate
+	}
+	q.BitrateBps = max(minBitrate, min(q.BitrateBps, maxBitrate))
+	q.FPS = min(q.FPS, maxFPS)
+	return q
+}
+
 // setQuality applies the controller's quality choice.
 func (v *videoSender) setQuality(q session.Quality) {
+	q = clampQuality(q)
 	bps := q.BitrateBps
-	if bps <= 0 {
-		bps = AutoBitrate
-	}
 	v.mu.Lock()
 	v.bps = bps
 	if v.enc != nil {

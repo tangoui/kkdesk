@@ -23,7 +23,7 @@ func TestHostMovesOffAReservedPort(t *testing.T) {
 	probe.Close()
 	reserved := "127.0.0.1:" + strconv.Itoa(base)
 	old := listen
-	listen = func(addr string, identity *pairing.Store, verify session.PasswordVerifier) (*session.Host, error) {
+	listen = func(addr string, identity *pairing.Store, verify session.SourcedVerifier) (*session.Host, error) {
 		if addr == reserved {
 			return nil, &net.OpError{Op: "listen", Net: "tcp", Err: os.NewSyscallError("bind", syscall.Errno(10013))}
 		}
@@ -58,7 +58,7 @@ func TestHostMovesOffAReservedPort(t *testing.T) {
 // restarts of the listener.
 func TestHostLetsTheSystemPickWhenTheWholeRangeIsReserved(t *testing.T) {
 	old := listen
-	listen = func(addr string, identity *pairing.Store, verify session.PasswordVerifier) (*session.Host, error) {
+	listen = func(addr string, identity *pairing.Store, verify session.SourcedVerifier) (*session.Host, error) {
 		if _, p, _ := net.SplitHostPort(addr); p != "0" {
 			return nil, &net.OpError{Op: "listen", Net: "tcp", Err: os.NewSyscallError("bind", syscall.Errno(10013))}
 		}

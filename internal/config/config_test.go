@@ -395,3 +395,66 @@ func TestConnectedPinsHostKeyOnce(t *testing.T) {
 		t.Fatalf("reconnect = %+v, %v, %v", d, firstUse, err)
 	}
 }
+
+// A configuration that exists but cannot be read right now (another program
+// holds it open, say) must not be replaced by defaults.
+func TestUnreadableConfigIsNotOverwritten(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, FileName)
+	saved := `{"version":1,"settings":{"allowRemote":false,"fixedPassword":"keep-me-123","port":21118}}`
+	if err := os.WriteFile(path, []byte(saved), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reads := 0
+	readConfig = func(string) ([]byte, error) {
+		reads++
+		return nil, errors.New("sharing violation")
+	}
+	t.Cleanup(func() { readConfig = os.ReadFile })
+	s, err := Open(dir)
+	if err == nil {
+		t.Fatal("Open succeeded on an unreadable file")
+	}
+	if reads < 2 {
+		t.Errorf("read %d times, want a retry", reads)
+	}
+	if s.Settings().AllowRemote {
+		t.Error("an unreadable configuration turned remote access on")
+	}
+	if st := s.Settings(); st.AllowSessionFiles || st.AllowSessionClipboard {
+		t.Errorf("an unreadable configuration turned file or clipboard access on: %+v", st)
+	}
+	if err := s.SetTempPassword(TempPassword{Password: "abc123", Since: time.Now()}); !IsSaveError(err) {
+		t.Errorf("SetTempPassword = %v, want a SaveError", err)
+	}
+	if err := s.UpdateSettings(func(st *Settings) { st.Port = 1234 }); !IsSaveError(err) {
+		t.Errorf("UpdateSettings = %v, want a SaveError", err)
+	}
+	if s.Err() == "" {
+		t.Error("the UI error was cleared")
+	}
+	if b, _ := os.ReadFile(path); string(b) != saved {
+		t.Fatalf("configuration was overwritten:\n%s", b)
+	}
+}
+
+// A file that becomes readable on a retry loads normally.
+func TestConfigReadRetry(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(`{"version":1,"settings":{"allowRemote":false}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fails := 1
+	readConfig = func(p string) ([]byte, error) {
+		if fails > 0 {
+			fails--
+			return nil, errors.New("sharing violation")
+		}
+		return os.ReadFile(p)
+	}
+	t.Cleanup(func() { readConfig = os.ReadFile })
+	s, err := Open(dir)
+	if err != nil || s.Settings().AllowRemote {
+		t.Fatalf("Open = %v, allowRemote %v; want the file loaded on retry", err, s.Settings().AllowRemote)
+	}
+}

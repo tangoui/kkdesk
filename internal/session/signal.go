@@ -64,6 +64,8 @@ type sigConn struct {
 	enc   *json.Encoder
 	dec   *json.Decoder
 	limit *msgLimit
+	// deadline is the whole exchange's deadline (set on conn).
+	deadline time.Time
 }
 
 func newSigConn(ctx context.Context, c net.Conn) (*sigConn, func()) {
@@ -74,7 +76,7 @@ func newSigConn(ctx context.Context, c net.Conn) (*sigConn, func()) {
 	_ = c.SetDeadline(deadline)
 	stop := context.AfterFunc(ctx, func() { _ = c.SetDeadline(time.Now()) })
 	limit := &msgLimit{r: c, left: maxSignalMsg}
-	return &sigConn{conn: c, enc: json.NewEncoder(c), dec: json.NewDecoder(limit), limit: limit}, func() {
+	return &sigConn{conn: c, enc: json.NewEncoder(c), dec: json.NewDecoder(limit), limit: limit, deadline: deadline}, func() {
 		stop()
 		_ = c.Close()
 	}
@@ -93,12 +95,16 @@ func (s *sigConn) recv() (sigMsg, error) {
 type Host struct {
 	ln       *net.TCPListener
 	identity *pairing.Store
-	verify   PasswordVerifier
+	verify   SourcedVerifier
 	mobile   func(context.Context, *MobileLAN, func())
 }
 
+// SourcedVerifier checks a password proof from source ("lan:<ip>" for LAN
+// connections), so failures can be limited per source.
+type SourcedVerifier func(source string, tx PasswordTranscript, proof []byte) (matched string, remaining time.Duration)
+
 // Listen starts listening for v2 signaling connections on addr.
-func Listen(addr string, identity *pairing.Store, verify PasswordVerifier) (*Host, error) {
+func Listen(addr string, identity *pairing.Store, verify SourcedVerifier) (*Host, error) {
 	if identity == nil || verify == nil {
 		return nil, errors.New("session: listener requires an identity and password verifier")
 	}
@@ -118,6 +124,17 @@ func (h *Host) Close() error { return h.ln.Close() }
 // Accept waits for one controller and returns after it proves its password
 // over WebRTC. A failed connection leaves the listener open.
 func (h *Host) Accept(ctx context.Context) (*Peer, error) {
+	c, err := h.AcceptConn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return h.Handshake(ctx, c)
+}
+
+// AcceptConn waits for the next TCP connection; Handshake runs its
+// signaling. Callers that run handshakes concurrently can limit them per
+// address in between.
+func (h *Host) AcceptConn(ctx context.Context) (net.Conn, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -131,6 +148,18 @@ func (h *Host) Accept(ctx context.Context) (*Peer, error) {
 		}
 		return nil, err
 	}
+	return c, nil
+}
+
+// firstMessageWait bounds how long a new connection may stay silent: the
+// controller sends its offer after gathering ICE candidates (gatherWait here,
+// 8 s on the phone), with room for slow machines.
+const firstMessageWait = 20 * time.Second
+
+// Handshake authenticates a connection from AcceptConn and returns the
+// peer; it closes c on failure. A phone's pairing exchange is handed to the
+// mobile handler, which Handshake waits for, and reported as ErrProbe.
+func (h *Host) Handshake(ctx context.Context, c net.Conn) (*Peer, error) {
 	sc, done := newSigConn(ctx, c)
 	handedOff := false
 	defer func() {
@@ -142,7 +171,14 @@ func (h *Host) Accept(ctx context.Context) (*Peer, error) {
 	if err := sc.send(sigMsg{Version: lanVersion}); err != nil {
 		return nil, err
 	}
+	if first := time.Now().Add(firstMessageWait); first.Before(sc.deadline) {
+		_ = c.SetReadDeadline(first)
+	}
 	m, err := sc.recv()
+	_ = c.SetReadDeadline(sc.deadline)
+	if ctx.Err() != nil { // restoring the deadline may have undone the cancel
+		return nil, ctx.Err()
+	}
 	if err != nil {
 		if closedEarly(err) {
 			return nil, ErrProbe
@@ -178,7 +214,9 @@ func (h *Host) Accept(ctx context.Context) (*Peer, error) {
 		return nil, err
 	}
 	done()
-	if err := p.AcceptPassword(ctx, NewPasswordTranscript(m.SDP.SDP, answer.SDP), h.verify); err != nil {
+	source := SourceKey(hostOnly(c.RemoteAddr()))
+	check := func(tx PasswordTranscript, proof []byte) (string, time.Duration) { return h.verify(source, tx, proof) }
+	if err := p.AcceptPassword(ctx, NewPasswordTranscript(m.SDP.SDP, answer.SDP), check); err != nil {
 		p.Close()
 		return nil, err
 	}
@@ -264,4 +302,13 @@ func isLoopback(a net.Addr) bool {
 		return t.IP.IsLoopback()
 	}
 	return false
+}
+
+// hostOnly is the IP of a TCP address (the whole string if it has no port).
+func hostOnly(a net.Addr) string {
+	host, _, err := net.SplitHostPort(a.String())
+	if err != nil {
+		return a.String()
+	}
+	return host
 }

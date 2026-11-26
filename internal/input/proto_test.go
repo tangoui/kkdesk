@@ -1,6 +1,7 @@
 package input
 
 import (
+	"math"
 	"bytes"
 	"testing"
 )
@@ -94,5 +95,30 @@ func TestUnmarshalUnknownKind(t *testing.T) {
 		if _, err := Unmarshal(b); err == nil {
 			t.Errorf("Unmarshal with kind %d succeeded, want error", k)
 		}
+	}
+}
+
+// Non-finite values from the network are refused, and wheel deltas are
+// bounded, so one bad event cannot poison the host's scroll accumulators or
+// pointer position for the rest of the session.
+func TestUnmarshalRejectsNonFiniteAndBoundsWheel(t *testing.T) {
+	nan, inf := float32(math.NaN()), float32(math.Inf(1))
+	for _, e := range []Event{
+		{Kind: Move, X: nan, Y: 0.5},
+		{Kind: Move, X: 0.5, Y: inf},
+		{Kind: Button, X: nan, Y: 0, Button: 0, Down: true},
+		{Kind: Wheel, DX: 0, DY: nan},
+		{Kind: Wheel, DX: inf, DY: 0},
+	} {
+		if _, err := Unmarshal(e.Marshal(nil)); err == nil {
+			t.Errorf("Unmarshal accepted %+v", e)
+		}
+	}
+	got, err := Unmarshal(Event{Kind: Wheel, DX: -1e30, DY: 1e30}.Marshal(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DX != -MaxWheelDelta || got.DY != MaxWheelDelta {
+		t.Fatalf("wheel = %v, %v; want ±%v", got.DX, got.DY, MaxWheelDelta)
 	}
 }

@@ -36,6 +36,10 @@ int32_t mmdispw_presents(mmDispW *d);
 // DWM composition timing: the QPC value of the last vblank, the refresh
 // period in QPC ticks, the current QPC value and the QPC frequency.
 int32_t mmdispw_vsync(int64_t *vblank, int64_t *period, int64_t *now, int64_t *freq);
+// Handles messages sent to the calling thread's windows from other threads
+// (only those: nothing posted is dispatched). For a thread waiting on a lock
+// held by a thread that may SendMessage to it.
+void mmdispw_pump_sent(void);
 // Destroys the window (calling thread must own it) and releases everything.
 void mmdispw_destroy(mmDispW *d);
 

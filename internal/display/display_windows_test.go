@@ -345,3 +345,37 @@ func TestEnqueueFromAnotherThreadWhileResizing(t *testing.T) {
 		t.Error("nothing was presented")
 	}
 }
+
+var procSendMessageTimeoutW = syscall.NewLazyDLL("user32.dll").NewProc("SendMessageTimeoutW")
+
+// Release on the window thread while the decoder thread is inside a present
+// that sends a message to the window (as DXGI may) must not deadlock.
+func TestReleaseWhilePresentSendsToWindow(t *testing.T) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	v, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	hwnd := v.Handle()
+	locked := make(chan struct{})
+	timedOut := make(chan bool, 1)
+	go func() { // the decoder thread, mid-present
+		v.mu.Lock()
+		close(locked)
+		time.Sleep(50 * time.Millisecond) // let Release start waiting
+		const smtoAbortIfHung, wmNull = 0x0002, 0x0000
+		var result uintptr
+		r, _, _ := procSendMessageTimeoutW.Call(hwnd, wmNull, 0, 0, smtoAbortIfHung, 2000, uintptr(unsafe.Pointer(&result)))
+		v.mu.Unlock()
+		timedOut <- r == 0
+	}()
+	<-locked
+	v.Release()
+	if <-timedOut {
+		t.Fatal("the window thread did not answer a message sent during Release: DXGI would deadlock here")
+	}
+	if _, err := v.Enqueue(solid(t, 64, 64, 128), time.Now()); err == nil {
+		t.Fatal("Enqueue after Release returned nil")
+	}
+}

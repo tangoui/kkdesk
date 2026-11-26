@@ -720,6 +720,11 @@ func (p *Peer) CloseWithReason(reason string) error {
 	return p.closeErr
 }
 
+// maxFrameBytes bounds one assembled frame: a host that never ends a frame
+// (no marker bit) cannot exhaust the viewer's memory. A 4K keyframe at a
+// high bitrate is a few MiB.
+const maxFrameBytes = 16 << 20
+
 // assembler turns RTP packets into Annex-B access units using the marker bit.
 // Any sequence gap discards the frame in progress.
 type assembler struct {
@@ -767,9 +772,13 @@ func (a *assembler) push(pkt *rtp.Packet) (frame []byte, ts uint32, ok, lost boo
 	}
 	if !a.broken && len(pkt.Payload) > 0 {
 		out, err := a.depack.Unmarshal(pkt.Payload)
-		if err != nil {
+		switch {
+		case err != nil:
 			a.broken, lost = true, true
-		} else {
+		case len(a.buf)+len(out) > maxFrameBytes:
+			a.broken, lost = true, true
+			a.buf = nil
+		default:
 			a.buf = append(a.buf, out...)
 		}
 	}

@@ -25,6 +25,7 @@ func TestDownloadRejectsIncompleteFileSequence(t *testing.T) {
 			}
 			tr := r.c.newTransfer(testCtx(t), false, root, nil)
 			t.Cleanup(tr.Cancel)
+			tr.want = "file.txt"
 			tr.meter.update(true, func(p *Progress) { p.Files = 1 })
 			if tc.fileStarted {
 				tr.handle(&msg{Op: "file", Rel: "file.txt"})

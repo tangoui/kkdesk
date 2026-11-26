@@ -181,7 +181,10 @@ type Store struct {
 	mu     sync.Mutex
 	f      file
 	errMsg string // last load or save problem, for the UI
-	nextID int
+	// unreadable is set when the file exists but could not be read: the
+	// defaults in memory must never be saved over it.
+	unreadable error
+	nextID     int
 }
 
 // Dir returns the configuration directory: $KKDESK_CONFIG_DIR, else
@@ -209,16 +212,38 @@ func Open(dir string) (*Store, error) {
 		s.errMsg = errText(err)
 	}
 	s.normalize()
+	if s.unreadable != nil {
+		// Fail closed: the saved choices may have been "no remote access",
+		// no file transfer, no clipboard sync.
+		s.f.Settings.AllowRemote = false
+		s.f.Settings.AllowSessionFiles = false
+		s.f.Settings.AllowSessionClipboard = false
+	}
 	return s, err
 }
 
+// readAttempts and readRetryWait cover a file another program holds open
+// for a moment (an antivirus scan, a backup or sync client).
+const (
+	readAttempts  = 3
+	readRetryWait = 200 * time.Millisecond
+)
+
+// readConfig reads the configuration file (replaced in tests).
+var readConfig = os.ReadFile
+
 func (s *Store) load() error {
-	b, err := os.ReadFile(s.path)
+	b, err := readConfig(s.path)
+	for i := 1; i < readAttempts && err != nil && !errors.Is(err, os.ErrNotExist); i++ {
+		time.Sleep(readRetryWait)
+		b, err = readConfig(s.path)
+	}
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("config: read %s: %w", s.path, err)
+		s.unreadable = fmt.Errorf("config: read %s: %w", s.path, err)
+		return s.unreadable
 	}
 	f := file{Settings: Defaults()}
 	if err := json.Unmarshal(b, &f); err != nil {
@@ -323,6 +348,10 @@ func (s *Store) SetTempPassword(t TempPassword) error {
 // on Windows too). os.CreateTemp makes the file private (0600): it holds
 // the passwords.
 func (s *Store) saveLocked() error {
+	if s.unreadable != nil {
+		// errMsg keeps telling the user why nothing is saved.
+		return &SaveError{Err: fmt.Errorf("配置文件无法读取，本次运行不保存设置，以免覆盖它：%w", s.unreadable)}
+	}
 	err := s.writeLocked()
 	if err != nil {
 		s.errMsg = errText(err)

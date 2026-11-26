@@ -117,7 +117,7 @@ func acceptRemoteForTest(ctx context.Context, cfg rendezvous.Config, host *webso
 	if err = rendezvous.Reply(ctx, host, offer.ID, answer, ""); err == nil {
 		var gate PasswordGate
 		err = p.AcceptPassword(ctx, tx, func(tx PasswordTranscript, proof []byte) (string, time.Duration) {
-			return gate.Check(time.Now(), tx, proof, testPassword, "")
+			return gate.Check(time.Now(), "remote", tx, proof, testPassword, "")
 		})
 	}
 	if err != nil {
