@@ -693,4 +693,3 @@ func (c *Client) uploadFile(t *Transfer, f planFile, rel, remoteDir string, buf 
 }
 
 var errHostWrite = errors.New("files: host failed to write the file")
-

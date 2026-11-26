@@ -421,6 +421,9 @@ func TestUnreadableConfigIsNotOverwritten(t *testing.T) {
 	if s.Settings().AllowRemote {
 		t.Error("an unreadable configuration turned remote access on")
 	}
+	if st := s.Settings(); st.AllowSessionFiles || st.AllowSessionClipboard {
+		t.Errorf("an unreadable configuration turned file or clipboard access on: %+v", st)
+	}
 	if err := s.SetTempPassword(TempPassword{Password: "abc123", Since: time.Now()}); !IsSaveError(err) {
 		t.Errorf("SetTempPassword = %v, want a SaveError", err)
 	}

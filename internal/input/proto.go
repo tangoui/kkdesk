@@ -92,11 +92,13 @@ func (e Event) Marshal(dst []byte) []byte {
 	return dst
 }
 
-// Unmarshal decodes one event. It returns an error for an empty or unknown
-// kind, and for input that is not exactly the size of that kind.
 // MaxWheelDelta bounds one wheel event's delta (logical pixels) on decode.
 const MaxWheelDelta = 10000
 
+// Unmarshal decodes one event. It returns an error for an empty or unknown
+// kind, for input that is not exactly the size of that kind, and for
+// non-finite coordinates or deltas; wheel deltas are clamped to
+// ±MaxWheelDelta.
 func Unmarshal(b []byte) (Event, error) {
 	if len(b) == 0 {
 		return Event{}, fmt.Errorf("input: empty event")

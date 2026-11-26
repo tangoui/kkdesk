@@ -184,7 +184,7 @@ type Store struct {
 	// unreadable is set when the file exists but could not be read: the
 	// defaults in memory must never be saved over it.
 	unreadable error
-	nextID int
+	nextID     int
 }
 
 // Dir returns the configuration directory: $KKDESK_CONFIG_DIR, else
@@ -213,8 +213,11 @@ func Open(dir string) (*Store, error) {
 	}
 	s.normalize()
 	if s.unreadable != nil {
-		// Fail closed: the saved choice may have been "no remote access".
+		// Fail closed: the saved choices may have been "no remote access",
+		// no file transfer, no clipboard sync.
 		s.f.Settings.AllowRemote = false
+		s.f.Settings.AllowSessionFiles = false
+		s.f.Settings.AllowSessionClipboard = false
 	}
 	return s, err
 }
