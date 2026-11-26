@@ -3,6 +3,7 @@ package files
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log"
 	"os"
@@ -271,6 +272,10 @@ func (t *Transfer) handle(m *msg) {
 		t.mu.Unlock()
 		return
 	}
+	if detail := t.invalidDownloadEvent(m); detail != "" {
+		t.failDownloadLocked(detail)
+		return
+	}
 	switch m.Op {
 	case "dir":
 		parts, err := t.localParts(m.Rel)
@@ -287,10 +292,7 @@ func (t *Transfer) handle(m *msg) {
 			t.addFailure(m.Rel, localError(err))
 		}
 	case "file":
-		if t.cur != nil {
-			t.cur.abort()
-			t.cur = nil
-		}
+		t.receiving = true
 		t.curRel = m.Rel
 		parts, err := t.localParts(m.Rel)
 		if err == nil {
@@ -303,9 +305,12 @@ func (t *Transfer) handle(m *msg) {
 		progress, force = func(p *Progress) { p.Name = filepath.Base(m.Rel) }, true
 	case "end":
 		in := t.cur
+		t.receiving = false
 		t.cur = nil
-		if in == nil || m.Rel != "" && m.Rel != t.curRel {
-			break // already failed
+		t.receivedFiles++
+		progress, force = func(p *Progress) { p.FilesDone++ }, true
+		if in == nil {
+			break // local file creation already failed
 		}
 		var name string
 		var err error
@@ -324,17 +329,15 @@ func (t *Transfer) handle(m *msg) {
 				t.res.Name = name
 			}
 		}
-		progress, force = func(p *Progress) { p.FilesDone++ }, true
 	case "skip": // the host could not read a file
+		t.receivedFiles++
 		t.addFailure(m.Rel, errorFor(m.Error, m.Detail))
 		progress, force = func(p *Progress) { p.FilesDone++; p.Done += m.Size }, true
 	case "done":
-		t.mu.Unlock()
 		for _, f := range m.Failed {
-			t.mu.Lock()
 			t.addFailure(f.Rel, errorFor(f.Error, f.Detail))
-			t.mu.Unlock()
 		}
+		t.mu.Unlock()
 		t.meter.update(true, func(*Progress) {})
 		t.finish(nil)
 		return
@@ -342,6 +345,42 @@ func (t *Transfer) handle(m *msg) {
 	t.mu.Unlock()
 	if progress != nil {
 		t.meter.update(force, progress)
+	}
+}
+
+// invalidDownloadEvent checks the stream while t.mu is held.
+func (t *Transfer) invalidDownloadEvent(m *msg) string {
+	switch m.Op {
+	case "end":
+		if !t.receiving {
+			return "file end without a file in progress"
+		}
+		if m.Rel != "" && m.Rel != t.curRel {
+			return fmt.Sprintf("file end for %q while receiving %q", m.Rel, t.curRel)
+		}
+	case "dir", "file", "skip", "done":
+		if t.receiving {
+			return fmt.Sprintf("received %s before file end for %q", m.Op, t.curRel)
+		}
+		if m.Op == "done" {
+			if total, accounted := t.meter.snapshot().Files, t.receivedFiles+len(m.Failed); accounted != total {
+				return fmt.Sprintf("download accounted for %d of %d announced files", accounted, total)
+			}
+		}
+	}
+	return ""
+}
+
+// failDownloadLocked records an unfinished file and releases t.mu before
+// finishing the transfer and notifying the peer.
+func (t *Transfer) failDownloadLocked(detail string) {
+	err := &RemoteError{Code: codeInvalid, Detail: detail}
+	if t.cur != nil {
+		t.addFailure(t.curRel, err)
+	}
+	t.mu.Unlock()
+	if t.finish(err) {
+		t.c.sendCancel(t.id)
 	}
 }
 
@@ -365,6 +404,10 @@ func (t *Transfer) data(off int64, data []byte) {
 	t.mu.Lock()
 	if t.fin {
 		t.mu.Unlock()
+		return
+	}
+	if !t.receiving {
+		t.failDownloadLocked("file data without a file in progress")
 		return
 	}
 	if t.cur != nil {

@@ -366,11 +366,13 @@ type Transfer struct {
 	fin  bool
 
 	// download receiver state, guarded by mu
-	localRoot *os.Root
-	root      string // final name of the top-level folder
-	cur       *incoming
-	curRel    string
-	failed    map[string]bool
+	localRoot     *os.Root
+	root          string // final name of the top-level folder
+	receiving     bool   // a file header arrived and its end is still expected
+	cur           *incoming
+	curRel        string
+	receivedFiles int // matching end and skip events, including local failures
+	failed        map[string]bool
 }
 
 func (t *Transfer) addFailure(rel string, err error) {
