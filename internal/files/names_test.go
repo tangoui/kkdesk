@@ -2,7 +2,6 @@ package files
 
 import (
 	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -59,29 +58,26 @@ func TestSplitRel(t *testing.T) {
 	}
 }
 
-func TestUniqueName(t *testing.T) {
-	dir := t.TempDir()
-	if got := uniqueName(dir, "a.txt"); got != "a.txt" {
-		t.Fatalf("free name: %q", got)
+func TestMkdirUnique(t *testing.T) {
+	root, err := os.OpenRoot(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
 	}
-	os.WriteFile(filepath.Join(dir, "a.txt"), nil, 0o644)
-	if got := uniqueName(dir, "a.txt"); got != "a (1).txt" {
-		t.Fatalf("first conflict: %q", got)
+	defer root.Close()
+	for _, name := range []string{"a.txt", "a (1).txt", ".bashrc", "x.tar.gz"} {
+		if err := root.WriteFile(name, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	os.WriteFile(filepath.Join(dir, "a (1).txt"), nil, 0o644)
-	if got := uniqueName(dir, "a.txt"); got != "a (2).txt" {
-		t.Fatalf("second conflict: %q", got)
-	}
-	os.Mkdir(filepath.Join(dir, "photos"), 0o755)
-	if got := uniqueName(dir, "photos"); got != "photos (1)" {
-		t.Fatalf("dir conflict: %q", got)
-	}
-	os.WriteFile(filepath.Join(dir, ".bashrc"), nil, 0o644)
-	if got := uniqueName(dir, ".bashrc"); got != ".bashrc (1)" {
-		t.Fatalf("dotfile conflict: %q", got)
-	}
-	os.WriteFile(filepath.Join(dir, "x.tar.gz"), nil, 0o644)
-	if got := uniqueName(dir, "x.tar.gz"); got != "x.tar (1).gz" {
-		t.Fatalf("double ext: %q", got)
+	for _, tc := range []struct{ name, want string }{
+		{"a.txt", "a (2).txt"},
+		{"photos", "photos"},
+		{"photos", "photos (1)"},
+		{".bashrc", ".bashrc (1)"},
+		{"x.tar.gz", "x.tar (1).gz"},
+	} {
+		if got, err := mkdirUnique(root, tc.name); err != nil || got != tc.want {
+			t.Errorf("mkdirUnique(%q) = %q, %v, want %q", tc.name, got, err, tc.want)
+		}
 	}
 }

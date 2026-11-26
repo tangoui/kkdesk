@@ -133,3 +133,76 @@ func TestQualityBeforeOnQuality(t *testing.T) {
 		t.Fatal("pending quality not delivered")
 	}
 }
+
+// The accepted peer remembers which password it proved, so the app can
+// refuse it if that password changed before the session was let in.
+func TestPeerRemembersItsPassword(t *testing.T) {
+	h, err := Listen("127.0.0.1:0", "123456", "fixed-pass-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	for _, pw := range []string{"123456", "fixed-pass-1"} {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		acc := make(chan *Peer, 1)
+		go func() {
+			p, _ := h.Accept(ctx)
+			acc <- p
+		}()
+		ctl, err := Dial(ctx, h.Addr().String(), pw)
+		p := <-acc
+		if err != nil || p == nil {
+			cancel()
+			t.Fatalf("password %q: dial %v, peer %v", pw, err, p)
+		}
+		if got := p.AuthPassword(); got != pw {
+			t.Errorf("AuthPassword = %q, want %q", got, pw)
+		}
+		ctl.Close()
+		p.Close()
+		cancel()
+	}
+}
+
+// A signaling message larger than maxSignalMsg is refused instead of being
+// buffered whole.
+func TestOversizedSignalMessage(t *testing.T) {
+	h, err := Listen("127.0.0.1:0", "123456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	acc := make(chan error, 1)
+	go func() {
+		_, err := h.Accept(ctx)
+		acc <- err
+	}()
+	c, err := net.Dial("tcp", h.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	go func() {
+		// An endless string inside one JSON value.
+		_, _ = c.Write([]byte(`{"mac":"`))
+		chunk := make([]byte, 64<<10)
+		for i := range chunk {
+			chunk[i] = 'A'
+		}
+		for ctx.Err() == nil {
+			if _, err := c.Write(chunk); err != nil {
+				return
+			}
+		}
+	}()
+	select {
+	case err := <-acc:
+		if err == nil {
+			t.Fatal("oversized message accepted")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Accept kept reading an oversized message")
+	}
+}

@@ -51,10 +51,35 @@ type sigMsg struct {
 	Mode   Mode                       `json:"mode,omitempty"` // with the offer; "" = desktop
 }
 
+// maxSignalMsg bounds one signaling message (an SDP with its candidates is
+// a few KB): a peer cannot make the other side buffer an endless one.
+const maxSignalMsg = 256 << 10
+
+var errSignalTooLarge = errors.New("session: signaling message too large")
+
+// msgLimit reads at most left bytes; recv resets it for every message.
+type msgLimit struct {
+	r    io.Reader
+	left int
+}
+
+func (l *msgLimit) Read(p []byte) (int, error) {
+	if l.left <= 0 {
+		return 0, errSignalTooLarge
+	}
+	if len(p) > l.left {
+		p = p[:l.left]
+	}
+	n, err := l.r.Read(p)
+	l.left -= n
+	return n, err
+}
+
 type sigConn struct {
-	conn net.Conn
-	enc  *json.Encoder
-	dec  *json.Decoder
+	conn  net.Conn
+	enc   *json.Encoder
+	dec   *json.Decoder
+	limit *msgLimit
 }
 
 func newSigConn(ctx context.Context, c net.Conn) (*sigConn, func()) {
@@ -64,7 +89,8 @@ func newSigConn(ctx context.Context, c net.Conn) (*sigConn, func()) {
 	}
 	_ = c.SetDeadline(deadline)
 	stop := context.AfterFunc(ctx, func() { _ = c.SetDeadline(time.Now()) })
-	return &sigConn{conn: c, enc: json.NewEncoder(c), dec: json.NewDecoder(c)}, func() {
+	limit := &msgLimit{r: c, left: maxSignalMsg}
+	return &sigConn{conn: c, enc: json.NewEncoder(c), dec: json.NewDecoder(limit), limit: limit}, func() {
 		stop()
 		_ = c.Close()
 	}
@@ -73,6 +99,7 @@ func newSigConn(ctx context.Context, c net.Conn) (*sigConn, func()) {
 func (s *sigConn) send(m sigMsg) error { return s.enc.Encode(m) }
 
 func (s *sigConn) recv() (sigMsg, error) {
+	s.limit.left = maxSignalMsg
 	var m sigMsg
 	err := s.dec.Decode(&m)
 	return m, err
@@ -121,17 +148,18 @@ func (h *Host) SetPasswords(passwords ...string) {
 	h.mu.Unlock()
 }
 
-// verify reports whether mac answers nonce with one of the passwords. Every
+// verify returns the password mac answers nonce with, or ok false. Every
 // password is checked, so the time does not tell which one matched.
-func (h *Host) verify(mac, nonce []byte) bool {
+func (h *Host) verify(mac, nonce []byte) (matched string, ok bool) {
 	h.mu.Lock()
 	pws := h.passwords
 	h.mu.Unlock()
-	ok := 0
 	for _, pw := range pws {
-		ok |= subtle.ConstantTimeCompare(mac, computeMAC(pw, nonce))
+		if subtle.ConstantTimeCompare(mac, computeMAC(pw, nonce)) == 1 {
+			matched, ok = pw, true
+		}
 	}
-	return ok == 1
+	return matched, ok
 }
 
 // Addr returns the listening address.
@@ -145,6 +173,9 @@ func (h *Host) Close() error { return h.ln.Close() }
 // that fails the challenge gets ErrBadPassword; the host keeps listening and
 // Accept may be called again.
 func (h *Host) Accept(ctx context.Context) (*Peer, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	stop := context.AfterFunc(ctx, func() { _ = h.ln.SetDeadline(time.Now()) })
 	c, err := h.ln.Accept()
 	stop()
@@ -188,7 +219,12 @@ func (h *Host) Accept(ctx context.Context) (*Peer, error) {
 		return nil, ErrProbe
 	}
 	mac, err := base64.StdEncoding.DecodeString(m.MAC)
-	if err != nil || !h.verify(mac, nonce) {
+	var authPW string
+	var authOK bool
+	if err == nil {
+		authPW, authOK = h.verify(mac, nonce)
+	}
+	if !authOK {
 		f := false
 		_ = sc.send(sigMsg{OK: &f, Error: "bad password"})
 		return nil, ErrBadPassword
@@ -210,6 +246,7 @@ func (h *Host) Accept(ctx context.Context) (*Peer, error) {
 		return nil, err
 	}
 	p.remote = c.RemoteAddr().String()
+	p.SetAuthPassword(authPW)
 	answer, err := p.answer(*m.SDP)
 	if err != nil {
 		p.Close()

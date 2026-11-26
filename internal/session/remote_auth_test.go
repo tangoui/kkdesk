@@ -23,6 +23,9 @@ func TestRemoteOfferAuth(t *testing.T) {
 	if auth != RemoteAuthOK || clean != testOfferSDP {
 		t.Fatalf("verify = %v, clean SDP changed:\n%q", auth, clean)
 	}
+	if _, auth, pw := VerifyRemoteOfferPassword(signed, "other-password", "k7Pm4x"); auth != RemoteAuthOK || pw != "k7Pm4x" {
+		t.Fatalf("matched password = %v %q", auth, pw)
+	}
 	if _, auth := VerifyRemoteOffer(signed, "K7Pm4x"); auth != RemoteAuthWrong {
 		t.Fatalf("case-insensitive match: %v", auth)
 	}

@@ -211,6 +211,12 @@ func (h *Host) newPasswordLocked() {
 	h.scheduleLocked()
 }
 
+// passwordCurrentLocked reports whether pw is still the temporary or the
+// fixed password.
+func (h *Host) passwordCurrentLocked(pw string) bool {
+	return pw != "" && (pw == h.password || pw == h.cfg.Fixed)
+}
+
 // scheduleLocked arms the timer of a timed rotation policy, or rotates at
 // once when the password is due.
 func (h *Host) scheduleLocked() {
@@ -717,8 +723,22 @@ func (h *Host) Close() {
 	})
 }
 
+// acceptWorkers is how many LAN handshakes run at once: one that stalls
+// (up to the signaling timeout) does not hold up the others, and a flood
+// of connections cannot start unbounded handshakes. Only one session runs
+// at a time all the same (handle's busy check).
+const acceptWorkers = 4
+
 func (h *Host) acceptLoop(ctx context.Context, ln *session.Host) {
 	defer h.wg.Done()
+	var workers sync.WaitGroup
+	for range acceptWorkers {
+		workers.Go(func() { h.acceptWorker(ctx, ln) })
+	}
+	workers.Wait()
+}
+
+func (h *Host) acceptWorker(ctx context.Context, ln *session.Host) {
 	for {
 		p, err := ln.Accept(ctx)
 		if err != nil {
@@ -766,6 +786,15 @@ func (h *Host) handle(p *session.Peer, listenCtx context.Context, remote, passwo
 		}
 		confirm = !phone.Bypass || biometricKey == "" || phone.BiometricKey != biometricKey
 		enroll = phone.Bypass && biometricKey != "" && phone.BiometricKey != biometricKey
+	}
+	if pw := p.AuthPassword(); !confirm && pw != "" && !h.passwordCurrentLocked(pw) {
+		// Let in by its password alone, which was refreshed or replaced
+		// while the connection was being set up: the old one stops working
+		// at once (a session the user accepts goes on).
+		h.mu.Unlock()
+		log.Printf("kkdesk host: refused %s: its password changed during setup", p.RemoteAddr())
+		p.CloseWithReason("密码已更换，请用新密码重新连接")
+		return
 	}
 	h.busy = true
 	h.peer, h.since = p, time.Now()
@@ -915,7 +944,8 @@ func (h *Host) stream(p *session.Peer) error {
 	vs.forceKey.Store(true)
 	p.OnKeyframeRequest(func() { vs.forceKey.Store(true) })
 
-	refreshAccessibility := h.wireInput(p)
+	refreshAccessibility, releaseInput := h.wireInput(p)
+	defer releaseInput()
 	var accessibilityTick <-chan time.Time
 	if refreshAccessibility != nil {
 		ticker := time.NewTicker(2 * time.Second)
@@ -963,8 +993,10 @@ loop:
 var injectLimitsOnce sync.Once
 
 // wireInput installs the input handler and returns a macOS permission refresh
-// for the lifetime of this desktop session.
-func (h *Host) wireInput(p *session.Peer) (refresh func()) {
+// for the lifetime of this desktop session, and release, which ends input and
+// lets go of the keys and buttons the controller left down (a session that
+// drops mid-drag or with a modifier held would otherwise leave them held).
+func (h *Host) wireInput(p *session.Peer) (refresh, release func()) {
 	var granted atomic.Bool
 	help := InjectHelp()
 	granted.Store(help == "")
@@ -1000,8 +1032,13 @@ func (h *Host) wireInput(p *session.Peer) (refresh func()) {
 	}
 	var n atomic.Int64
 	var errLogged atomic.Bool
+	var held input.Held
+	var mu sync.Mutex // orders injection against release
+	stopped := false
 	p.OnInput(func(e input.Event) {
-		if inj == nil || !granted.Load() {
+		mu.Lock()
+		defer mu.Unlock()
+		if stopped || inj == nil || !granted.Load() {
 			return
 		}
 		if err := inj.Apply(e); err != nil {
@@ -1010,11 +1047,28 @@ func (h *Host) wireInput(p *session.Peer) (refresh func()) {
 			}
 			return
 		}
+		held.Track(e)
 		if n.Add(1) == 1 {
 			log.Printf("kkdesk host: injected first remote input event (kind %d)", e.Kind)
 		}
 	})
-	return refresh
+	release = func() {
+		p.OnInput(nil)
+		mu.Lock()
+		defer mu.Unlock()
+		stopped = true
+		if inj == nil {
+			return
+		}
+		ups := held.Release()
+		for _, e := range ups {
+			_ = inj.Apply(e)
+		}
+		if len(ups) > 0 {
+			log.Printf("kkdesk host: released %d keys/buttons left down by the controller", len(ups))
+		}
+	}
+	return refresh, release
 }
 
 // videoSender encodes captured frames and sends them to the peer.
