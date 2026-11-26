@@ -18,6 +18,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"strings"
 	"os/signal"
 	"path/filepath"
 	"sync/atomic"
@@ -105,7 +106,7 @@ func run(o options) error {
 		} else {
 			appLog = l
 			defer l.Close()
-			log.Printf("kkdesk: diagnostic log %s, args %q", l.Path, os.Args[1:])
+			log.Printf("kkdesk: diagnostic log %s, args %q", l.Path, redactArgs(os.Args[1:]))
 			app.LogSystemInfo()
 		}
 	}
@@ -167,9 +168,9 @@ func run(o options) error {
 			return err
 		}
 		if o.host {
-			line := fmt.Sprintf("kkdesk host listening on %s password %s", host.ListenAddr(), host.State().Password)
-			fmt.Println(line)
-			appLog.FileOnly("%s (local addresses %v)", line, app.LocalIPv4())
+			fmt.Println("kkdesk host listening on", host.ListenAddr(), "password", host.State().Password)
+			// The log is meant to be sent to others: no password in it.
+			appLog.FileOnly("kkdesk host listening on %s (local addresses %v)", host.ListenAddr(), app.LocalIPv4())
 		}
 		if !o.host {
 			if help := app.CaptureHelp(); help != "" {
@@ -346,4 +347,22 @@ func hostConfig(o options, store *config.Store, logw io.Writer) app.HostConfig {
 		}
 	}
 	return cfg
+}
+
+// redactArgs hides the value of -password in command-line arguments for the
+// diagnostic log.
+func redactArgs(args []string) []string {
+	out := append([]string(nil), args...)
+	for i, a := range out {
+		name, _, hasValue := strings.Cut(strings.TrimLeft(a, "-"), "=")
+		if name != "password" || !strings.HasPrefix(a, "-") {
+			continue
+		}
+		if hasValue {
+			out[i] = a[:strings.Index(a, "=")+1] + "***"
+		} else if i+1 < len(out) {
+			out[i+1] = "***"
+		}
+	}
+	return out
 }
