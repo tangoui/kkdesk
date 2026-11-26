@@ -18,7 +18,8 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
-work=${1:-/tmp/kkdesk-update-rehearsal}
+default_work=/tmp/kkdesk-update-rehearsal
+work=${1:-$default_work}
 export TANGO_UPDATE_KEY_FILE=${TANGO_UPDATE_KEY_FILE:-$HOME/.config/kkdesk-release/update.key}
 identity=${TANGO_SIGN_IDENTITY:-}
 port=8765
@@ -26,7 +27,14 @@ state="$HOME/Library/Application Support/tango-updater/com.kkdesk.desktop"
 [ -f "$TANGO_UPDATE_KEY_FILE" ] || { echo "no update key at $TANGO_UPDATE_KEY_FILE" >&2; exit 1; }
 [ ! -e "$state" ] || { echo "updater state exists at $state; move it away first" >&2; exit 1; }
 
-rm -rf "$work" && mkdir -p "$work"
+# Only ever wipe a directory this script made (it carries the marker): a
+# path passed by mistake must not lose its files.
+marker=.kkdesk-update-rehearsal
+if [ "$work" != "$default_work" ] && [ -e "$work" ] && [ ! -f "$work/$marker" ] && [ -n "$(ls -A "$work" 2>/dev/null)" ]; then
+  echo "$work is not empty and was not made by this script; pick another directory" >&2
+  exit 1
+fi
+rm -rf "$work" && mkdir -p "$work" && touch "$work/$marker"
 echo "work dir $work, signing: ${identity:-ad hoc}"
 
 # build <version>: a signed .app with automation, then its release dir.
