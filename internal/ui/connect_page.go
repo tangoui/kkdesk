@@ -37,7 +37,9 @@ func (m *Main) connectPage(c *ui.Context, hs app.HostState) {
 func cardHead(c *ui.Context, title, sub string) {
 	ui.Column(c, func() {
 		ui.Text(c, title).Size(16).Strong()
-		ui.Text(c, sub).Size(13).Tertiary()
+		if sub != "" {
+			ui.Text(c, sub).Size(13).Tertiary()
+		}
 	}, layout.Gap(4), layout.Padding(insets(0, 0, 8, 0)))
 }
 
@@ -52,7 +54,7 @@ func copyText(c *ui.Context, s, msg string) {
 func (m *Main) hostCard(c *ui.Context, hs app.HostState) {
 	th := c.Theme
 	panel(c, func() {
-		cardHead(c, "允许控制本机", "同一个网络：把本机地址和临时密码告诉对方；不在同一个网络：把跨网设备码告诉对方。")
+		cardHead(c, "允许控制本机", "")
 		// 本机地址
 		ui.Column(c, func() {
 			ui.Text(c, "本机地址（局域网用）").Size(12).Tertiary()
@@ -226,7 +228,7 @@ func (m *Main) connectCard(c *ui.Context) {
 	st.normalizeVia()
 	hasRemote := m.o.Store.Settings().RemoteURL != ""
 	panel(c, func() {
-		cardHead(c, "控制其他电脑", "两台电脑在同一个路由器或 Wi-Fi 下选「局域网」，不在同一个网络时选「跨网」。")
+		cardHead(c, "控制其他电脑", "")
 		if ui.Segmented(c, &st.Via, viaOpts).A11yLabel("连接网络").Changed() {
 			m.mu.Lock()
 			m.connErr = ""
