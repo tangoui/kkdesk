@@ -136,6 +136,7 @@ type HostState struct {
 	PrivacyRequest      uint64
 	PrivacyDeadline     time.Time
 	LockAfterDisconnect bool
+	LockDeadline        time.Time
 }
 
 // Host accepts controllers and streams this screen to one at a time. Its
@@ -170,6 +171,9 @@ type Host struct {
 	passwordGate      session.PasswordGate
 	passwordLockTimer *time.Timer
 	privacy           *hostPrivacy
+	privacyDisconnect bool
+	graceMu           sync.Mutex
+	grace             *privacyGrace // guarded by mu. Operations also take graceMu.
 
 	fileAccess atomic.Bool // current 文件传输 permission
 	clipAccess atomic.Bool // current 剪贴板 permission
@@ -482,6 +486,10 @@ func (h *Host) State() HostState {
 		s.PrivacyScreen, s.PrivacyRequest, s.PrivacyDeadline = state.on, state.request, state.deadline
 		s.LockAfterDisconnect = state.lockAfter
 	}
+	if h.grace != nil {
+		s.LockDeadline = h.grace.until
+		s.PrivacyScreen = h.grace.session.state().on
+	}
 	s.DeviceCode = h.remote.code
 	s.PasswordLockSeconds = int((h.passwordGate.Remaining(time.Now()) + time.Second - 1) / time.Second)
 	if h.remote.online {
@@ -726,6 +734,9 @@ func (h *Host) answer(ok bool) {
 func (h *Host) Disconnect() {
 	h.mu.Lock()
 	p := h.peer
+	if p != nil {
+		h.privacyDisconnect = true
+	}
 	h.mu.Unlock()
 	if p != nil {
 		p.CloseWithReason("被控端已断开连接")
@@ -753,6 +764,7 @@ func (h *Host) Close() {
 		h.Reject()
 		h.Disconnect()
 		h.wg.Wait()
+		h.finishGrace(nil, true)
 	})
 }
 
@@ -829,6 +841,7 @@ func (h *Host) handle(p *session.Peer, listenCtx context.Context, remote bool, p
 		return
 	}
 	h.busy = true
+	h.privacyDisconnect = false
 	h.peer, h.since = p, time.Now()
 	h.remotePeer = remote
 	h.mobile.peerKey = phoneKey
@@ -902,6 +915,12 @@ func (h *Host) handle(p *session.Peer, listenCtx context.Context, remote bool, p
 		}
 	}
 	accepted = true
+	select {
+	case <-p.Done():
+		return
+	default:
+	}
+	h.finishGrace(nil, false)
 	h.serveFiles(p)
 	if p.Mode() == session.ModeFiles {
 		p.OnPrivacy(func(session.PrivacyMessage) {})
@@ -999,10 +1018,16 @@ func (h *Host) stream(p *session.Peer) error {
 	p.OnQuality(vs.setQuality)
 	requests := make(chan session.PrivacyMessage, 16)
 	h.mu.Lock()
-	ps := newHostPrivacy(h.cfg.PrivacyPolicy, h.cfg.privacyScreen(), func(ids []uint32) error { return capture.ExcludeWindows(capt, ids) },
+	ps := newHostPrivacy(h.cfg.PrivacyPolicy, h.cfg.privacyScreen(), nil,
 		func(status session.PrivacyStatus, detail string) {
 			_ = p.SendPrivacy(session.PrivacyMessage{Kind: session.PrivacyState, Status: status, Detail: detail})
 		}, h.notify)
+	ps.exclude = func(ids []uint32) error {
+		if ps.detached.Load() {
+			return nil
+		}
+		return capture.ExcludeWindows(capt, ids)
+	}
 	h.privacy = ps
 	h.mu.Unlock()
 	p.OnPrivacy(func(m session.PrivacyMessage) {
@@ -1018,7 +1043,12 @@ loop:
 		case <-p.Done():
 			break loop
 		case m := <-requests:
-			ps.handle(p, m, h.cfg.locker)
+			select {
+			case <-p.Done():
+				break loop
+			default:
+				ps.handle(p, m, h.cfg.locker)
+			}
 		case <-accessibilityTick:
 			refreshAccessibility()
 		case <-tk.C:
@@ -1027,7 +1057,7 @@ loop:
 	}
 	tk.Stop()
 	p.OnPrivacy(nil)
-	ps.close()
+	h.endDesktopPrivacy(ps, p.ReceivedBye())
 	st := capt.Stats()
 	capt.Close() // no frame callbacks after this
 	log.Printf("kkdesk host: capture frames complete=%d idle=%d other=%d display-after-callback=%d resent=%d reopened=%d",

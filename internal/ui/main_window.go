@@ -141,6 +141,7 @@ func OpenMain(o MainOptions) (*Main, error) {
 	}
 	m.runner.Store(r)
 	m.surface.Store(s)
+	trackWindow(s)
 	m.prober = app.NewProber(app.ProberConfig{}, m.Invalidate)
 	m.syncProbeTargets()
 	app.Watch(m.Invalidate)

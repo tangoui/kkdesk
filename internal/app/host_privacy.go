@@ -29,13 +29,15 @@ type hostPrivacy struct {
 	report  func(session.PrivacyStatus, string)
 	notify  func()
 
-	current   atomic.Pointer[hostPrivacyState]
-	requestID uint64
-	consent   *time.Timer
-	askAgain  bool
-	showID    uint64
-	closed    bool
-	locked    bool
+	current     atomic.Pointer[hostPrivacyState]
+	requestID   uint64
+	consent     *time.Timer
+	askAgain    bool
+	showID      uint64
+	closed      bool
+	locked      bool
+	detached    atomic.Bool
+	cancelGrace func()
 }
 
 func newHostPrivacy(policy config.PrivacyPolicy, screen privacy.Screen, exclude func([]uint32) error,
@@ -138,10 +140,17 @@ func (p *hostPrivacy) hide() {
 
 func (p *hostPrivacy) exited(id uint64, err error) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.showID != id || !p.state().on {
+		p.mu.Unlock()
 		return
 	}
+	if p.cancelGrace != nil && err == nil {
+		cancel := p.cancelGrace
+		p.mu.Unlock()
+		cancel()
+		return
+	}
+	defer p.mu.Unlock()
 	p.hide()
 	if err != nil {
 		p.publish(hostPrivacyState{}, session.PrivacyUnsupported, err.Error())
@@ -170,12 +179,22 @@ func (p *hostPrivacy) handle(peer *session.Peer, m session.PrivacyMessage, locke
 }
 
 func (p *hostPrivacy) close() {
+	_ = p.finish(nil)
+}
+
+func (p *hostPrivacy) finish(locker privacy.Locker) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.closed = true
+	p.cancelGrace = nil
 	p.cancelConsent()
+	var err error
+	if locker != nil && !p.locked {
+		err = locker.Lock()
+	}
 	p.hide()
 	p.current.Store(nil)
+	return err
 }
 
 func (p *hostPrivacy) lockNow(locker privacy.Locker, report func(session.PrivacyMessage), disconnect func()) {
@@ -197,4 +216,79 @@ func (p *hostPrivacy) lockNow(locker privacy.Locker, report func(session.Privacy
 	p.locked = true
 	report(result)
 	disconnect()
+}
+
+const lockGracePeriod = 60 * time.Second
+
+type privacyGrace struct {
+	session *hostPrivacy
+	until   time.Time
+	timer   *time.Timer
+}
+
+func (h *Host) endDesktopPrivacy(p *hostPrivacy, graceful bool) {
+	h.graceMu.Lock()
+	defer h.graceMu.Unlock()
+	h.mu.Lock()
+	lock := h.cfg.LockAfterDisconnect || p.state().lockAfter
+	graceful = graceful || h.closed || h.privacyDisconnect
+	h.mu.Unlock()
+	if !lock || graceful || p.locked {
+		h.finishDesktopPrivacy(p, lock)
+		return
+	}
+
+	g := &privacyGrace{session: p, until: time.Now().Add(lockGracePeriod)}
+	p.mu.Lock()
+	p.closed = true
+	p.detached.Store(true)
+	p.cancelConsent()
+	p.cancelGrace = func() { h.finishGrace(g, false) }
+	s := p.state()
+	s.request, s.deadline = 0, time.Time{}
+	p.current.Store(&s)
+	p.mu.Unlock()
+	h.mu.Lock()
+	h.grace = g
+	h.mu.Unlock()
+	g.timer = time.AfterFunc(time.Until(g.until), func() { h.finishGrace(g, true) })
+	h.notify()
+}
+
+func (h *Host) finishDesktopPrivacy(p *hostPrivacy, lock bool) {
+	var locker privacy.Locker
+	if lock {
+		locker = h.cfg.locker
+	}
+	if err := p.finish(locker); err != nil {
+		h.setErr("会话结束后锁屏失败：" + err.Error())
+	}
+}
+
+// finishGrace serializes a reconnect, local cancellation, timer and app
+// shutdown. A stale timer or shortcut can only act on its own session.
+func (h *Host) finishGrace(expected *privacyGrace, lock bool) {
+	h.graceMu.Lock()
+	defer h.graceMu.Unlock()
+	h.mu.Lock()
+	g := h.grace
+	if g == nil || (expected != nil && g != expected) {
+		h.mu.Unlock()
+		return
+	}
+	g.timer.Stop()
+	h.grace = nil
+	h.mu.Unlock()
+	h.finishDesktopPrivacy(g.session, lock)
+	h.notify()
+}
+
+// CancelPendingLock is the local action used while the grace countdown is visible.
+func (h *Host) CancelPendingLock() {
+	h.mu.Lock()
+	g := h.grace
+	h.mu.Unlock()
+	if g != nil {
+		go h.finishGrace(g, false)
+	}
 }

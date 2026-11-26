@@ -112,6 +112,7 @@ func OpenSession(a *tango.App, v *app.Viewer, onEnd func(msg string)) error {
 		r.Invalidate()
 		time.AfterFunc(closeDelay, func() { a.Post(s.Close) })
 	})
+	trackWindow(s)
 	return nil
 }
 

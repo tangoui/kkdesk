@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -178,18 +179,47 @@ func run(o options) error {
 		}
 	}
 
-	quit := true // closing the last window quits, on macOS too
-	a := tango.New(tango.Options{Name: "kkdesk", ID: "com.kkdesk.desktop", QuitOnLastClose: &quit})
+	keepLoop := false // Host.Close can dispatch native cleanup to the main thread.
+	a := tango.New(tango.Options{Name: "kkdesk", ID: "com.kkdesk.desktop", QuitOnLastClose: &keepLoop})
 	board.SetApp(a)
+
+	var viewer *app.Viewer
+	var quitOnce sync.Once
+	requestQuit := func() {
+		quitOnce.Do(func() {
+			v := viewer // requestQuit runs on the main thread
+			go func() {
+				if v != nil {
+					v.Close()
+				}
+				host.Close()
+				a.Quit()
+			}()
+		})
+	}
+	stopTracking := appui.QuitAfterLastWindow(a, requestQuit)
+	defer stopTracking()
+	a.OnQuitRequest(func() bool {
+		requestQuit()
+		return false
+	})
 
 	// Self-update: builds made by tan build, started normally (not the
 	// measurement modes -host and -connect).
 	var upd *updater.Updater
 	if releaseBuild && !o.host && o.connect == "" {
 		upd = update.New(app.Version, os.Getenv)
+		if upd != nil {
+			upd.OnEvent = func(event updater.Event) {
+				if event.Kind == updater.EventReady {
+					// Apply emits this on the update worker, before
+					// updateui asks Tango to quit.
+					host.Close()
+				}
+			}
+		}
 	}
 
-	var viewer *app.Viewer
 	openMain := func(hidden bool, errMsg string) {
 		m, err := appui.OpenMain(appui.MainOptions{
 			App: a, Host: host, Store: store, Form: &st.Form, ViewerLog: logw, Clipboard: board, Updater: upd,
@@ -235,8 +265,7 @@ func run(o options) error {
 				}
 				if err != nil {
 					fmt.Fprintln(os.Stderr, "kkdesk: window:", err)
-					viewer.Close()
-					a.Quit()
+					requestQuit()
 				}
 			})
 		}()
@@ -246,17 +275,15 @@ func run(o options) error {
 	// flush the stats before exiting.
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sig)
+	exit := make(chan struct{})
+	defer close(exit)
 	go func() {
-		<-sig
-		a.Post(func() {
-			if viewer != nil {
-				viewer.Close()
-			}
-			go func() {
-				host.Close()
-				a.Quit()
-			}()
-		})
+		select {
+		case <-sig:
+			a.Post(requestQuit)
+		case <-exit:
+		}
 	}()
 
 	err := a.Run()

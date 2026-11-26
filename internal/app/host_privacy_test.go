@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -142,6 +143,62 @@ func TestHostPrivacyScreenFailure(t *testing.T) {
 type fakeLocker func() error
 
 func (f fakeLocker) Lock() error { return f() }
+
+func TestHostDisconnectLockGrace(t *testing.T) {
+	for _, action := range []string{"timeout", "reconnect", "shortcut", "quit", "bye", "failure"} {
+		t.Run(action, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				screen := &fakePrivacyScreen{}
+				p, _ := testPrivacyScreen(config.PrivacyAllow, screen)
+				p.set(true)
+				var locks atomic.Int32
+				h := NewHost(HostConfig{LockAfterDisconnect: true, locker: fakeLocker(func() error {
+					if !screen.shown {
+						t.Error("screen removed before locking")
+					}
+					locks.Add(1)
+					if action == "failure" {
+						return errors.New("system failure")
+					}
+					return nil
+				})}, nil)
+				graceful := action == "bye" || action == "failure"
+				h.endDesktopPrivacy(p, graceful)
+				if !graceful {
+					deadline := h.State().LockDeadline
+					if time.Until(deadline) != time.Minute || !p.state().on || locks.Load() != 0 {
+						t.Fatalf("started grace with deadline %v, shown %v, locks %d", deadline, p.state().on, locks.Load())
+					}
+					time.Sleep(59 * time.Second)
+					synctest.Wait()
+					if locks.Load() != 0 || !p.state().on {
+						t.Fatal("grace ended early")
+					}
+					switch action {
+					case "reconnect":
+						h.finishGrace(nil, false)
+					case "shortcut":
+						screen.exit(nil)
+					case "quit":
+						h.Close()
+					}
+					time.Sleep(time.Second)
+					synctest.Wait()
+				}
+				want := int32(1)
+				if action == "reconnect" || action == "shortcut" {
+					want = 0
+				}
+				if locks.Load() != want || screen.shown || !h.State().LockDeadline.IsZero() {
+					t.Fatalf("grace ended with %d locks (want %d), shown=%v, deadline=%v", locks.Load(), want, screen.shown, h.State().LockDeadline)
+				}
+				if action == "failure" && h.State().Err != "会话结束后锁屏失败：system failure" {
+					t.Fatalf("missing lock error: %q", h.State().Err)
+				}
+			})
+		})
+	}
+}
 
 func TestHostLockAndDisconnectWaitsForConfirmation(t *testing.T) {
 	for _, lockErr := range []error{nil, errors.New("lock refused")} {
