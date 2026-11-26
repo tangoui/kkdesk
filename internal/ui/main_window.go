@@ -29,6 +29,7 @@ import (
 	"github.com/tangoui/kkdesk/internal/app"
 	"github.com/tangoui/kkdesk/internal/clipsync"
 	"github.com/tangoui/kkdesk/internal/config"
+	"github.com/tangoui/kkdesk/internal/inject"
 	"github.com/tangoui/kkdesk/internal/rendezvous"
 )
 
@@ -95,6 +96,7 @@ type Main struct {
 	xfer                filesPageState
 	set                 settingsState
 	screenRecording     screenRecordingGuide
+	accessibility       accessibilityGuide
 	pairing             pairingUI
 	pairingCancellation uint64
 
@@ -145,6 +147,7 @@ func OpenMain(o MainOptions) (*Main, error) {
 	s.OnFocused(func() {
 		r.Post(func() {
 			m.set.loginItem.loaded = false
+			m.accessibility.next = time.Time{}
 			if m.screenRecording.enabled {
 				m.screenRecording.refresh(screenRecordingMissing())
 			}
@@ -180,6 +183,7 @@ func (m *Main) page(c *ui.Context) {
 		ui.Message(c, "info", "手机已取消")
 	}
 	m.screenRecording.update(hs.Enabled, &m.o.Form.ScreenRecordingPromptShown, screenRecordingMissing)
+	m.refreshAccessibility(c)
 	ui.Row(c, func() {
 		m.sidebar(c, hs)
 		ui.Column(c, func() {
@@ -215,7 +219,12 @@ func (m *Main) page(c *ui.Context) {
 		m.pairingQR(c)
 	} else {
 		m.phoneSettingsDialog(c)
-		m.screenRecording.dialog(c, os.Getenv("TANGO_DEV_ROLE") == "worker", openScreenRecordingSettings)
+		dev := os.Getenv("TANGO_DEV_ROLE") == "worker"
+		if m.accessibility.open {
+			m.accessibility.dialog(c, dev, inject.HasPermission, openAccessibilitySettings)
+		} else {
+			m.screenRecording.dialog(c, dev, openScreenRecordingSettings)
+		}
 	}
 }
 
@@ -271,6 +280,19 @@ func (m *Main) sidebar(c *ui.Context, hs app.HostState) {
 					ui.Text(c, "· "+sub).Size(12).Tertiary().NoWrap()
 				}
 			}, layout.Gap(6), layout.Middle())
+			if hs.Enabled && (m.screenRecording.missing || m.accessibility.missing) {
+				msg := "辅助功能未授权"
+				switch {
+				case m.screenRecording.missing && m.accessibility.missing:
+					msg = "录屏与辅助功能未授权"
+				case m.screenRecording.missing:
+					msg = "屏幕录制未授权"
+				}
+				ui.Row(c, func() {
+					dot(c, th.Warning.Base, 6)
+					ui.Text(c, msg).Size(12).Secondary()
+				}, layout.Gap(6), layout.Middle())
+			}
 		}, layout.Gap(10), layout.Padding(insets(12, 16, 12, 16))).Paint(topLine(th.Split))
 	}, layout.W(200), layout.Padding(insets(12, 0, 0, 0))).Bg(th.BgContainer).Paint(endLine(th.Split))
 }

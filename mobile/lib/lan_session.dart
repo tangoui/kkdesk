@@ -24,10 +24,24 @@ typedef PairedConnection = Future<void> Function(
 enum LanSessionMode { desktop, files }
 
 class LanSession {
-  LanSession({required this.onStream, required this.onEnded});
+  LanSession({
+    required this.onStream,
+    required this.onEnded,
+    this.onAccessibilityChanged,
+  });
 
   final void Function(MediaStream stream) onStream;
   final void Function(String message) onEnded;
+  final VoidCallback? onAccessibilityChanged;
+  bool _accessibilityDenied = false;
+  bool get accessibilityDenied => _accessibilityDenied;
+
+  void _setAccessibilityDenied(bool denied) {
+    if (_accessibilityDenied == denied) return;
+    _accessibilityDenied = denied;
+    if (!_closed) onAccessibilityChanged?.call();
+  }
+
   final _clock = ClockSync();
   final _captures = <int, int>{};
   RTCPeerConnection? _peer;
@@ -173,6 +187,7 @@ class LanSession {
     final peer = _peer;
     _files = null;
     _peer = null;
+    _setAccessibilityDenied(false);
     if (peer != null) {
       peer.onConnectionState = null;
       peer.onTrack = null;
@@ -250,11 +265,18 @@ class LanSession {
     };
     meta.onMessage = (message) {
       final time = ClockSync.nowNanos();
-      if (!message.isBinary || message.binary.isEmpty || _closed) return;
+      if (!message.isBinary ||
+          message.binary.isEmpty ||
+          _closed ||
+          _peer != peer) {
+        return;
+      }
       final bytes = message.binary;
       if (bytes[0] == 0x62) {
         final reason = utf8.decode(bytes.sublist(1), allowMalformed: true);
         onEnded(reason.isEmpty ? '电脑已结束连接' : reason);
+      } else if (decodeAccessibility(bytes) case final granted?) {
+        _setAccessibilityDenied(!granted);
       } else if (_measure && bytes[0] == 0x63 && bytes.length == 13) {
         final capture = ByteData.sublistView(bytes);
         _captures[capture.getUint32(1)] = capture.getInt64(5);

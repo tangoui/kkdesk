@@ -1,9 +1,29 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kkdesk_mobile/lan_protocol.dart';
 
 void main() {
+  test(
+    'decodes Go accessibility status fixtures and ignores other metadata',
+    () {
+      for (final (name, expected) in [('denied', false), ('granted', true)]) {
+        final bytes = File('test/fixtures/meta/accessibility-$name.bin')
+            .readAsBytesSync();
+        expect(decodeAccessibility(bytes), expected);
+      }
+      for (final bytes in <List<int>>[
+        [],
+        [0x61],
+        [0x61, 2],
+        [0x70, 0],
+      ]) {
+        expect(decodeAccessibility(bytes), isNull);
+      }
+    },
+  );
+
   test('answers the Go HMAC-SHA256 challenge', () {
     final nonce = base64Encode(List<int>.generate(32, (index) => index));
     expect(

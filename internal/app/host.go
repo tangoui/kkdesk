@@ -15,6 +15,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -886,7 +887,13 @@ func (h *Host) stream(p *session.Peer) error {
 	vs.forceKey.Store(true)
 	p.OnKeyframeRequest(func() { vs.forceKey.Store(true) })
 
-	h.wireInput(p)
+	refreshAccessibility := h.wireInput(p)
+	var accessibilityTick <-chan time.Time
+	if refreshAccessibility != nil {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		accessibilityTick = ticker.C
+	}
 
 	opts := capture.Options{FPS: fps, MaxWidth: maxW, ExcludeApp: captureExcludeApp(p.RemoteAddr())}
 	log.Printf("kkdesk host: capture %d fps, max width %d, exclude %q", opts.FPS, opts.MaxWidth, opts.ExcludeApp)
@@ -904,6 +911,8 @@ loop:
 		select {
 		case <-p.Done():
 			break loop
+		case <-accessibilityTick:
+			refreshAccessibility()
 		case <-tk.C:
 			log.Printf("kkdesk host: %s", statsSummary(rec.Last(), capt.Stats()))
 		}
@@ -925,11 +934,31 @@ loop:
 // injectLimitsOnce logs InjectLimits once per process.
 var injectLimitsOnce sync.Once
 
-// wireInput injects the controller's input when the platform permits it
-// (macOS: Accessibility).
-func (h *Host) wireInput(p *session.Peer) {
+// wireInput installs the input handler and returns a macOS permission refresh
+// for the lifetime of this desktop session.
+func (h *Host) wireInput(p *session.Peer) (refresh func()) {
+	var granted atomic.Bool
+	help := InjectHelp()
+	granted.Store(help == "")
+	if runtime.GOOS == "darwin" {
+		var sent, lastGranted bool
+		refresh = func() {
+			nowGranted := inject.HasPermission()
+			granted.Store(nowGranted)
+			if !sent || nowGranted != lastGranted {
+				if err := p.SendAccessibility(nowGranted); err == nil {
+					sent, lastGranted = true, nowGranted
+				}
+			}
+		}
+		refresh()
+	}
+	if help != "" {
+		log.Printf("kkdesk host: %s 远程输入将被忽略。", help)
+	}
 	var inj *inject.Injector
-	if help := InjectHelp(); help == "" {
+	// On macOS the injector can be prepared before the user grants permission.
+	if help == "" || refresh != nil {
 		if in, err := inject.New(); err == nil {
 			inj = in
 			b := in.Bounds()
@@ -940,13 +969,11 @@ func (h *Host) wireInput(p *session.Peer) {
 		if lim := InjectLimits(); lim != "" {
 			injectLimitsOnce.Do(func() { log.Printf("kkdesk host: %s", lim) })
 		}
-	} else {
-		log.Printf("kkdesk host: %s 远程输入将被忽略。", help)
 	}
 	var n atomic.Int64
 	var errLogged atomic.Bool
 	p.OnInput(func(e input.Event) {
-		if inj == nil {
+		if inj == nil || !granted.Load() {
 			return
 		}
 		if err := inj.Apply(e); err != nil {
@@ -959,6 +986,7 @@ func (h *Host) wireInput(p *session.Peer) {
 			log.Printf("kkdesk host: injected first remote input event (kind %d)", e.Kind)
 		}
 	})
+	return refresh
 }
 
 // videoSender encodes captured frames and sends them to the peer.

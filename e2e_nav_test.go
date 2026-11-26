@@ -10,7 +10,8 @@ package main
 //	TANGO_E2E=1 KKDESK_E2E_NAV=/tmp/kkdesk-nav go test -run E2ENav -v .
 //
 // KKDESK_E2E_SHOTS=<dir> saves page-{devices,sessions,files,settings}.png
-// there. It listens on 21918 and moves to 21919.
+// there. KKDESK_E2E_ACCESSIBILITY_SHOTS saves the macOS permission state.
+// It listens on 21918 and moves to 21919.
 
 import (
 	"net"
@@ -72,12 +73,44 @@ func TestE2ENav(t *testing.T) {
 		w.Find(a11y.RoleDialog, "需要屏幕录制权限").WaitGone()
 	}
 	w.FindContains(a11y.RoleNone, "等待连接").Wait()
-	if permission := w.Find(a11y.RoleButton, "配置屏幕录制权限"); permission.Exists() {
-		share := w.Find(a11y.RoleButton, "复制并分享").Bounds()
-		if bounds := permission.Bounds(); bounds.Y != share.Y || bounds.X <= share.X {
-			t.Fatalf("expected share and permission buttons on the same row, got %+v and %+v", share, bounds)
+	accessibilityShot := func(w *automation.Window, name string) {
+		if dir := os.Getenv("KKDESK_E2E_ACCESSIBILITY_SHOTS"); dir != "" {
+			w.SaveScreenshot(filepath.Join(dir, name))
 		}
 	}
+	accessibilityEntry := func(save bool) {
+		t.Helper()
+		const entry = "配置辅助功能权限"
+		if runtime.GOOS != "darwin" {
+			if w.Find(a11y.RoleButton, entry).Exists() {
+				t.Fatal("macOS permission entry visible on another platform")
+			}
+			return
+		}
+		status := w.FindRegexp(a11y.RoleNone, "^辅助功能 (未授权|已授权)$")
+		status.Wait()
+		if status.Name() == "辅助功能 已授权" {
+			if w.Find(a11y.RoleButton, entry).Exists() {
+				t.Fatal("permission button still visible after granting")
+			}
+			if save {
+				accessibilityShot(w, "desktop-granted.png")
+			}
+			return
+		}
+		if save {
+			w.FindContains(a11y.RoleNone, "辅助功能未授权").Wait()
+			accessibilityShot(w, "desktop-denied.png")
+		}
+		w.Find(a11y.RoleButton, entry).Click()
+		dialog := w.Find(a11y.RoleDialog, "需要辅助功能权限")
+		dialog.Wait()
+		w.Find(a11y.RoleButton, "我已授权，重新检测").Wait()
+		w.Find(a11y.RoleButton, "打开系统设置").Wait()
+		w.Press("Escape")
+		dialog.WaitGone()
+	}
+	accessibilityEntry(true)
 	nav := func(page string) { t.Helper(); w.Find(a11y.RoleMenuItem, page).Click() }
 	dump := func(what string) { t.Helper(); t.Logf("%s:\n%s", what, w.Dump()) }
 
@@ -216,6 +249,7 @@ func TestE2ENav(t *testing.T) {
 	waitDial(t, "127.0.0.1:21918", false)
 
 	w.Find(a11y.RoleMenuItem, "安全").Click()
+	accessibilityEntry(false)
 	for _, label := range []string{"新会话默认允许剪贴板同步", "新会话默认允许文件传输"} {
 		setting := w.Find(a11y.RoleSwitch, label)
 		setting.WaitState(a11y.Checked)

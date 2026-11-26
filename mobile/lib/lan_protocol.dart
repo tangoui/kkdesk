@@ -22,6 +22,12 @@ ByteData _position(int kind, int size, double x, double y) => ByteData(size)
   ..setFloat32(1, x, Endian.little)
   ..setFloat32(5, y, Endian.little);
 
+/// Host accessibility status on the reliable meta channel.
+bool? decodeAccessibility(List<int> bytes) {
+  if (bytes.length != 2 || bytes[0] != 0x61 || bytes[1] > 1) return null;
+  return bytes[1] == 1;
+}
+
 class ClockSync {
   final _samples = <({int offset, int rtt})>[];
 

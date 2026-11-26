@@ -123,6 +123,7 @@ func (m *Main) hostCard(c *ui.Context, hs app.HostState) {
 				_ = m.o.Host.SetEnabled(m.allow) // quick; a busy port is retried in the background
 			}
 		}, layout.Gap(10), layout.Middle(), layout.PadVH(10, 12)).Bg(th.FillQuaternary).Radius(th.Radius)
+		m.permissions(c)
 		if st := hostStatus(hs); st != "" {
 			ui.Text(c, st).Size(12).Tertiary()
 		}
@@ -137,7 +138,6 @@ func (m *Main) hostCard(c *ui.Context, hs app.HostState) {
 				m.pairing.open = true
 				c.Invalidate()
 			}
-			m.screenRecording.entry(c)
 		}, layout.Gap(8), layout.Middle(), layout.WrapItems(), layout.Padding(insets(4, 0, 0, 0)))
 	}, layout.Grow(1), layout.Basis(340), layout.Pad(20), layout.Gap(8))
 }

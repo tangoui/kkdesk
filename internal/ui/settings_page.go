@@ -191,10 +191,13 @@ func (m *Main) securitySettings(c *ui.Context, f *ui.FormW, hs app.HostState) {
 	})
 	helpGap(c)
 	f.Item("允许被远程控制").Help("启动时是否开启被控；连接页的开关只改变本次运行。").Body(func() {
-		switchRow(c, &s.allow, "启动后允许其他电脑连接本机", func(on bool) {
-			m.update(c, func(st *config.Settings) { st.AllowRemote = on })
-			_ = m.o.Host.SetEnabled(on)
-		})
+		ui.Column(c, func() {
+			switchRow(c, &s.allow, "启动后允许其他电脑连接本机", func(on bool) {
+				m.update(c, func(st *config.Settings) { st.AllowRemote = on })
+				_ = m.o.Host.SetEnabled(on)
+			})
+			m.permissions(c)
+		}, layout.Gap(8))
 	})
 	helpGap(c)
 	f.Item("剪贴板同步").Help("同步纯文本。可以在连接确认或会话中为本次连接单独调整。").Body(func() {

@@ -24,6 +24,7 @@ class LanRemoteSession extends ChangeNotifier implements RemoteSession {
   late final LanSession _session = LanSession(
     onStream: _onStream,
     onEnded: _onEnded,
+    onAccessibilityChanged: notifyListeners,
   );
   RemoteStatus _status = const RemoteStatus();
   Timer? _stats;
@@ -32,7 +33,14 @@ class LanRemoteSession extends ChangeNotifier implements RemoteSession {
   bool _closed = false;
 
   @override
-  RemoteStatus get status => _status;
+  RemoteStatus get status => RemoteStatus(
+    phase: _status.phase,
+    path: _status.path,
+    latency: _status.latency,
+    fps: _status.fps,
+    detail: _status.detail,
+    accessibilityDenied: _session.accessibilityDenied,
+  );
   @override
   double get aspectRatio =>
       _renderer.videoWidth > 0 && _renderer.videoHeight > 0
@@ -126,7 +134,11 @@ class LanRemoteSession extends ChangeNotifier implements RemoteSession {
 
   @override
   void pointer(PointerCommand command, int modifiers) {
-    if (_closed || status.phase != RemotePhase.connected) return;
+    if (_closed ||
+        _status.phase != RemotePhase.connected ||
+        _session.accessibilityDenied) {
+      return;
+    }
     switch (command) {
       case PointerMove(:final position, :final dragging):
         if (dragging) {
@@ -149,7 +161,9 @@ class LanRemoteSession extends ChangeNotifier implements RemoteSession {
 
   @override
   void key(int hid, bool down, int modifiers) {
-    if (!_closed && status.phase == RemotePhase.connected) {
+    if (!_closed &&
+        _status.phase == RemotePhase.connected &&
+        !_session.accessibilityDenied) {
       _session.sendKey(hid, down, modifiers);
     }
   }
