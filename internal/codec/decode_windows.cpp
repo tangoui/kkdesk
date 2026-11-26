@@ -328,6 +328,10 @@ int32_t mmdec_output(mmDecW *d, mmdecOut *o) {
     }
     if (FAILED(hr)) {
         if (d->providesSamples && db.pSample) db.pSample->Release();
+        if (hr != MF_E_TRANSFORM_NEED_MORE_INPUT && d->errLogs < 10) {
+            d->errLogs++;
+            logf("decoder: ProcessOutput failed: hr=0x%08lX", (unsigned long)hr);
+        }
         return hr;
     }
     IMFSample *s = db.pSample;

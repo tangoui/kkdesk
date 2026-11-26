@@ -50,6 +50,8 @@ type mfDecoder struct {
 	// captures maps the 100 ns sample time passed to the MFT back to the
 	// exact captureAt (the MFT only carries 100 ns units).
 	captures map[int64]time.Time
+	inputs   int // access units submitted
+	outputs  int // pictures delivered
 }
 
 // NewDecoder creates the H.264 decoder: D3D11 hardware decoding through
@@ -156,7 +158,12 @@ func (d *mfDecoder) Decode(annexB []byte, captureAt time.Time) error {
 	if hr < 0 {
 		return winmedia.Check("ProcessInput", hr)
 	}
-	return d.drain()
+	d.inputs++
+	err := d.drain()
+	if d.inputs == 30 && d.outputs == 0 {
+		winmedia.Logf("decoder: 30 access units in, no picture out (first NAL types %v)", nalTypesOf(annexB))
+	}
+	return err
 }
 
 // drain delivers every picture the MFT has ready. d.mu must be held.
@@ -179,6 +186,10 @@ func (d *mfDecoder) drain() error {
 		} else {
 			at = time.Unix(0, ts*100)
 		}
+		d.outputs++
+		if d.outputs == 1 {
+			winmedia.Logf("decoder: first picture %dx%d after %d access units", int(o.width), int(o.height), d.inputs)
+		}
 		d.out(uintptr(o.texture), at)
 	}
 	return fmt.Errorf("codec: decoder produced more than %d pictures for one access unit", decMaxOutputPerAU)
@@ -195,4 +206,15 @@ func (d *mfDecoder) Close() {
 		C.mmdec_destroy(d.dec)
 		d.dec = nil
 	}
+}
+
+// nalTypesOf returns the NAL unit types of an Annex-B buffer (diagnostics).
+func nalTypesOf(b []byte) []int {
+	var t []int
+	for _, n := range splitAnnexB(b) {
+		if len(n) > 0 {
+			t = append(t, int(n[0]&0x1f))
+		}
+	}
+	return t
 }

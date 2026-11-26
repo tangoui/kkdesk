@@ -26,6 +26,10 @@ import (
 // DialTimeout bounds connecting, authenticating and negotiating.
 const DialTimeout = 15 * time.Second
 
+// maxDiagLogs caps the decode/display failure lines a viewer writes to the
+// diagnostic log.
+const maxDiagLogs = 20
+
 // ViewerConfig configures a Viewer.
 type ViewerConfig struct {
 	Addr     string // host[:port]; the port defaults to 21118
@@ -96,6 +100,7 @@ type Viewer struct {
 	lastPLI  time.Time
 	seq      uint64
 	gotFrame atomic.Bool
+	diagLogs atomic.Int32 // decode/display failures logged so far (maxDiagLogs)
 }
 
 // NewViewer returns a viewer for cfg. notify is called from any goroutine
@@ -468,6 +473,9 @@ func (v *Viewer) video(frame []byte, captureAt time.Time) {
 		}()
 	}
 	if err := v.dec.Decode(frame, captureAt); err != nil {
+		if n := v.diagLogs.Add(1); n <= maxDiagLogs {
+			log.Printf("kkdesk viewer: decode %d bytes: %v", len(frame), err)
+		}
 		if time.Since(v.lastPLI) > 500*time.Millisecond {
 			v.lastPLI = time.Now()
 			v.requestKeyframe()
@@ -488,10 +496,16 @@ func (v *Viewer) decoded(pix uintptr, captureAt time.Time) {
 	view, peer := v.view, v.peer
 	v.mu.Unlock()
 	if view == nil {
+		if n := v.diagLogs.Add(1); n <= maxDiagLogs {
+			log.Printf("kkdesk viewer: decoded a picture but no display view is attached")
+		}
 		return
 	}
 	enq, err := view.Enqueue(pix, captureAt)
 	if err != nil {
+		if n := v.diagLogs.Add(1); n <= maxDiagLogs {
+			log.Printf("kkdesk viewer: display: %v", err)
+		}
 		return
 	}
 	v.seq++
