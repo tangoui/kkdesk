@@ -111,14 +111,16 @@ final class MediaUploadPicker: NSObject, PHPickerViewControllerDelegate,
           let destination = folder.appendingPathComponent(UUID().uuidString)
           try FileManager.default.copyItem(at: url, to: destination)
           let timestamp = asset?.creationDate ?? (video ? nil : photoDate(url)) ?? importedAt
-          let name = resource?.originalFilename ?? provider.suggestedName ?? url.lastPathComponent
-          continuation.resume(returning: [
+          var selected: [String: Any] = [
             "path": destination.path,
-            "name": name,
+            "isOriginalName": resource != nil,
+            "exportedName": url.lastPathComponent,
             "extension": extensionName,
             "video": video,
             "timestampMs": Int64(timestamp.timeIntervalSince1970 * 1000),
-          ])
+          ]
+          selected["name"] = resource?.originalFilename ?? provider.suggestedName
+          continuation.resume(returning: selected)
         } catch {
           continuation.resume(throwing: error)
         }

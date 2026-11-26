@@ -68,6 +68,37 @@ void main() {
     );
   });
 
+  test('uses supplied original names even if they look generic', () {
+    for (final name in ['photo.JPG', '24.JPG', 'file.JPG']) {
+      expect(
+        mediaUploadName(
+          name,
+          extension: 'jpg',
+          video: false,
+          timestamp: imported,
+          isOriginalName: true,
+        ),
+        name,
+      );
+    }
+  });
+
+  test(
+    'uses a useful exported filename when the suggested name is generic',
+    () {
+      expect(
+        mediaUploadName(
+          'image.jpg',
+          exportedName: 'IMG_4321.JPG',
+          extension: 'jpg',
+          video: false,
+          timestamp: imported,
+        ),
+        'IMG_4321.JPG',
+      );
+    },
+  );
+
   test('upload uses selected metadata and reads the exported copy', () async {
     final directory = Directory.systemTemp.createTempSync('kkdesk-media-test');
     addTearDown(() => directory.deleteSync(recursive: true));
@@ -82,7 +113,8 @@ void main() {
       return [
         {
           'path': selected.path,
-          'name': 'IMG_1234.JPG',
+          'name': 'photo.JPG',
+          'isOriginalName': true,
           'extension': 'jpeg',
           'video': false,
           'timestampMs': imported.millisecondsSinceEpoch,
@@ -97,7 +129,7 @@ void main() {
     });
     final sources = await pickMediaForUpload();
     expect(sources.map((source) => source.name), [
-      'IMG_1234.JPG',
+      'photo.JPG',
       '照片_20261125_193101.jpeg',
     ]);
     expect(sources.first.modified, imported);

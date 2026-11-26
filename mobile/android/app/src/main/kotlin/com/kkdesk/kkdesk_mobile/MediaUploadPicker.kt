@@ -71,6 +71,9 @@ internal class MediaUploadPicker(private val activity: FlutterFragmentActivity) 
     private fun export(uri: Uri, importedAt: Long): Map<String, Any?> {
         val resolver = activity.contentResolver
         val name = attribute(uri, OpenableColumns.DISPLAY_NAME)
+        // Some picker providers supply the URI's numeric ID as a display name.
+        val mediaId = uri.lastPathSegment?.takeIf { it.toLongOrNull() != null }
+        val isOriginalName = name != null && name.substringBeforeLast('.') != mediaId
         val reportedMimeType = resolver.getType(uri)
         val timestamp = epochMillis(attribute(uri, MediaStore.MediaColumns.DATE_TAKEN))
             ?: epochMillis(attribute(uri, MediaStore.MediaColumns.DATE_ADDED))
@@ -92,6 +95,7 @@ internal class MediaUploadPicker(private val activity: FlutterFragmentActivity) 
             val extension = types.getExtensionFromMimeType(mimeType) ?: namedExtension
             return mapOf(
                 "path" to copy.path, "name" to name, "extension" to extension,
+                "isOriginalName" to isOriginalName,
                 "video" to video, "timestampMs" to timestamp
             )
         } catch (error: Exception) {
