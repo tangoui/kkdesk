@@ -175,7 +175,7 @@ func shareText(hs app.HostState) string {
 	}
 	fmt.Fprintf(&b, "临时密码 %s", hs.Password)
 	if hs.RemoteCode != "" {
-		fmt.Fprintf(&b, "\n不在同一个网络时用跨网设备码 %s（选「跨网」后填入）", hs.RemoteCode)
+		fmt.Fprintf(&b, "\n不在同一个网络时用跨网设备码 %s（填到「对方地址或设备码」里，密码同上）", hs.RemoteCode)
 	}
 	return b.String()
 }
