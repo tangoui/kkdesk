@@ -192,10 +192,13 @@ Future<T?> appSheet<T>(
                             color: context.card,
                             borderRadius: BorderRadius.circular(16),
                           ),
-                          child: KButton(
-                            label: '取消',
-                            variant: KButtonVariant.text,
-                            onTap: () => Navigator.pop(context),
+                          child: _overlayText(
+                            context,
+                            KButton(
+                              label: '取消',
+                              variant: KButtonVariant.text,
+                              onTap: () => Navigator.pop(context),
+                            ),
                           ),
                         ),
                       ],

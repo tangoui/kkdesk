@@ -1,18 +1,21 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_slidable/flutter_slidable.dart';
 
 import '../mobile_services.dart';
-import '../pairing/transport.dart';
 import 'common.dart';
+import 'devices.dart';
 
 class SettingsPage extends StatelessWidget {
   const SettingsPage({
     super.key,
     required this.services,
     required this.authenticate,
+    required this.scan,
   });
   final MobileServices services;
   final Future<bool> Function(String reason) authenticate;
+  final VoidCallback scan;
 
   @override
   Widget build(BuildContext context) {
@@ -57,7 +60,8 @@ class SettingsPage extends StatelessWidget {
                 onTap: () => Navigator.push<void>(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => _PairedDevices(devices: services.devices),
+                    builder: (_) =>
+                        _PairedDevices(devices: services.devices, scan: scan),
                   ),
                 ),
               ),
@@ -199,30 +203,139 @@ class _SettingsRow extends StatelessWidget {
   );
 }
 
-class _PairedDevices extends StatelessWidget {
-  const _PairedDevices({required this.devices});
-  final DeviceRepository devices;
+enum _ComputerAction { rename, unpair }
 
-  Future<void> _remove(BuildContext context, Computer computer) async {
+class _PairedDevices extends StatefulWidget {
+  const _PairedDevices({required this.devices, required this.scan});
+  final DeviceRepository devices;
+  final VoidCallback scan;
+
+  @override
+  State<_PairedDevices> createState() => _PairedDevicesState();
+}
+
+class _PairedDevicesState extends State<_PairedDevices> {
+  final _removing = <String>{};
+
+  Future<void> _showActions(Computer computer) async {
+    final action = await appSheet<_ComputerAction>(
+      context,
+      (context) => KOptionGroup(
+        title: computer.name,
+        children: [
+          KButton(
+            label: '更改名称',
+            variant: KButtonVariant.text,
+            onTap: () => Navigator.pop(context, _ComputerAction.rename),
+          ),
+          KButton(
+            label: '解除配对',
+            variant: KButtonVariant.danger,
+            fill: Colors.transparent,
+            onTap: () => Navigator.pop(context, _ComputerAction.unpair),
+          ),
+        ],
+      ),
+      grouped: true,
+    );
+    if (!mounted) return;
+    switch (action) {
+      case _ComputerAction.rename:
+        await renameComputer(context, widget.devices, computer);
+      case _ComputerAction.unpair:
+        await _remove(computer);
+      case null:
+        break;
+    }
+  }
+
+  Future<void> _remove(Computer computer) async {
     final confirmed = await kConfirm(
       context,
       title: '解除配对？',
-      message: '将从手机上移除「${computer.name}」。',
+      message: '解除后这台手机将不能再连接「${computer.name}」。电脑在线时会同时从电脑上移除。',
       confirm: '解除配对',
       danger: true,
     );
-    if (confirmed != true || !context.mounted) return;
+    if (confirmed != true || !mounted || _removing.contains(computer.id)) {
+      return;
+    }
+    setState(() => _removing.add(computer.id));
     try {
-      await devices.remove(computer.id);
-    } on Exception catch (error) {
-      if (context.mounted) {
-        KNotice.show(
+      final result = await widget.devices.remove(computer.id);
+      if (mounted && result == UnpairResult.localOnly) {
+        await kDialog<void>(
           context,
-          error is PairFailure ? error.message : '无法解除配对，请检查电脑是否在线',
-          kind: KNoticeKind.error,
+          builder: (context) => KDialog(
+            title: '已从手机移除',
+            content: const Text('电脑当前不在线，它仍会显示这台手机，可在电脑端「已配对手机」中手动移除。'),
+            actions: [
+              KButton(label: '完成', onTap: () => Navigator.pop(context)),
+            ],
+          ),
         );
       }
+    } on Exception {
+      if (mounted) {
+        KNotice.show(context, '无法清除手机上的配对凭据，请重试', kind: KNoticeKind.error);
+      }
+    } finally {
+      if (mounted) setState(() => _removing.remove(computer.id));
     }
+  }
+
+  Widget _row(Computer computer) {
+    final busy = _removing.contains(computer.id);
+    final subtitle = [
+      if (computer.online) ...['在线', computer.path.label] else '离线',
+      if (computer.lastSeen == '已解除配对')
+        '已解除配对'
+      else if (computer.confirmOnHost)
+        '每次需电脑确认'
+      else
+        '电脑端已设为免确认',
+    ].join(' · ');
+    return Slidable(
+      key: ValueKey(computer.id),
+      groupTag: 'paired-computers',
+      enabled: !busy,
+      endActionPane: ActionPane(
+        motion: const DrawerMotion(),
+        extentRatio: .46,
+        children: [
+          DeviceSwipeAction(
+            label: '改名',
+            icon: CupertinoIcons.pencil,
+            color: const Color(0xff454550),
+            onTap: () => renameComputer(context, widget.devices, computer),
+          ),
+          DeviceSwipeAction(
+            label: '解除配对',
+            icon: CupertinoIcons.trash,
+            color: red,
+            onTap: () => _remove(computer),
+          ),
+        ],
+      ),
+      child: DeviceRow(
+        computer: computer,
+        subtitle: subtitle,
+        onTap: busy ? null : () => _showActions(computer),
+        trailing: SizedBox(
+          width: 44,
+          height: 35,
+          child: Center(
+            child: busy
+                ? const KLoader(radius: 9)
+                : Icon(
+                    CupertinoIcons.chevron_right,
+                    size: 16,
+                    color: context.muted,
+                  ),
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -234,58 +347,47 @@ class _PairedDevices extends StatelessWidget {
           const KPageHeader('已配对电脑'),
           Expanded(
             child: ListenableBuilder(
-              listenable: devices,
+              listenable: widget.devices,
               builder: (context, _) {
-                final computers = devices.computers;
+                final computers = widget.devices.computers;
                 if (computers.isEmpty) {
                   return Center(
-                    child: Text(
-                      '暂无已配对电脑',
-                      style: TextStyle(color: context.muted),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          '还没有配对的电脑',
+                          style: TextStyle(color: context.muted),
+                        ),
+                        const SizedBox(height: 16),
+                        KButton(label: '扫码配对', onTap: widget.scan),
+                      ],
                     ),
                   );
                 }
-                return ListView.separated(
-                  itemCount: computers.length,
-                  padding: const EdgeInsets.all(20),
-                  separatorBuilder: (_, _) => const SizedBox(height: 12),
-                  itemBuilder: (context, index) {
-                    final item = computers[index];
-                    return GroupCard(
-                      children: [
-                        KRow(
-                          leading: OSIcon(item.os, size: 40, dim: !item.online),
-                          title: item.name,
-                          subtitle: item.lastSeen == '已解除配对'
-                              ? '已解除配对'
-                              : item.confirmOnHost
-                              ? '每次需电脑确认'
-                              : '电脑端已设为免确认',
-                        ),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: [
-                            KButton(
-                              onTap: () =>
-                                  renameComputer(context, devices, item),
-                              label: '更改名称',
-                              variant: KButtonVariant.text,
-                              compact: true,
-                            ),
-                            KButton(
-                              onTap: () => _remove(context, item),
-                              label: '解除配对',
-                              variant: KButtonVariant.danger,
-                              compact: true,
-                            ),
-                            const SizedBox(width: 12),
-                          ],
-                        ),
-                      ],
-                    );
-                  },
+                return SlidableAutoCloseBehavior(
+                  child: ListView(
+                    padding: const EdgeInsets.all(20),
+                    children: [
+                      GroupCard(
+                        children: [
+                          for (final computer in computers) _row(computer),
+                        ],
+                      ),
+                    ],
+                  ),
                 );
               },
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 12, 24, 16),
+            child: Center(
+              child: Text(
+                '免确认需在电脑端「设置 → 安全 → 已配对手机」中开启',
+                style: TextStyle(color: context.muted, fontSize: 13),
+                textAlign: TextAlign.center,
+              ),
             ),
           ),
         ],

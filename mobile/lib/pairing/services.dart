@@ -214,9 +214,10 @@ class PairedDevices extends ChangeNotifier implements DeviceRepository {
   });
 
   @override
-  Future<void> remove(String id) async {
+  Future<UnpairResult> remove(String id) async {
     final record = _records[id];
-    if (record == null) return;
+    if (record == null) return UnpairResult.removed;
+    var result = UnpairResult.removed;
     if (_presence[id]?.revoked != true) {
       try {
         await network.use(record.target, 'unpair', (pair) async {
@@ -226,20 +227,33 @@ class PairedDevices extends ChangeNotifier implements DeviceRepository {
         });
       } on PairUnpaired {
         // The computer already revoked this phone.
+      } catch (_) {
+        result = UnpairResult.localOnly;
       }
     }
-    await _change((records) => records.remove(id));
+    await _change((records) async {
+      if (records[id]?.target != record.target) return;
+      // The Ed25519 identity is shared by all computers. Only the P-256 key
+      // and the connection credentials belong to this pairing.
+      await const BiometricKey().remove(id);
+      records.remove(id);
+    });
+    return result;
   }
 
-  Future<void> _change(void Function(Map<String, PairedComputer>) change) {
+  Future<void> _change(
+    FutureOr<void> Function(Map<String, PairedComputer>) change,
+  ) {
     final write = _writes.then((_) async {
       final next = Map.of(_records);
-      change(next);
+      await change(next);
       await network.credentials.storage.write(
         key: _storageKey,
         value: jsonEncode(next.values.toList()),
       );
-      _presence.removeWhere((id, _) => next[id] != _records[id]);
+      _presence.removeWhere(
+        (id, _) => next[id]?.target != _records[id]?.target,
+      );
       _records
         ..clear()
         ..addAll(next);
@@ -275,9 +289,16 @@ class PairedDevices extends ChangeNotifier implements DeviceRepository {
           } on PairUnpaired {
             if (_records[id]?.target == record.target) markRevoked(id);
           } on Exception {
+            final previous = _presence[id];
             if (_records[id]?.target == record.target &&
-                _presence[id]?.revoked != true) {
-              _presence.remove(id);
+                previous != null &&
+                !previous.revoked) {
+              _presence[id] = (
+                latency: null,
+                relay: false,
+                bypass: previous.bypass,
+                revoked: false,
+              );
             }
           }
         }),

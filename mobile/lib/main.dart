@@ -500,7 +500,11 @@ class _HomeState extends State<_Home> {
               files: _transfers,
               browse: _connectFiles,
             ),
-            SettingsPage(services: _services, authenticate: _authorize),
+            SettingsPage(
+              services: _services,
+              authenticate: _authorize,
+              scan: _scan,
+            ),
           ],
         ),
       ),

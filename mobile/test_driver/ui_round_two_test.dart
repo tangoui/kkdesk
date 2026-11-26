@@ -139,22 +139,12 @@ Future<void> main() async {
     await text('完成');
     await text('已配对电脑');
     await shot('13-paired-devices');
-    await tap(
-      find.descendant(
-        of: find.byType('GroupCard'),
-        matching: find.text('更改名称'),
-        firstMatchOnly: true,
-      ),
-    );
+    await key('mac');
+    await text('更改名称');
     await shot('14-rename');
     await text('取消');
-    await tap(
-      find.descendant(
-        of: find.byType('GroupCard'),
-        matching: find.text('解除配对'),
-        firstMatchOnly: true,
-      ),
-    );
+    await key('mac');
+    await text('解除配对');
     await shot('15-unpair');
     await text('取消');
     await tooltip('返回');

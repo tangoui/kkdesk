@@ -6,11 +6,13 @@ import 'package:kkdesk_mobile/main.dart';
 import 'package:kkdesk_mobile/mobile_services.dart';
 import 'package:kkdesk_mobile/touch_controller.dart';
 
-Future<void> openApp(WidgetTester tester) async {
+Future<MobileServices> openApp(WidgetTester tester) async {
   await tester.binding.setSurfaceSize(const Size(390, 844));
   addTearDown(() => tester.binding.setSurfaceSize(null));
-  await tester.pumpWidget(KkdeskApp(services: MobileServices.demo()));
+  final services = MobileServices.demo();
+  await tester.pumpWidget(KkdeskApp(services: services));
   await tester.pumpAndSettle();
+  return services;
 }
 
 void main() {
@@ -68,7 +70,7 @@ void main() {
   testWidgets('settings can switch theme and manage paired devices', (
     tester,
   ) async {
-    await openApp(tester);
+    final services = await openApp(tester);
     await tester.tap(find.text('我的'));
     await tester.pumpAndSettle();
     expect(find.text('App 锁'), findsOneWidget);
@@ -82,8 +84,34 @@ void main() {
     );
     await tester.tap(find.text('已配对电脑'));
     await tester.pumpAndSettle();
-    expect(find.text('更改名称'), findsWidgets);
-    expect(find.text('解除配对'), findsWidgets);
+    expect(find.text('在线 · 直连 · 每次需电脑确认'), findsWidgets);
+    expect(find.text('离线 · 每次需电脑确认'), findsWidgets);
+    expect(find.text('在线 · 中继 · 电脑端已设为免确认'), findsOneWidget);
+    expect(find.text('免确认需在电脑端「设置 → 安全 → 已配对手机」中开启'), findsOneWidget);
+    expect(find.text('更改名称'), findsNothing);
+    await tester.tap(find.text('办公室台式机'));
+    await tester.pumpAndSettle();
+    expect(find.text('更改名称'), findsOneWidget);
+    expect(find.text('解除配对'), findsOneWidget);
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    await tester.drag(find.text('办公室台式机'), const Offset(-200, 0));
+    await tester.pumpAndSettle();
+    expect(find.text('改名').hitTestable(), findsOneWidget);
+    await tester.tap(find.text('解除配对').hitTestable());
+    await tester.pumpAndSettle();
+    expect(find.text('解除后这台手机将不能再连接「办公室台式机」。电脑在线时会同时从电脑上移除。'), findsOneWidget);
+    await tester.tap(find.text('解除配对').hitTestable());
+    await tester.pumpAndSettle();
+    expect(find.text('办公室台式机'), findsNothing);
+    for (final computer in services.devices.computers) {
+      await services.devices.remove(computer.id);
+    }
+    await tester.pumpAndSettle();
+    expect(find.text('还没有配对的电脑'), findsOneWidget);
+    await tester.tap(find.text('扫码配对'));
+    await tester.pumpAndSettle();
+    expect(find.text('输入配对码'), findsOneWidget);
   });
   testWidgets('remote tools switch and remember the mode and hold Ctrl', (
     tester,

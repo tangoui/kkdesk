@@ -71,10 +71,12 @@ class Computer {
   );
 }
 
+enum UnpairResult { removed, localOnly }
+
 abstract interface class DeviceRepository implements Listenable {
   List<Computer> get computers;
   Future<void> rename(String id, String name);
-  Future<void> remove(String id);
+  Future<UnpairResult> remove(String id);
   Future<void> add(Computer computer);
 }
 
@@ -325,9 +327,10 @@ class DemoDeviceRepository extends ChangeNotifier implements DeviceRepository {
   }
 
   @override
-  Future<void> remove(String id) async {
+  Future<UnpairResult> remove(String id) async {
     _computers.removeWhere((computer) => computer.id == id);
     await _save();
+    return UnpairResult.removed;
   }
 
   @override

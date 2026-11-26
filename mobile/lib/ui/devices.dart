@@ -147,30 +147,25 @@ class _DeviceRow extends StatelessWidget {
     final metadata = online
         ? '${computer.path.label} · ${computer.latency} ms'
         : '${computer.lastSeen ?? '离线'}${computer.id == 'home' ? ' · 每次需确认' : ''}';
-    final dot = !online
-        ? context.muted
-        : computer.path == ConnectionPath.direct
-        ? green
-        : amber;
     return Slidable(
       groupTag: 'devices',
       endActionPane: ActionPane(
         motion: const DrawerMotion(),
         extentRatio: .65,
         children: [
-          _SwipeAction(
+          DeviceSwipeAction(
             label: '仅查看',
             icon: CupertinoIcons.eye,
             color: blue,
             onTap: online ? view : null,
           ),
-          _SwipeAction(
+          DeviceSwipeAction(
             label: '传文件',
             icon: CupertinoIcons.folder,
             color: const Color(0xff26756a),
             onTap: online ? transfer : null,
           ),
-          _SwipeAction(
+          DeviceSwipeAction(
             label: '改名',
             icon: CupertinoIcons.pencil,
             color: const Color(0xff454550),
@@ -178,62 +173,18 @@ class _DeviceRow extends StatelessWidget {
           ),
         ],
       ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(13, 7, 10, 7),
-        child: Row(
-          children: [
-            OSIcon(computer.os, dim: !online),
-            const SizedBox(width: 13),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    computer.name,
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
-                      color: context.ink,
-                      fontSize: 16,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 3),
-                  Row(
-                    children: [
-                      Container(
-                        width: 7,
-                        height: 7,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: dot,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Flexible(
-                        child: Text(
-                          metadata,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(color: context.muted, fontSize: 12),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            if (online)
-              KButton(
+      child: DeviceRow(
+        computer: computer,
+        subtitle: metadata,
+        trailing: online
+            ? KButton(
                 key: ValueKey('connect-${computer.id}'),
                 label: '连接',
                 variant: KButtonVariant.secondary,
                 compact: true,
                 onTap: connect,
               )
-            else
-              KIconButton(
+            : KIconButton(
                 onPressed: rename,
                 tooltip: '更改名称',
                 icon: Icon(
@@ -242,15 +193,90 @@ class _DeviceRow extends StatelessWidget {
                   color: context.muted,
                 ),
               ),
-          ],
-        ),
       ),
     );
   }
 }
 
-class _SwipeAction extends StatelessWidget {
-  const _SwipeAction({
+class DeviceRow extends StatelessWidget {
+  const DeviceRow({
+    super.key,
+    required this.computer,
+    required this.subtitle,
+    required this.trailing,
+    this.onTap,
+  });
+
+  final Computer computer;
+  final String subtitle;
+  final Widget trailing;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final online = computer.online;
+    final dot = !online
+        ? context.muted
+        : computer.path == ConnectionPath.direct
+        ? green
+        : amber;
+    final row = Padding(
+      padding: const EdgeInsets.fromLTRB(13, 7, 10, 7),
+      child: Row(
+        children: [
+          OSIcon(computer.os, dim: !online),
+          const SizedBox(width: 13),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  computer.name,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: context.ink,
+                    fontSize: 16,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 3),
+                Row(
+                  children: [
+                    Container(
+                      width: 7,
+                      height: 7,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: dot,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: context.muted, fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          trailing,
+        ],
+      ),
+    );
+    return onTap == null ? row : KPress(onTap: onTap, child: row);
+  }
+}
+
+class DeviceSwipeAction extends StatelessWidget {
+  const DeviceSwipeAction({
+    super.key,
     required this.label,
     required this.icon,
     required this.color,
