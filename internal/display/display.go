@@ -1,5 +1,6 @@
-// Package display shows decoded video frames in a native macOS view backed by
-// an AVSampleBufferDisplayLayer, and maps pointer positions in the view to
+// Package display shows decoded video frames in a native view (macOS: an
+// AVSampleBufferDisplayLayer; Windows: a window with a flip-model swap chain
+// fed by a D3D11 video processor), and maps pointer positions in the view to
 // normalized video coordinates.
 package display
 
