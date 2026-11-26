@@ -733,13 +733,16 @@ func (h *Host) acceptLoop(ctx context.Context, ln *session.Host) {
 		h.wg.Add(1)
 		go func() {
 			defer h.wg.Done()
-			h.handle(p, nil, "", "")
+			h.handle(p, nil, true, "", "")
 		}()
 	}
 }
 
 // handle runs one incoming peer: busy check, confirmation, session.
-func (h *Host) handle(p *session.Peer, remoteCtx context.Context, phoneKey, biometricKey string) {
+// handle runs one session. remoteCtx is set for cross-network sessions;
+// passwordOK reports that such a controller proved a password (LAN ones
+// always have).
+func (h *Host) handle(p *session.Peer, remoteCtx context.Context, passwordOK bool, phoneKey, biometricKey string) {
 	h.mu.Lock()
 	if h.closed || (remoteCtx != nil && (remoteCtx.Err() != nil || !h.wantOn)) {
 		h.mu.Unlock()
@@ -751,7 +754,7 @@ func (h *Host) handle(p *session.Peer, remoteCtx context.Context, phoneKey, biom
 		p.CloseWithReason("对方正在被其他设备控制")
 		return
 	}
-	confirm := remoteCtx != nil || !h.cfg.AutoAccept
+	confirm := (remoteCtx != nil && !passwordOK) || !h.cfg.AutoAccept
 	var enroll bool
 	if phoneKey != "" {
 		phone, ok := h.cfg.Pairing.Phone(phoneKey)

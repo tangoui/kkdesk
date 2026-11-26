@@ -8,7 +8,11 @@ import (
 	"github.com/tangoui/kkdesk/internal/rendezvous"
 )
 
-func DialRemote(ctx context.Context, cfg rendezvous.Config, code string, mode Mode) (*Peer, error) {
+// DialRemote connects to the host with the device code through the
+// rendezvous server. A non-empty password (the host's temporary or fixed
+// password) is proven in the offer (see signRemoteOffer), which lets a host
+// that does not ask for confirmation accept at once.
+func DialRemote(ctx context.Context, cfg rendezvous.Config, code string, mode Mode, password string) (*Peer, error) {
 	guest, err := rendezvous.Join(ctx, cfg, code)
 	if err != nil {
 		return nil, err
@@ -20,6 +24,7 @@ func DialRemote(ctx context.Context, cfg rendezvous.Config, code string, mode Mo
 	}
 	offer, err := p.offer()
 	if err == nil {
+		offer.SDP = signRemoteOffer(offer.SDP, password)
 		var answer webrtc.SessionDescription
 		answer, err = guest.Exchange(ctx, string(p.mode), offer)
 		if err == nil {

@@ -186,7 +186,7 @@ func (m *Main) securitySettings(c *ui.Context, f *ui.FormW, hs app.HostState) {
 		}, layout.Gap(8), layout.Middle(), layout.WrapItems())
 	})
 	helpGap(c)
-	f.Item("连接前需要确认").Help("关闭后，密码正确的连接会被自动接受。").Body(func() {
+	f.Item("连接前需要确认").Help("关闭后，填对密码的连接（局域网，或带密码的跨网连接）会被自动接受。").Body(func() {
 		switchRow(c, &s.confirm, "别人连接时弹窗，由我决定是否接受", func(on bool) {
 			m.update(c, func(st *config.Settings) { st.Confirm = on })
 			m.o.Host.SetAutoAccept(!on)

@@ -87,7 +87,7 @@ func testRemoteVideoAndInputThroughTURN(t *testing.T, pinned bool) {
 			}
 		}
 	}()
-	controller, err := DialRemote(ctx, cfg, code, ModeDesktop)
+	controller, err := DialRemote(ctx, cfg, code, ModeDesktop, "")
 	if err != nil {
 		t.Fatal(err)
 	}

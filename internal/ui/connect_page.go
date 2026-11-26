@@ -203,15 +203,16 @@ func (f *Form) normalizeVia() {
 	}
 }
 
-// connectTarget is what the 连接 button dials: the address and password
-// of the 局域网 tab, or the device code of the 跨网 tab (no password).
+// connectTarget is what the 连接 button dials: the address or the device
+// code with the password (shared by both tabs; optional for a device code,
+// where it lets a host that does not ask for confirmation accept at once).
 func (f *Form) connectTarget() (addr, password string, ok bool) {
 	if f.Via == viaRemote {
 		code := rendezvous.NormalizeCode(f.PeerCode)
 		if !rendezvous.IsCode(code) {
 			return "", "", false
 		}
-		return code, "", true
+		return code, strings.TrimSpace(f.Password), true
 	}
 	addr = strings.TrimSpace(f.PeerAddr)
 	return addr, strings.TrimSpace(f.Password), addr != ""
@@ -240,12 +241,16 @@ func (m *Main) connectCard(c *ui.Context) {
 				ui.Text(c, "对方的跨网设备码").Size(13).Secondary()
 				submit = ui.Input(c, &st.PeerCode).Size(ui.Large).Placeholder("KD- 开头，例如 KD-ABCD2345EFGH").A11yLabel("跨网设备码").Submitted()
 				code := strings.TrimSpace(st.PeerCode)
-				switch {
-				case code != "" && !rendezvous.IsCode(code):
+				if code != "" && !rendezvous.IsCode(code) {
 					ui.Text(c, "设备码以 KD- 开头，共 15 位。局域网地址请切到「局域网」。").Size(12).Color(c.Theme.Error.Base)
-				default:
-					ui.Text(c, "请对方在 kkdesk「连接」页复制「本机跨网设备码」发给你。不用密码，连接时对方要点接受。").Size(12).Tertiary()
 				}
+			}, layout.Gap(6), layout.Padding(insets(6, 0, 0, 0)))
+			ui.Column(c, func() {
+				ui.Text(c, "临时密码（可选）").Size(13).Secondary()
+				if ui.Input(c, &st.Password).Size(ui.Large).Password().Placeholder("对方的临时密码或固定密码").A11yLabel("跨网临时密码").Submitted() {
+					submit = true
+				}
+				ui.Text(c, "填对密码、且对方关闭了「连接前需要确认」时直接连上；不填则需要对方点接受。").Size(12).Tertiary()
 			}, layout.Gap(6), layout.Padding(insets(6, 0, 0, 0)))
 			if !hasRemote {
 				ui.Alert(c, "warning", "还没有配置跨网服务：请先在「设置 › 跨网连接」填写跨网服务地址和密钥（两台电脑填同一个）。").ShowIcon(true).Show()
