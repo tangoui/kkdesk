@@ -34,7 +34,11 @@ func DialRemoteAs(ctx context.Context, cfg rendezvous.Config, code string, mode 
 	if err == nil {
 		answer, err = guest.Exchange(ctx, string(p.mode), offer)
 		if err == nil {
-			answer.SDP, err = verifyRemoteAnswer(offer.SDP, answer.SDP, code)
+			signed := answer.SDP
+			answer.SDP, err = verifyRemoteAnswer(offer.SDP, signed, code)
+			if err == nil {
+				p.hostKey = remoteAnswerKey(signed)
+			}
 		}
 		if err == nil {
 			err = p.pc.SetRemoteDescription(answer)

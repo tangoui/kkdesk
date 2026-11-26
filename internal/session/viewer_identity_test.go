@@ -41,7 +41,7 @@ func TestViewerIdentityReachesHostVerifier(t *testing.T) {
 	for _, tc := range []struct {
 		id   *pairing.Store
 		want string
-	}{{viewerID, viewerID.PublicKey()}, {nil, ""}} {
+	}{{viewerID, viewerID.ViewerPublicKey(hostID.PublicKey())}, {nil, ""}} {
 		p, err := DialWithOptions(ctx, host.Addr().String(), testPassword, DialOptions{Mode: ModeFiles, Identity: tc.id})
 		if err != nil {
 			t.Fatal(err)
@@ -59,8 +59,9 @@ func TestViewerClaimBoundToTranscript(t *testing.T) {
 		t.Fatal(err)
 	}
 	tx := NewPasswordTranscript("offer", "answer")
-	claim := viewerClaim(viewerID, tx)
-	if got := verifyViewerClaim(claim, tx); got != viewerID.PublicKey() {
+	const hostKey = "host-key"
+	claim := viewerClaim(viewerID, hostKey, tx)
+	if got := verifyViewerClaim(claim, tx); got != viewerID.ViewerPublicKey(hostKey) {
 		t.Fatalf("valid claim = %q", got)
 	}
 	if got := verifyViewerClaim(claim, NewPasswordTranscript("offer", "other answer")); got != "" {
@@ -96,5 +97,25 @@ func TestProbeHostKey(t *testing.T) {
 	}
 	if err := <-accepted; err != ErrProbe {
 		t.Fatalf("host saw the probe as %v, want ErrProbe", err)
+	}
+}
+
+// The key a controller proves is derived per host: a host cannot learn the
+// controller's own key (and from it its device code) nor link it across
+// hosts.
+func TestViewerKeyIsPerHost(t *testing.T) {
+	viewerID, err := pairing.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, b := viewerID.ViewerPublicKey("host-a"), viewerID.ViewerPublicKey("host-b")
+	if a == viewerID.PublicKey() || b == viewerID.PublicKey() {
+		t.Fatal("the proved key is the controller's own identity key")
+	}
+	if a == b {
+		t.Fatal("two hosts see the same controller key")
+	}
+	if a != viewerID.ViewerPublicKey("host-a") {
+		t.Fatal("the per-host key is not stable")
 	}
 }

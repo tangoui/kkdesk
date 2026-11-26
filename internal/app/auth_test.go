@@ -235,7 +235,7 @@ func TestTrustedViewerIgnoresRemotePause(t *testing.T) {
 	}
 	p.Close()
 	waitIdle(t, h)
-	if !trust.ViewerTrusted(me.PublicKey()) {
+	if !trust.ViewerTrusted(trustKeyOf(t, me, h)) {
 		t.Fatal("a controller that got in was not remembered")
 	}
 	for range 5 { // strangers pause the shared remote source
@@ -420,5 +420,5 @@ func TestViewerTrustNeedsAcceptanceAndEndsOnFailure(t *testing.T) {
 // trustKeyOf is the key h sees for controller me.
 func trustKeyOf(t *testing.T, me *pairing.Store, h *Host) string {
 	t.Helper()
-	return me.PublicKey()
+	return me.ViewerPublicKey(h.cfg.Pairing.PublicKey())
 }

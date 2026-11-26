@@ -59,6 +59,14 @@ func verifyRemoteAnswer(offer, signedAnswer, code string) (string, error) {
 	return answer, nil
 }
 
+// remoteAnswerKey is the host key in a signed remote answer (check it with
+// verifyRemoteAnswer first).
+func remoteAnswerKey(signedAnswer string) string {
+	answer, _ := stripAuthAttribute(signedAnswer, remoteHostSigAttr)
+	_, key := stripAuthAttribute(answer, remoteHostKeyAttr)
+	return key
+}
+
 type PasswordTranscript struct {
 	offer, answer [sha256.Size]byte
 }

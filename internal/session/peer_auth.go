@@ -71,10 +71,11 @@ func (p *Peer) ViewerKey() string {
 	return ""
 }
 
-// viewerClaim is a controller's identity claim for transcript.
-func viewerClaim(id *pairing.Store, tx PasswordTranscript) []byte {
-	claim := append([]byte{metaViewerID}, id.PublicKeyBytes()...)
-	return append(claim, id.SignViewer(tx.bytes())...)
+// viewerClaim is a controller's identity claim for transcript, with the key
+// it derives for hostKey (pairing.Store.ViewerClaim).
+func viewerClaim(id *pairing.Store, hostKey string, tx PasswordTranscript) []byte {
+	public, sig := id.ViewerClaim(hostKey, tx.bytes())
+	return append(append([]byte{metaViewerID}, public...), sig...)
 }
 
 // verifyViewerClaim returns the encoded key of a valid claim for tx, else "".
@@ -207,8 +208,8 @@ func (p *Peer) provePassword(ctx context.Context, tx PasswordTranscript, passwor
 	if err := p.waitReady(ctx); err != nil {
 		return err
 	}
-	if p.identity != nil {
-		if err := p.sendMeta(viewerClaim(p.identity, tx)); err != nil {
+	if p.identity != nil && p.hostKey != "" {
+		if err := p.sendMeta(viewerClaim(p.identity, p.hostKey, tx)); err != nil {
 			return err
 		}
 	}
