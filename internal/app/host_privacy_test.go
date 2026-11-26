@@ -223,7 +223,7 @@ func TestHostDisconnectLockGrace(t *testing.T) {
 func TestHostLockAndDisconnectWaitsForConfirmation(t *testing.T) {
 	for _, lockErr := range []error{nil, errors.New("lock refused")} {
 		screen := &fakePrivacyScreen{}
-		p, _ := testPrivacyScreen(config.PrivacyAllow, screen)
+		p, reports := testPrivacyScreen(config.PrivacyAllow, screen)
 		p.set(true)
 		started, confirm, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
 		locker := fakeLocker(func() error {
@@ -252,8 +252,14 @@ func TestHostLockAndDisconnectWaitsForConfirmation(t *testing.T) {
 			if !closed || got.Status != session.PrivacyOn || !p.locked {
 				t.Fatalf("successful lock: closed=%v status=%+v", closed, got)
 			}
-		} else if closed || screen.shown || got.Status != session.PrivacyFailed || got.Detail != "lock refused" {
-			t.Fatalf("failed lock: closed=%v shown=%v status=%+v", closed, screen.shown, got)
+		} else {
+			want := session.PrivacyMessage{Kind: session.LockNowResult, Status: session.PrivacyFailed, Detail: "lock refused"}
+			if closed || !screen.shown || !p.state().on || p.locked || got != want {
+				t.Fatalf("failed lock: closed=%v shown=%v state=%+v locked=%v result=%+v", closed, screen.shown, p.state(), p.locked, got)
+			}
+			if len(*reports) != 1 || (*reports)[0].status != session.PrivacyOn {
+				t.Fatalf("failed lock sent a privacy state change: %+v", *reports)
+			}
 		}
 		p.close()
 	}

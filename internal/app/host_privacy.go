@@ -265,10 +265,6 @@ func (p *hostPrivacy) lockNow(locker privacy.Locker, report func(session.Privacy
 	}
 	result := session.PrivacyMessage{Kind: session.LockNowResult, Status: session.PrivacyOn}
 	if err := locker.Lock(); err != nil {
-		if p.state().on {
-			p.hide()
-			p.publish(hostPrivacyState{}, session.PrivacyOff, "")
-		}
 		result.Status, result.Detail = session.PrivacyFailed, err.Error()
 		report(result)
 		return
