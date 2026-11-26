@@ -80,6 +80,7 @@ type HostConfig struct {
 	AutoAccept              bool
 	Remote                  rendezvous.Config
 	Pairing                 *pairing.Store
+	IdentityErr             error
 }
 
 // HostPhase is what the host is doing.
@@ -115,6 +116,8 @@ type HostState struct {
 	// FileAccess: the controller may browse and transfer files (the
 	// 文件传输 permission).
 	FileAccess          bool
+	DeviceCode          string
+	PasswordLockSeconds int
 	RemoteCode          string
 	RemoteErr           string
 	RemotePeer          bool
@@ -132,29 +135,31 @@ type Host struct {
 	cfg    HostConfig
 	notify func()
 
-	mu         sync.Mutex
-	password   string
-	pwSince    time.Time
-	pwTimer    *time.Timer // timed rotation
-	ln         *session.Host
-	cancel     context.CancelFunc
-	phase      HostPhase
-	peer       *session.Peer
-	since      time.Time
-	decide     chan bool
-	errMsg     string
-	notice     string
-	busy       bool
-	wg         sync.WaitGroup
-	addrs      []string
-	stopOnce   sync.Once
-	fsrv       *files.Server // file server of the current session
-	wantOn     bool          // SetEnabled(true) and not turned off since
-	retry      *time.Timer   // next listen attempt while the port is busy
-	remote     remoteHostState
-	closed     bool
-	remotePeer bool
-	mobile     mobileHostState
+	mu                sync.Mutex
+	password          string
+	pwSince           time.Time
+	pwTimer           *time.Timer // timed rotation
+	ln                *session.Host
+	cancel            context.CancelFunc
+	phase             HostPhase
+	peer              *session.Peer
+	since             time.Time
+	decide            chan bool
+	errMsg            string
+	notice            string
+	busy              bool
+	wg                sync.WaitGroup
+	addrs             []string
+	stopOnce          sync.Once
+	fsrv              *files.Server // file server of the current session
+	wantOn            bool          // SetEnabled(true) and not turned off since
+	retry             *time.Timer   // next listen attempt while the port is busy
+	remote            remoteHostState
+	closed            bool
+	remotePeer        bool
+	mobile            mobileHostState
+	passwordGate      session.PasswordGate
+	passwordLockTimer *time.Timer
 
 	fileAccess atomic.Bool // current 文件传输 permission
 	clipAccess atomic.Bool // current 剪贴板 permission
@@ -179,8 +184,12 @@ func NewHost(cfg HostConfig, notify func()) *Host {
 		cfg.Rotate = config.RotateNever
 	}
 	h := &Host{cfg: cfg, notify: notify, addrs: LocalIPv4()}
-	if cfg.Remote.URL != "" {
-		h.remote.code = h.deviceCode()
+	h.remote.code = h.deviceCode()
+	if cfg.Pairing == nil {
+		if cfg.IdentityErr == nil {
+			h.cfg.IdentityErr = errors.New("缺少 desktop-identity.key")
+		}
+		h.errMsg = identityError(h.cfg.IdentityErr).Error()
 	}
 	h.fileAccess.Store(!cfg.DisableSessionFiles)
 	h.clipAccess.Store(!cfg.DisableSessionClipboard)
@@ -202,9 +211,6 @@ func NewHost(cfg HostConfig, notify func()) *Host {
 // it (and no longer the old one) from the next connection on.
 func (h *Host) newPasswordLocked() {
 	h.password, h.pwSince = NewPassword(), time.Now()
-	if h.ln != nil {
-		h.ln.SetPasswords(h.password, h.cfg.Fixed)
-	}
 	if h.cfg.OnPassword != nil {
 		h.cfg.OnPassword(config.TempPassword{Password: h.password, Since: h.pwSince})
 	}
@@ -262,9 +268,6 @@ func (h *Host) SetRotate(policy string) {
 func (h *Host) SetFixedPassword(pw string) {
 	h.mu.Lock()
 	h.cfg.Fixed = pw
-	if h.ln != nil {
-		h.ln.SetPasswords(h.password, pw)
-	}
 	h.mu.Unlock()
 	h.notify()
 }
@@ -458,6 +461,8 @@ func (h *Host) State() HostState {
 	s := HostState{Phase: h.phase, Addrs: h.addrs, Port: Port, Password: h.password, Err: h.errMsg, Notice: h.notice,
 		FileAccess: h.fileAccess.Load(), ClipboardAccess: h.clipAccess.Load(), Enabled: h.wantOn, PasswordSince: h.pwSince, Rotate: h.cfg.Rotate,
 		HasFixed: h.cfg.Fixed != "", AutoAccept: h.cfg.AutoAccept, PairingCancellation: h.mobile.cancellation}
+	s.DeviceCode = h.remote.code
+	s.PasswordLockSeconds = int((h.passwordGate.Remaining(time.Now()) + time.Second - 1) / time.Second)
 	if h.remote.online {
 		s.RemoteCode = h.remote.code
 	}
@@ -498,6 +503,10 @@ func (h *Host) SetEnabled(on bool) error {
 	if h.closed || (on == h.wantOn && (!on || h.ln != nil || h.retry != nil)) {
 		return nil
 	}
+	if on && h.cfg.Pairing == nil {
+		h.errMsg = identityError(h.cfg.IdentityErr).Error()
+		return identityError(h.cfg.IdentityErr)
+	}
 	h.wantOn = on
 	if !on {
 		h.stopLocked()
@@ -526,7 +535,7 @@ var listen = session.Listen
 const altPorts = 20
 
 func (h *Host) startLocked() error {
-	ln, err := listen(h.cfg.Addr, h.password, h.cfg.Fixed)
+	ln, err := listen(h.cfg.Addr, h.cfg.Pairing, h.verifyPassword)
 	if err != nil && addrDenied(err) {
 		// Windows reserves port ranges for Hyper-V, WSL and Docker
 		// (netsh interface ipv4 show excludedportrange protocol=tcp);
@@ -540,7 +549,7 @@ func (h *Host) startLocked() error {
 		}
 		cands = append(cands, 0)
 		for _, p := range cands {
-			l2, err2 := listen(net.JoinHostPort(host, strconv.Itoa(p)), h.password, h.cfg.Fixed)
+			l2, err2 := listen(net.JoinHostPort(host, strconv.Itoa(p)), h.cfg.Pairing, h.verifyPassword)
 			if err2 == nil {
 				ln, err = l2, nil
 				break
@@ -707,6 +716,9 @@ func (h *Host) Close() {
 	h.stopOnce.Do(func() {
 		h.mu.Lock()
 		h.closed = true
+		if h.passwordLockTimer != nil {
+			h.passwordLockTimer.Stop()
+		}
 		h.stopLocked()
 		h.stopRemoteLocked()
 		if h.cfg.Pairing != nil {
@@ -745,7 +757,7 @@ func (h *Host) acceptWorker(ctx context.Context, ln *session.Host) {
 			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
 				return
 			}
-			if !errors.Is(err, session.ErrBadPassword) && !errors.Is(err, session.ErrProbe) {
+			if !errors.Is(err, session.ErrBadPassword) && !errors.Is(err, session.ErrProbe) && !errors.As(err, new(*session.PasswordLockedError)) {
 				log.Printf("kkdesk host: accept: %v", err)
 			}
 			continue
@@ -753,7 +765,7 @@ func (h *Host) acceptWorker(ctx context.Context, ln *session.Host) {
 		h.wg.Add(1)
 		go func() {
 			defer h.wg.Done()
-			h.handle(p, ctx, false, true, "", "")
+			h.handle(p, ctx, false, "", "")
 		}()
 	}
 }
@@ -761,9 +773,8 @@ func (h *Host) acceptWorker(ctx context.Context, ln *session.Host) {
 // handle runs one incoming peer: busy check, confirmation, session.
 // listenCtx is the context of the listener the request came in on; it ends
 // when remote control is turned off, which cancels a request still waiting
-// for the user. remote marks cross-network sessions; passwordOK reports
-// that such a controller proved a password (LAN ones always have).
-func (h *Host) handle(p *session.Peer, listenCtx context.Context, remote, passwordOK bool, phoneKey, biometricKey string) {
+// for the user. remote marks cross-network sessions.
+func (h *Host) handle(p *session.Peer, listenCtx context.Context, remote bool, phoneKey, biometricKey string) {
 	h.mu.Lock()
 	if h.closed || listenCtx.Err() != nil || !h.wantOn {
 		h.mu.Unlock()
@@ -775,7 +786,7 @@ func (h *Host) handle(p *session.Peer, listenCtx context.Context, remote, passwo
 		p.CloseWithReason("对方正在被其他设备控制")
 		return
 	}
-	confirm := (remote && !passwordOK) || !h.cfg.AutoAccept
+	confirm := !h.cfg.AutoAccept
 	var enroll bool
 	if phoneKey != "" {
 		phone, ok := h.cfg.Pairing.Phone(phoneKey)

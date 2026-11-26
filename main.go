@@ -140,9 +140,9 @@ func run(o options) error {
 	hcfg := hostConfig(o, store, logw)
 	identity, identityErr := pairing.Open(filepath.Dir(store.Path()))
 	if identityErr != nil {
-		log.Printf("kkdesk: desktop identity: %v", identityErr)
+		log.Printf("kkdesk: desktop identity in %s: %v", filepath.Dir(store.Path()), identityErr)
 	}
-	hcfg.Pairing = identity
+	hcfg.Pairing, hcfg.IdentityErr = identity, identityErr
 	if !o.host { // measurement runs leave the clipboard alone
 		hcfg.Clipboard = board
 	}

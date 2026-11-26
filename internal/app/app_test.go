@@ -85,7 +85,7 @@ func TestDialError(t *testing.T) {
 }
 
 func TestHostRejectsWhenOff(t *testing.T) {
-	h := NewHost(HostConfig{Addr: "127.0.0.1:0", Password: "123456"}, nil)
+	h := NewHost(HostConfig{Pairing: testHostIdentity(t), Addr: "127.0.0.1:0", Password: "123456"}, nil)
 	if h.State().Phase != HostOff {
 		t.Fatal("new host should be off")
 	}

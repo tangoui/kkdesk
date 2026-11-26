@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/tangoui/kkdesk/internal/pairing"
 	"github.com/tangoui/kkdesk/internal/session"
 )
 
@@ -22,16 +23,16 @@ func TestHostMovesOffAReservedPort(t *testing.T) {
 	probe.Close()
 	reserved := "127.0.0.1:" + strconv.Itoa(base)
 	old := listen
-	listen = func(addr string, pw ...string) (*session.Host, error) {
+	listen = func(addr string, identity *pairing.Store, verify session.PasswordVerifier) (*session.Host, error) {
 		if addr == reserved {
 			return nil, &net.OpError{Op: "listen", Net: "tcp", Err: os.NewSyscallError("bind", syscall.Errno(10013))}
 		}
-		return session.Listen(addr, pw...)
+		return session.Listen(addr, identity, verify)
 	}
 	defer func() { listen = old }()
 
 	moved := 0
-	h := NewHost(HostConfig{Addr: reserved, Password: "123456", OnPortMoved: func(p int) { moved = p }}, nil)
+	h := NewHost(HostConfig{Pairing: testHostIdentity(t), Addr: reserved, Password: "123456", OnPortMoved: func(p int) { moved = p }}, nil)
 	defer h.Close()
 	if err := h.SetEnabled(true); err != nil {
 		t.Fatalf("SetEnabled = %v, want a fallback port", err)
@@ -57,16 +58,16 @@ func TestHostMovesOffAReservedPort(t *testing.T) {
 // restarts of the listener.
 func TestHostLetsTheSystemPickWhenTheWholeRangeIsReserved(t *testing.T) {
 	old := listen
-	listen = func(addr string, pw ...string) (*session.Host, error) {
+	listen = func(addr string, identity *pairing.Store, verify session.PasswordVerifier) (*session.Host, error) {
 		if _, p, _ := net.SplitHostPort(addr); p != "0" {
 			return nil, &net.OpError{Op: "listen", Net: "tcp", Err: os.NewSyscallError("bind", syscall.Errno(10013))}
 		}
-		return session.Listen(addr, pw...)
+		return session.Listen(addr, identity, verify)
 	}
 	defer func() { listen = old }()
 
 	moved := 0
-	h := NewHost(HostConfig{Addr: "127.0.0.1:21115", Password: "123456", OnPortMoved: func(p int) { moved = p }}, nil)
+	h := NewHost(HostConfig{Pairing: testHostIdentity(t), Addr: "127.0.0.1:21115", Password: "123456", OnPortMoved: func(p int) { moved = p }}, nil)
 	defer h.Close()
 	if err := h.SetEnabled(true); err != nil {
 		t.Fatalf("SetEnabled = %v, want a system-picked port", err)

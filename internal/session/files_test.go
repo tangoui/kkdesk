@@ -14,7 +14,7 @@ import (
 // connectMode is connect with dial options.
 func connectMode(t *testing.T, opts DialOptions) (host, ctl *Peer) {
 	t.Helper()
-	h, err := Listen("127.0.0.1:0", testPassword)
+	h, err := listenForTest(t, "127.0.0.1:0", testPassword, "")
 	if err != nil {
 		t.Fatal(err)
 	}

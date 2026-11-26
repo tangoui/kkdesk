@@ -11,6 +11,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/tangoui/kkdesk/internal/pairing"
 	"github.com/tangoui/kkdesk/internal/rendezvous"
 )
 
@@ -62,7 +63,8 @@ func testRemoteVideoAndInputThroughTURN(t *testing.T, pinned bool) {
 	cfg.URL = server.URL
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	code := rendezvous.NewCode()
+	_, identity := readAuthVector(t)
+	code := identity.DeviceCode()
 	host, err := rendezvous.Register(ctx, cfg, code)
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +79,7 @@ func testRemoteVideoAndInputThroughTURN(t *testing.T, pinned bool) {
 		offer, err := rendezvous.ReadOffer(ctx, host)
 		var p *Peer
 		if err == nil {
-			p, err = acceptRemoteForTest(ctx, cfg, host, offer)
+			p, err = acceptRemoteForTest(ctx, cfg, host, offer, identity)
 		}
 		select {
 		case answered <- result{p, err}:
@@ -87,7 +89,7 @@ func testRemoteVideoAndInputThroughTURN(t *testing.T, pinned bool) {
 			}
 		}
 	}()
-	controller, err := DialRemote(ctx, cfg, code, ModeDesktop, "")
+	controller, err := DialRemote(ctx, cfg, code, ModeDesktop, testPassword)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,13 +109,16 @@ func testRemoteVideoAndInputThroughTURN(t *testing.T, pinned bool) {
 	}
 }
 
-func acceptRemoteForTest(ctx context.Context, cfg rendezvous.Config, host *websocket.Conn, offer rendezvous.Offer) (*Peer, error) {
-	p, answer, err := AnswerRemote(cfg, offer)
+func acceptRemoteForTest(ctx context.Context, cfg rendezvous.Config, host *websocket.Conn, offer rendezvous.Offer, identity *pairing.Store) (*Peer, error) {
+	p, answer, tx, err := AnswerRemote(cfg, offer, identity)
 	if err != nil {
 		return nil, err
 	}
 	if err = rendezvous.Reply(ctx, host, offer.ID, answer, ""); err == nil {
-		err = p.WaitReady(ctx)
+		var gate PasswordGate
+		err = p.AcceptPassword(ctx, tx, func(tx PasswordTranscript, proof []byte) (string, time.Duration) {
+			return gate.Check(time.Now(), tx, proof, testPassword, "")
+		})
 	}
 	if err != nil {
 		p.Close()

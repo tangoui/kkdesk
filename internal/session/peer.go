@@ -96,6 +96,8 @@ type Peer struct {
 	pendingQuality *Quality
 	reason         string // close reason sent by the other side
 	remote         string // remote signaling address
+	hostKey        string // verified LAN identity on the controller
+	auth           atomic.Pointer[peerPasswordAuth]
 	authPassword   string // the host password the controller proved, "" if none
 	dcMove         *webrtc.DataChannel
 	dcInput        *webrtc.DataChannel
@@ -218,7 +220,7 @@ func (p *Peer) attach(dc *webrtc.DataChannel) {
 	case labelMeta:
 		p.dcMeta = dc
 	case labelFiles:
-		fc := newFileChannel(dc)
+		fc := newFileChannel(dc, p.passwordPending)
 		p.files = fc
 		p.mu.Unlock()
 		dc.OnOpen(p.channelOpened)
@@ -238,6 +240,9 @@ func (p *Peer) attach(dc *webrtc.DataChannel) {
 		return
 	}
 	dc.OnMessage(func(msg webrtc.DataChannelMessage) {
+		if p.passwordPending() {
+			return
+		}
 		e, err := input.Unmarshal(msg.Data)
 		if err != nil {
 			return
@@ -256,7 +261,7 @@ func (p *Peer) channelOpened() {
 	if p.opened.Add(1) == numLabels {
 		p.readyOnce.Do(func() {
 			close(p.ready)
-			if !p.isHost {
+			if !p.isHost && !p.passwordPending() {
 				go p.clockLoop()
 			}
 		})
@@ -266,6 +271,9 @@ func (p *Peer) channelOpened() {
 func (p *Peer) handleMeta(msg webrtc.DataChannelMessage) {
 	b := msg.Data
 	if len(b) == 0 {
+		return
+	}
+	if b[0] != metaBye && p.handlePasswordMeta(msg) {
 		return
 	}
 	switch b[0] {

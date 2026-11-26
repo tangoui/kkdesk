@@ -36,7 +36,7 @@ func (h *Host) deviceCode() string {
 	if h.cfg.Pairing != nil {
 		return h.cfg.Pairing.DeviceCode()
 	}
-	return rendezvous.NewCode()
+	return ""
 }
 
 func (h *Host) PairingAvailable() bool {
@@ -459,6 +459,6 @@ func (h *Host) answerMobile(listener context.Context, cfg rendezvous.Config, exc
 			peer.Close()
 			return
 		}
-		h.handle(peer, listener, remote != nil, false, key, biometricKey)
+		h.handle(peer, listener, remote != nil, key, biometricKey)
 	})
 }

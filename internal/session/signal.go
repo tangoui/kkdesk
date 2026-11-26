@@ -2,17 +2,11 @@ package session
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/rand"
-	"crypto/sha256"
-	"crypto/subtle"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
-	"sync"
 	"syscall"
 	"time"
 
@@ -21,34 +15,24 @@ import (
 	"github.com/tangoui/kkdesk/internal/pairing"
 )
 
-// ErrBadPassword is returned by Dial when the host rejects the password, and
-// by Host.Accept when a client fails the challenge. The host keeps listening.
-var ErrBadPassword = errors.New("session: bad password")
-
-// ErrProbe is returned by Host.Accept when the client closed the connection
-// without answering the challenge: a port probe (the 我的设备 online
-// check) or an aborted dial. The host keeps listening.
+// ErrProbe marks a port probe or a mobile exchange handed off by Accept.
 var ErrProbe = errors.New("session: connection closed before authentication")
 
 // signalTimeout bounds the whole TCP signaling exchange when the caller's
 // context has no earlier deadline.
 const signalTimeout = 30 * time.Second
 
-// sigMsg is one JSON line of the signaling protocol:
-//
-//	host → client  {"nonce": base64}
-//	client → host  {"mac": base64(HMAC-SHA256(password, nonce))}
-//	host → client  {"ok": true} | {"ok": false, "error": "bad password"}
-//	client → host  {"sdp": offer, "mode": "desktop"|"files"}
-//	host → client  {"sdp": answer}
+const lanVersion = 2
+
+// LAN signaling starts with the version. The controller replies with either
+// a mobile envelope or a WebRTC offer, and receives a signed answer.
 type sigMsg struct {
-	Mobile *pairing.Message           `json:"mobile,omitempty"`
-	Nonce  string                     `json:"nonce,omitempty"`
-	MAC    string                     `json:"mac,omitempty"`
-	OK     *bool                      `json:"ok,omitempty"`
-	Error  string                     `json:"error,omitempty"`
-	SDP    *webrtc.SessionDescription `json:"sdp,omitempty"`
-	Mode   Mode                       `json:"mode,omitempty"` // with the offer; "" = desktop
+	Mobile  *pairing.Message           `json:"mobile,omitempty"`
+	Version int                        `json:"version,omitempty"`
+	SDP     *webrtc.SessionDescription `json:"sdp,omitempty"`
+	Mode    Mode                       `json:"mode,omitempty"`
+	HostKey string                     `json:"hostKey,omitempty"`
+	HostSig string                     `json:"hostSig,omitempty"`
 }
 
 // maxSignalMsg bounds one signaling message (an SDP with its candidates is
@@ -105,61 +89,24 @@ func (s *sigConn) recv() (sigMsg, error) {
 	return m, err
 }
 
-func computeMAC(password string, nonce []byte) []byte {
-	h := hmac.New(sha256.New, []byte(password))
-	h.Write(nonce)
-	return h.Sum(nil)
-}
-
 // Host listens for controller connections.
 type Host struct {
-	ln *net.TCPListener
-
-	mu        sync.Mutex
-	passwords []string // any of them passes the challenge; never ""
-	mobile    func(context.Context, *MobileLAN, func())
+	ln       *net.TCPListener
+	identity *pairing.Store
+	verify   PasswordVerifier
+	mobile   func(context.Context, *MobileLAN, func())
 }
 
-// Listen starts listening for signaling connections on addr (e.g. ":21118").
-// A client passes the challenge with any of passwords (the temporary and
-// the fixed one); empty passwords are ignored.
-func Listen(addr string, passwords ...string) (*Host, error) {
+// Listen starts listening for v2 signaling connections on addr.
+func Listen(addr string, identity *pairing.Store, verify PasswordVerifier) (*Host, error) {
+	if identity == nil || verify == nil {
+		return nil, errors.New("session: listener requires an identity and password verifier")
+	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
 	}
-	h := &Host{ln: ln.(*net.TCPListener)}
-	h.SetPasswords(passwords...)
-	return h, nil
-}
-
-// SetPasswords replaces the accepted passwords; the next challenge uses
-// them, so a removed password stops working at once. Empty passwords are
-// ignored. Established peers are not affected.
-func (h *Host) SetPasswords(passwords ...string) {
-	var pws []string
-	for _, pw := range passwords {
-		if pw != "" {
-			pws = append(pws, pw)
-		}
-	}
-	h.mu.Lock()
-	h.passwords = pws
-	h.mu.Unlock()
-}
-
-// verify returns the password mac answers nonce with, or ok false. Every
-// password is checked, so the time does not tell which one matched.
-func (h *Host) verify(mac, nonce []byte) (matched string, ok bool) {
-	h.mu.Lock()
-	pws := h.passwords
-	h.mu.Unlock()
-	for _, pw := range pws {
-		if subtle.ConstantTimeCompare(mac, computeMAC(pw, nonce)) == 1 {
-			matched, ok = pw, true
-		}
-	}
-	return matched, ok
+	return &Host{ln: ln.(*net.TCPListener), identity: identity, verify: verify}, nil
 }
 
 // Addr returns the listening address.
@@ -168,10 +115,8 @@ func (h *Host) Addr() net.Addr { return h.ln.Addr() }
 // Close stops listening. Established peers are not affected.
 func (h *Host) Close() error { return h.ln.Close() }
 
-// Accept waits for one controller, verifies its password and negotiates a
-// WebRTC session. It returns once the peer's data channels are open. A client
-// that fails the challenge gets ErrBadPassword; the host keeps listening and
-// Accept may be called again.
+// Accept waits for one controller and returns after it proves its password
+// over WebRTC. A failed connection leaves the listener open.
 func (h *Host) Accept(ctx context.Context) (*Peer, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -194,11 +139,7 @@ func (h *Host) Accept(ctx context.Context) (*Peer, error) {
 		}
 	}()
 
-	nonce := make([]byte, 32)
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, err
-	}
-	if err := sc.send(sigMsg{Nonce: base64.StdEncoding.EncodeToString(nonce)}); err != nil {
+	if err := sc.send(sigMsg{Version: lanVersion}); err != nil {
 		return nil, err
 	}
 	m, err := sc.recv()
@@ -206,7 +147,7 @@ func (h *Host) Accept(ctx context.Context) (*Peer, error) {
 		if closedEarly(err) {
 			return nil, ErrProbe
 		}
-		return nil, fmt.Errorf("session: read challenge response: %w", err)
+		return nil, fmt.Errorf("session: read offer: %w", err)
 	}
 	if m.Mobile != nil && h.mobile != nil {
 		deadline := time.Now().Add(2 * time.Minute)
@@ -218,55 +159,33 @@ func (h *Host) Accept(ctx context.Context) (*Peer, error) {
 		h.mobile(ctx, &MobileLAN{sc: sc, first: m.Mobile, close: done}, done)
 		return nil, ErrProbe
 	}
-	mac, err := base64.StdEncoding.DecodeString(m.MAC)
-	var authPW string
-	var authOK bool
-	if err == nil {
-		authPW, authOK = h.verify(mac, nonce)
-	}
-	if !authOK {
-		f := false
-		_ = sc.send(sigMsg{OK: &f, Error: "bad password"})
-		return nil, ErrBadPassword
-	}
-	t := true
-	if err := sc.send(sigMsg{OK: &t}); err != nil {
-		return nil, err
-	}
-
-	m, err = sc.recv()
-	if err != nil {
-		return nil, fmt.Errorf("session: read offer: %w", err)
-	}
 	if m.SDP == nil || m.SDP.Type != webrtc.SDPTypeOffer {
-		return nil, errors.New("session: expected SDP offer")
+		return nil, ErrHostSignature
 	}
 	p, err := newPeer(true, isLoopback(c.RemoteAddr()), m.Mode)
 	if err != nil {
 		return nil, err
 	}
 	p.remote = c.RemoteAddr().String()
-	p.SetAuthPassword(authPW)
+	p.requirePassword()
 	answer, err := p.answer(*m.SDP)
 	if err != nil {
 		p.Close()
 		return nil, err
 	}
-	if err := sc.send(sigMsg{SDP: answer}); err != nil {
+	if err := sc.send(sigMsg{SDP: answer, HostKey: h.identity.PublicKey(), HostSig: h.identity.SignHostAnswer(m.SDP.SDP, answer.SDP)}); err != nil {
 		p.Close()
 		return nil, err
 	}
 	done()
-	if err := p.waitReady(ctx); err != nil {
+	if err := p.AcceptPassword(ctx, NewPasswordTranscript(m.SDP.SDP, answer.SDP), h.verify); err != nil {
 		p.Close()
 		return nil, err
 	}
 	return p, nil
 }
 
-// Dial connects to a host, answers its password challenge and negotiates a
-// WebRTC session as the controller. It returns once the data channels are
-// open. A rejected password yields ErrBadPassword.
+// Dial connects to a host and authenticates over WebRTC as the controller.
 func Dial(ctx context.Context, addr, password string) (*Peer, error) {
 	return DialWithOptions(ctx, addr, password, DialOptions{})
 }
@@ -284,25 +203,10 @@ func DialWithOptions(ctx context.Context, addr, password string, opts DialOption
 
 	m, err := sc.recv()
 	if err != nil {
-		return nil, fmt.Errorf("session: read nonce: %w", err)
+		return nil, fmt.Errorf("session: read greeting: %w", err)
 	}
-	nonce, err := base64.StdEncoding.DecodeString(m.Nonce)
-	if err != nil || len(nonce) == 0 {
-		return nil, errors.New("session: invalid nonce")
-	}
-	mac := base64.StdEncoding.EncodeToString(computeMAC(password, nonce))
-	if err := sc.send(sigMsg{MAC: mac}); err != nil {
-		return nil, err
-	}
-	m, err = sc.recv()
-	if err != nil {
-		return nil, fmt.Errorf("session: read auth result: %w", err)
-	}
-	if m.OK == nil || !*m.OK {
-		if m.Error == "bad password" {
-			return nil, ErrBadPassword
-		}
-		return nil, fmt.Errorf("session: rejected: %s", m.Error)
+	if m.Version != lanVersion {
+		return nil, ErrHostSignature
 	}
 
 	p, err := newPeer(false, isLoopback(c.RemoteAddr()), opts.Mode)
@@ -310,6 +214,7 @@ func DialWithOptions(ctx context.Context, addr, password string, opts DialOption
 		return nil, err
 	}
 	p.remote = c.RemoteAddr().String()
+	p.requirePassword()
 	offer, err := p.offer()
 	if err != nil {
 		p.Close()
@@ -324,16 +229,22 @@ func DialWithOptions(ctx context.Context, addr, password string, opts DialOption
 		p.Close()
 		return nil, fmt.Errorf("session: read answer: %w", err)
 	}
-	if m.SDP == nil || m.SDP.Type != webrtc.SDPTypeAnswer {
+	if m.SDP == nil || m.SDP.Type != webrtc.SDPTypeAnswer ||
+		!pairing.VerifyHostAnswer(m.HostKey, m.HostSig, offer.SDP, m.SDP.SDP) {
 		p.Close()
-		return nil, errors.New("session: expected SDP answer")
+		return nil, ErrHostSignature
 	}
+	if opts.ExpectedHostKey != "" && opts.ExpectedHostKey != m.HostKey {
+		p.Close()
+		return nil, ErrHostKeyChanged
+	}
+	p.hostKey = m.HostKey
 	if err := p.pc.SetRemoteDescription(*m.SDP); err != nil {
 		p.Close()
 		return nil, err
 	}
 	done()
-	if err := p.waitReady(ctx); err != nil {
+	if err := p.provePassword(ctx, NewPasswordTranscript(offer.SDP, m.SDP.SDP), password); err != nil {
 		p.Close()
 		return nil, err
 	}

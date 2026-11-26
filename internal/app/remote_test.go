@@ -35,7 +35,7 @@ func TestRemoteFileSession(t *testing.T) {
 			server := httptest.NewServer(signaling)
 			defer server.Close()
 			cfg := rendezvous.Config{URL: server.URL, Token: token}
-			h := NewHost(HostConfig{Addr: "127.0.0.1:0", AutoAccept: true, Remote: cfg}, nil)
+			h := NewHost(HostConfig{Pairing: testHostIdentity(t), Addr: "127.0.0.1:0", Password: "123456", AutoAccept: false, Remote: cfg}, nil)
 			if err := h.SetEnabled(true); err != nil {
 				t.Fatal(err)
 			}
@@ -49,7 +49,7 @@ func TestRemoteFileSession(t *testing.T) {
 			if code == "" {
 				t.Fatalf("device did not register: %+v", h.State())
 			}
-			v := NewViewer(ViewerConfig{Addr: code, FilesOnly: true, Remote: cfg}, nil)
+			v := NewViewer(ViewerConfig{Addr: code, Password: "123456", FilesOnly: true, Remote: cfg}, nil)
 			defer v.Close()
 			if err := v.Connect(ctx); err != nil {
 				t.Fatal(err)
@@ -84,7 +84,7 @@ func TestRemoteWrongPasswordRefused(t *testing.T) {
 	cfg, done := remoteTestService(t)
 	defer done()
 	for _, autoAccept := range []bool{true, false} {
-		h := NewHost(HostConfig{Addr: "127.0.0.1:0", Password: "k7Pm4x", AutoAccept: autoAccept, Remote: cfg}, nil)
+		h := NewHost(HostConfig{Pairing: testHostIdentity(t), Addr: "127.0.0.1:0", Password: "k7Pm4x", AutoAccept: autoAccept, Remote: cfg}, nil)
 		if err := h.SetEnabled(true); err != nil {
 			t.Fatal(err)
 		}
@@ -143,11 +143,10 @@ func TestRemotePasswordSkipsConfirmation(t *testing.T) {
 		{"right temporary password", true, "k7Pm4x", false},
 		{"right fixed password", true, "fixed-pass-1", false},
 
-		{"no password", true, "", true},
 		{"confirmation on", false, "k7Pm4x", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h := NewHost(HostConfig{Addr: "127.0.0.1:0", Password: "k7Pm4x", Fixed: "fixed-pass-1", AutoAccept: tc.autoAccept, Remote: cfg}, nil)
+			h := NewHost(HostConfig{Pairing: testHostIdentity(t), Addr: "127.0.0.1:0", Password: "k7Pm4x", Fixed: "fixed-pass-1", AutoAccept: tc.autoAccept, Remote: cfg}, nil)
 			if err := h.SetEnabled(true); err != nil {
 				t.Fatal(err)
 			}

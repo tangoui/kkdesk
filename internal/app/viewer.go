@@ -246,8 +246,9 @@ func (v *Viewer) Connect(ctx context.Context) error {
 func DialError(addr string, err error) string {
 	var ne net.Error
 	switch {
-	case errors.Is(err, session.ErrBadPassword):
-		return "密码错误"
+	case errors.Is(err, session.ErrBadPassword), errors.Is(err, session.ErrHostSignature),
+		errors.Is(err, session.ErrHostKeyChanged), errors.As(err, new(*session.PasswordLockedError)):
+		return err.Error()
 	case errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout()):
 		return fmt.Sprintf("连接 %s 超时", addr)
 	case errors.Is(err, syscall.ECONNREFUSED):

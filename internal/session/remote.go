@@ -5,13 +5,12 @@ import (
 
 	"github.com/pion/webrtc/v4"
 
+	"github.com/tangoui/kkdesk/internal/pairing"
 	"github.com/tangoui/kkdesk/internal/rendezvous"
 )
 
-// DialRemote connects to the host with the device code through the
-// rendezvous server. A non-empty password (the host's temporary or fixed
-// password) is proven in the offer (see signRemoteOffer), which lets a host
-// that does not ask for confirmation accept at once.
+// DialRemote verifies the signed answer against code before proving the
+// password over WebRTC.
 func DialRemote(ctx context.Context, cfg rendezvous.Config, code string, mode Mode, password string) (*Peer, error) {
 	guest, err := rendezvous.Join(ctx, cfg, code)
 	if err != nil {
@@ -22,17 +21,20 @@ func DialRemote(ctx context.Context, cfg rendezvous.Config, code string, mode Mo
 	if err != nil {
 		return nil, err
 	}
+	p.requirePassword()
 	offer, err := p.offer()
+	var answer webrtc.SessionDescription
 	if err == nil {
-		offer.SDP = signRemoteOffer(offer.SDP, password)
-		var answer webrtc.SessionDescription
 		answer, err = guest.Exchange(ctx, string(p.mode), offer)
+		if err == nil {
+			answer.SDP, err = verifyRemoteAnswer(offer.SDP, answer.SDP, code)
+		}
 		if err == nil {
 			err = p.pc.SetRemoteDescription(answer)
 		}
 	}
 	if err == nil {
-		err = p.waitReady(ctx)
+		err = p.provePassword(ctx, NewPasswordTranscript(offer.SDP, answer.SDP), password)
 	}
 	if err != nil {
 		p.Close()
@@ -42,18 +44,24 @@ func DialRemote(ctx context.Context, cfg rendezvous.Config, code string, mode Mo
 	return p, nil
 }
 
-func AnswerRemote(cfg rendezvous.Config, req rendezvous.Offer) (*Peer, *webrtc.SessionDescription, error) {
+func AnswerRemote(cfg rendezvous.Config, req rendezvous.Offer, identity *pairing.Store) (*Peer, *webrtc.SessionDescription, PasswordTranscript, error) {
+	if identity == nil {
+		return nil, nil, PasswordTranscript{}, ErrHostSignature
+	}
 	p, err := newRemotePeer(cfg, true, Mode(req.Mode), req.ICE, req.RelayOnly)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, PasswordTranscript{}, err
 	}
+	p.requirePassword()
 	answer, err := p.answer(req.SDP)
 	if err != nil {
 		p.Close()
-		return nil, nil, err
+		return nil, nil, PasswordTranscript{}, err
 	}
 	p.remote = "跨网连接"
-	return p, answer, nil
+	transcript := NewPasswordTranscript(req.SDP.SDP, answer.SDP)
+	answer.SDP = signRemoteAnswer(identity, req.SDP.SDP, answer.SDP)
+	return p, answer, transcript, nil
 }
 
 func (p *Peer) WaitReady(ctx context.Context) error { return p.waitReady(ctx) }

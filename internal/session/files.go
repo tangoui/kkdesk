@@ -21,7 +21,8 @@ const (
 
 // DialOptions configures DialWithOptions.
 type DialOptions struct {
-	Mode Mode // "" means ModeDesktop
+	ExpectedHostKey string
+	Mode            Mode // "" means ModeDesktop
 }
 
 func normMode(m Mode) Mode {
@@ -65,9 +66,13 @@ type fileChannel struct {
 
 var _ files.Channel = (*fileChannel)(nil)
 
-func newFileChannel(dc *webrtc.DataChannel) *fileChannel {
+func newFileChannel(dc *webrtc.DataChannel, blocked func() bool) *fileChannel {
 	f := &fileChannel{dc: dc}
-	dc.OnMessage(f.deliver)
+	dc.OnMessage(func(msg webrtc.DataChannelMessage) {
+		if !blocked() {
+			f.deliver(msg)
+		}
+	})
 	return f
 }
 
