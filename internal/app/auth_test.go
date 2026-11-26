@@ -359,3 +359,66 @@ func TestViewerFirstHostCheckCannotBeSkipped(t *testing.T) {
 		t.Fatal("connected although the probe failed")
 	}
 }
+
+func (s *trustSet) DistrustViewer(key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.keys, key)
+	return nil
+}
+
+// Trust needs an accepted session, and a trusted controller that fails loses
+// it: knowing an old password (a former helper) buys no extra guesses after
+// the password changes.
+func TestViewerTrustNeedsAcceptanceAndEndsOnFailure(t *testing.T) {
+	cfg, stop := remoteTestService(t)
+	defer stop()
+	trust := &trustSet{}
+	h := NewHost(HostConfig{Addr: "127.0.0.1:0", Password: "good", Pairing: testHostIdentity(t), Remote: cfg,
+		Rotate: config.RotateNever, Viewers: trust}, nil)
+	defer h.Close()
+	if err := h.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+	for h.State().RemoteCode == "" && ctx.Err() == nil {
+		time.Sleep(10 * time.Millisecond)
+	}
+	code := h.State().RemoteCode
+	me := testHostIdentity(t)
+	go func() {
+		waitFor(t, "request", func() bool { return h.State().Phase == HostPending })
+		h.Reject()
+	}()
+	if p, err := session.DialRemoteAs(ctx, cfg, code, session.ModeFiles, "good", me); err == nil {
+		p.Close()
+	}
+	waitIdle(t, h)
+	if trust.ViewerTrusted(trustKeyOf(t, me, h)) {
+		t.Fatal("a rejected controller was trusted")
+	}
+	h.SetAutoAccept(true)
+	p, err := session.DialRemoteAs(ctx, cfg, code, session.ModeFiles, "good", me)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Close()
+	waitIdle(t, h)
+	key := trustKeyOf(t, me, h)
+	if !trust.ViewerTrusted(key) {
+		t.Fatal("an accepted controller was not trusted")
+	}
+	if _, err := session.DialRemoteAs(ctx, cfg, code, session.ModeFiles, "changed", me); !errors.Is(err, session.ErrBadPassword) {
+		t.Fatalf("wrong password: %v", err)
+	}
+	if trust.ViewerTrusted(key) {
+		t.Fatal("a trusted controller kept its trust after failing")
+	}
+}
+
+// trustKeyOf is the key h sees for controller me.
+func trustKeyOf(t *testing.T, me *pairing.Store, h *Host) string {
+	t.Helper()
+	return me.PublicKey()
+}

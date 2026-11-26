@@ -351,6 +351,17 @@ func (s *Store) TrustViewer(key string) error {
 	return s.saveLocked()
 }
 
+// DistrustViewer forgets a controller (it failed the password).
+func (s *Store) DistrustViewer(key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !slices.Contains(s.f.TrustedViewers, key) {
+		return nil
+	}
+	s.f.TrustedViewers = slices.DeleteFunc(slices.Clone(s.f.TrustedViewers), func(k string) bool { return k == key })
+	return s.saveLocked()
+}
+
 // TempPassword returns the saved temporary password (zero when none).
 func (s *Store) TempPassword() TempPassword {
 	s.mu.Lock()

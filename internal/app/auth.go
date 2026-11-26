@@ -16,14 +16,17 @@ func identityError(err error) error {
 // requests (their addresses are relays or unknown).
 const remoteSource = "remote"
 
-// ViewerTrust remembers controllers that got in with the password: a
+// ViewerTrust remembers controllers whose session was accepted: a
 // controller that proves such a key (session.Peer.ViewerKey) has a pause
 // source of its own, so strangers failing on a shared source cannot keep it
 // out. Unknown keys count as their source like anonymous controllers, so new
-// keys give an attacker no extra guesses.
+// keys give an attacker no extra guesses, and a trusted key that fails loses
+// its trust, so knowing an old password buys one extra guess per key at
+// most.
 type ViewerTrust interface {
 	ViewerTrusted(key string) bool
 	TrustViewer(key string) error
+	DistrustViewer(key string) error
 }
 
 func (h *Host) verifyPassword(source, viewerKey string, transcript session.PasswordTranscript, proof []byte) (string, time.Duration) {
@@ -42,9 +45,9 @@ func (h *Host) verifyPassword(source, viewerKey string, transcript session.Passw
 	if locked {
 		h.notify()
 	}
-	if matched != "" && viewerKey != "" && !trusted && h.cfg.Viewers != nil {
-		if err := h.cfg.Viewers.TrustViewer(viewerKey); err != nil {
-			log.Printf("kkdesk host: remember controller: %v", err)
+	if trusted && matched == "" && remaining == 0 {
+		if err := h.cfg.Viewers.DistrustViewer(viewerKey); err != nil {
+			log.Printf("kkdesk host: forget controller: %v", err)
 		}
 	}
 	return matched, remaining

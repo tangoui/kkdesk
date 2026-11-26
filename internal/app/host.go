@@ -941,6 +941,11 @@ func (h *Host) handle(p *session.Peer, listenCtx context.Context, remote bool, p
 		}
 	}
 	accepted = true
+	if key := p.ViewerKey(); key != "" && h.cfg.Viewers != nil {
+		if err := h.cfg.Viewers.TrustViewer(key); err != nil {
+			log.Printf("kkdesk host: remember controller: %v", err)
+		}
+	}
 	h.serveFiles(p)
 	if p.Mode() == session.ModeFiles {
 		h.mu.Lock()
