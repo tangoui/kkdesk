@@ -213,9 +213,9 @@ func (c *Client) Mkdir(ctx context.Context, path string) error {
 	return err
 }
 
-func (c *Client) newTransfer(ctx context.Context, upload bool, progress func(Progress)) *Transfer {
+func (c *Client) newTransfer(ctx context.Context, upload bool, localRoot *os.Root, progress func(Progress)) *Transfer {
 	tctx, cancel := context.WithCancelCause(context.Background())
-	t := &Transfer{id: c.newID(), c: c, upload: upload, ctx: tctx, cancel: cancel, meter: newMeter(progress), done: make(chan struct{}), failed: map[string]bool{}}
+	t := &Transfer{id: c.newID(), c: c, upload: upload, ctx: tctx, cancel: cancel, meter: newMeter(progress), done: make(chan struct{}), localRoot: localRoot, failed: map[string]bool{}}
 	c.mu.Lock()
 	c.transfers[t.id] = t
 	c.mu.Unlock()
@@ -229,14 +229,12 @@ func (c *Client) newTransfer(ctx context.Context, upload bool, progress func(Pro
 // transfer. progress, if set, is called from the receiving goroutine and
 // must not block.
 func (c *Client) Download(ctx context.Context, remotePath, localDir string, progress func(Progress)) (*Transfer, error) {
-	if fi, err := os.Stat(localDir); err != nil {
-		return nil, localError(err)
-	} else if !fi.IsDir() {
-		return nil, &RemoteError{Code: codeInvalid, Detail: localDir + " is not a directory"}
+	root, err := openReceiveRoot(localDir)
+	if err != nil {
+		return nil, err
 	}
-	t := c.newTransfer(ctx, false, progress)
-	t.localDir = localDir
-	_, err := c.request(ctx, msg{Op: "download", Path: remotePath, Transfer: t.id}, func(r *msg) {
+	t := c.newTransfer(ctx, false, root, progress)
+	_, err = c.request(ctx, msg{Op: "download", Path: remotePath, Transfer: t.id}, func(r *msg) {
 		// On the message goroutine, before any content of this transfer.
 		t.mu.Lock()
 		t.res.Name = r.Name
@@ -278,12 +276,12 @@ func (t *Transfer) handle(m *msg) {
 		parts, err := t.localParts(m.Rel)
 		if err == nil && len(parts) == 1 && t.root == "" {
 			// The top-level folder comes first; pick a free name for it.
-			name := uniqueName(t.localDir, parts[0])
-			if err = os.Mkdir(filepath.Join(t.localDir, name), 0o755); err == nil {
+			var name string
+			if name, err = mkdirUnique(t.localRoot, parts[0]); err == nil {
 				t.root, t.res.Name = name, name
 			}
 		} else if err == nil {
-			err = os.MkdirAll(joinRel(t.localDir, parts), 0o755)
+			err = t.localRoot.MkdirAll(filepath.Join(parts...), 0o755)
 		}
 		if err != nil {
 			t.addFailure(m.Rel, localError(err))
@@ -296,7 +294,7 @@ func (t *Transfer) handle(m *msg) {
 		t.curRel = m.Rel
 		parts, err := t.localParts(m.Rel)
 		if err == nil {
-			t.cur, err = newIncoming(joinRel(t.localDir, parts[:len(parts)-1]), parts[len(parts)-1], m.Size, m.Mode, m.MTime)
+			t.cur, err = newIncoming(t.localRoot, parts, m.Size, m.Mode, m.MTime)
 			err = localError(err)
 		}
 		if err != nil {
@@ -455,7 +453,7 @@ func (c *Client) Upload(ctx context.Context, localPath, remoteDir string, progre
 	if err != nil {
 		return nil, err
 	}
-	t := c.newTransfer(ctx, true, progress)
+	t := c.newTransfer(ctx, true, nil, progress)
 	t.res.Skipped = p.skipped
 	t.res.Failed = p.failed
 	t.res.Name = filepath.Base(filepath.Clean(localPath))

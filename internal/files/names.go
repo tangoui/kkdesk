@@ -1,8 +1,6 @@
 package files
 
 import (
-	"errors"
-	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -83,24 +81,12 @@ func splitExt(name string) (stem, ext string) {
 	return name[:i], name[i:]
 }
 
-// uniqueName returns name, or "stem (n).ext" with the smallest n such that
-// nothing named so exists in dir.
-func uniqueName(dir, name string) string {
-	if !exists(filepath.Join(dir, name)) {
+func numberedName(name string, n int) string {
+	if n == 0 {
 		return name
 	}
 	stem, ext := splitExt(name)
-	for n := 1; ; n++ {
-		c := stem + " (" + strconv.Itoa(n) + ")" + ext
-		if !exists(filepath.Join(dir, c)) {
-			return c
-		}
-	}
-}
-
-func exists(p string) bool {
-	_, err := os.Lstat(p)
-	return err == nil || !errors.Is(err, os.ErrNotExist)
+	return stem + " (" + strconv.Itoa(n) + ")" + ext
 }
 
 // absPath validates and cleans an absolute path from the client.
@@ -116,9 +102,4 @@ func absPath(p string) (string, error) {
 		return "", &RemoteError{Code: codeInvalid, Detail: "not an absolute path: " + strconv.Quote(p)}
 	}
 	return c, nil
-}
-
-// joinRel joins sanitized components under base.
-func joinRel(base string, parts []string) string {
-	return filepath.Join(append([]string{base}, parts...)...)
 }

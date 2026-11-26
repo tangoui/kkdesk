@@ -198,13 +198,13 @@ func (s *Server) uploadBegin(m *msg) error {
 	if err != nil {
 		return err
 	}
-	if fi, err := os.Stat(dir); err != nil {
-		return localError(err)
-	} else if !fi.IsDir() {
-		return &RemoteError{Code: codeInvalid, Detail: dir + " is not a directory"}
+	root, err := openReceiveRoot(dir)
+	if err != nil {
+		return err
 	}
-	parent := joinRel(dir, parts[:len(parts)-1])
-	if err := os.MkdirAll(parent, 0o755); err != nil {
+	defer root.Close()
+	parent := filepath.Dir(filepath.Join(parts...))
+	if err := root.MkdirAll(parent, 0o755); err != nil {
 		return localError(err)
 	}
 	s.mu.Lock()
@@ -213,7 +213,7 @@ func (s *Server) uploadBegin(m *msg) error {
 	if canceled {
 		return ErrCanceled
 	}
-	in, err := newIncoming(parent, parts[len(parts)-1], m.Size, m.Mode, m.MTime)
+	in, err := newIncoming(root, parts, m.Size, m.Mode, m.MTime)
 	if err != nil {
 		return localError(err)
 	}
@@ -240,10 +240,11 @@ func (s *Server) uploadEnd(m *msg) (string, error) {
 		in.abort()
 		return "", errorFor(m.Error, m.Detail)
 	}
+	dir := in.parent.Name()
 	name, err := in.finish(m.SHA256)
 	el := time.Since(in.started)
 	s.log("files: received %s: %d bytes in %v (%.1f MB/s), err=%v",
-		filepath.Join(in.dir, name), in.wrote, el.Round(time.Millisecond), float64(in.wrote)/max(el.Seconds(), 1e-9)/1e6, err)
+		filepath.Join(dir, name), in.wrote, el.Round(time.Millisecond), float64(in.wrote)/max(el.Seconds(), 1e-9)/1e6, err)
 	return name, err
 }
 
@@ -486,26 +487,18 @@ func mkdir(m *msg) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if _, err := os.Stat(dir); err != nil {
-		return "", localError(err)
+	root, err := openReceiveRoot(dir)
+	if err != nil {
+		return "", err
 	}
+	defer root.Close()
 	if m.Unique {
 		if len(parts) != 1 {
 			return "", &RemoteError{Code: codeInvalid, Detail: "unique mkdir takes one name"}
 		}
-		for i := 0; i < 100; i++ {
-			name := uniqueName(dir, parts[0])
-			err := os.Mkdir(filepath.Join(dir, name), 0o755)
-			if err == nil {
-				return name, nil
-			}
-			if !errors.Is(err, fs.ErrExist) {
-				return "", localError(err)
-			}
-		}
-		return "", &RemoteError{Code: codeExists, Detail: parts[0]}
+		return mkdirUnique(root, parts[0])
 	}
-	if err := os.MkdirAll(joinRel(dir, parts), 0o755); err != nil {
+	if err := root.MkdirAll(filepath.Join(parts...), 0o755); err != nil {
 		return "", localError(err)
 	}
 	return parts[len(parts)-1], nil

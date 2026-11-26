@@ -57,9 +57,12 @@ func (e *PartialError) Unwrap() error { return e.First }
 // destination and renames it into place once its size and SHA-256 check out.
 type incoming struct {
 	mu          sync.Mutex
-	rel         string // as sent by the other side
-	reported    bool   // write error sent to the other side (server message goroutine)
-	dir, name   string // destination directory and wanted (sanitized) name
+	rel         string   // as sent by the other side
+	reported    bool     // write error sent to the other side (server message goroutine)
+	root        *os.Root // bounds the final placement
+	parent      *os.Root // holds the temporary file's directory for cleanup
+	dir         string   // parent path relative to root
+	name        string   // wanted (sanitized) name
 	tmp         string
 	f           *os.File
 	size, wrote int64
@@ -70,22 +73,63 @@ type incoming struct {
 	started     time.Time
 }
 
-func newIncoming(dir, name string, size int64, mode uint32, mtime int64) (*incoming, error) {
+func openReceiveRoot(dir string) (*os.Root, error) {
+	root, err := os.OpenRoot(dir)
+	if err == nil {
+		return root, nil
+	}
+	if fi, statErr := os.Stat(dir); statErr == nil && !fi.IsDir() {
+		return nil, &RemoteError{Code: codeInvalid, Detail: dir + " is not a directory"}
+	}
+	return nil, localError(err)
+}
+
+func mkdirUnique(root *os.Root, name string) (string, error) {
+	for i := 0; i < 10000; i++ {
+		candidate := numberedName(name, i)
+		err := root.Mkdir(candidate, 0o755)
+		if err == nil {
+			return candidate, nil
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return "", localError(err)
+		}
+	}
+	return "", &RemoteError{Code: codeExists, Detail: name}
+}
+
+func newIncoming(root *os.Root, parts []string, size int64, mode uint32, mtime int64) (*incoming, error) {
+	path := filepath.Join(parts...)
+	dir, name := filepath.Dir(path), filepath.Base(path)
+	parent, err := root.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	// Keep a private handle so the caller can close its copy independently.
+	placement, err := root.OpenRoot(".")
+	if err != nil {
+		parent.Close()
+		return nil, err
+	}
 	for i := 0; i < 1000; i++ {
 		tmp := "." + name
 		if i > 0 {
 			tmp += "." + strconv.Itoa(i)
 		}
-		tmp = filepath.Join(dir, tmp+partSuffix)
-		f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		tmp += partSuffix
+		f, err := parent.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if errors.Is(err, os.ErrExist) {
 			continue
 		}
 		if err != nil {
+			parent.Close()
+			placement.Close()
 			return nil, err
 		}
-		return &incoming{dir: dir, name: name, tmp: tmp, f: f, size: size, h: sha256.New(), mode: mode, mtime: mtime, started: time.Now()}, nil
+		return &incoming{root: placement, parent: parent, dir: dir, name: name, tmp: tmp, f: f, size: size, h: sha256.New(), mode: mode, mtime: mtime, started: time.Now()}, nil
 	}
+	parent.Close()
+	placement.Close()
 	return nil, &RemoteError{Code: codeIO, Detail: "too many temporary files for " + name}
 }
 
@@ -126,7 +170,15 @@ func (in *incoming) abortLocked() {
 		in.f.Close()
 		in.f = nil
 	}
-	os.Remove(in.tmp)
+	if in.parent != nil {
+		in.parent.Remove(in.tmp)
+		in.parent.Close()
+		in.parent = nil
+	}
+	if in.root != nil {
+		in.root.Close()
+		in.root = nil
+	}
 }
 
 // finish verifies the file and moves it into place without overwriting
@@ -138,6 +190,21 @@ func (in *incoming) finish(sum string) (string, error) {
 	if err == nil && in.f == nil {
 		err = ErrCanceled
 	}
+	if err == nil && (in.wrote != in.size || hex.EncodeToString(in.h.Sum(nil)) != sum) {
+		err = &RemoteError{Code: codeChecksum, Detail: fmt.Sprintf("%s: received %d of %d bytes or SHA-256 differs", in.name, in.wrote, in.size)}
+	}
+	tmp := filepath.Join(in.dir, in.tmp)
+	if err == nil {
+		// The destination path may have changed while the file was in flight.
+		var actual, expected os.FileInfo
+		if expected, err = in.f.Stat(); err == nil {
+			actual, err = in.root.Lstat(tmp)
+		}
+		if err == nil && !os.SameFile(actual, expected) {
+			err = &RemoteError{Code: codeIO, Detail: "temporary file moved: " + in.name}
+		}
+		err = localError(err)
+	}
 	if err == nil {
 		err = in.f.Close()
 		in.f = nil
@@ -145,50 +212,53 @@ func (in *incoming) finish(sum string) (string, error) {
 			err = localError(err)
 		}
 	}
-	if err == nil && (in.wrote != in.size || hex.EncodeToString(in.h.Sum(nil)) != sum) {
-		err = &RemoteError{Code: codeChecksum, Detail: fmt.Sprintf("%s: received %d of %d bytes or SHA-256 differs", in.name, in.wrote, in.size)}
-	}
 	if err != nil {
 		in.abortLocked()
 		return "", err
 	}
 	if in.mtime != 0 {
 		t := time.Unix(0, in.mtime)
-		_ = os.Chtimes(in.tmp, t, t) // best effort
+		_ = in.root.Chtimes(tmp, t, t) // best effort
 	}
-	name, err := placeFile(in.tmp, in.dir, in.name)
+	name, err := placeFile(in.root, in.dir, tmp, in.name)
 	if err != nil {
 		in.abortLocked()
 		return "", localError(err)
 	}
+	in.parent.Remove(in.tmp)
+	in.parent.Close()
+	in.parent = nil
 	if in.mode&0o777 != 0 {
-		_ = os.Chmod(filepath.Join(in.dir, name), os.FileMode(in.mode&0o777)) // best effort
+		_ = in.root.Chmod(filepath.Join(in.dir, name), os.FileMode(in.mode&0o777)) // best effort
 	}
+	in.root.Close()
+	in.root = nil
 	return name, nil
 }
 
 // placeFile moves tmp to dir under name or the first free "name (n)". A hard
 // link refuses to replace an existing file; file systems without hard links
 // fall back to a checked rename.
-func placeFile(tmp, dir, name string) (string, error) {
+func placeFile(root *os.Root, dir, tmp, name string) (string, error) {
 	for i := 0; i < 10000; i++ {
-		n := uniqueName(dir, name)
-		dst := filepath.Join(dir, n)
-		err := os.Link(tmp, dst)
+		candidate := numberedName(name, i)
+		dst := filepath.Join(dir, candidate)
+		err := root.Link(tmp, dst)
 		if err == nil {
-			os.Remove(tmp)
-			return n, nil
+			return candidate, nil
 		}
 		if errors.Is(err, os.ErrExist) {
 			continue // lost a race; pick another name
 		}
-		if exists(dst) {
+		if _, statErr := root.Lstat(dst); statErr == nil {
 			continue
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			return "", statErr
 		}
-		if err := os.Rename(tmp, dst); err != nil {
+		if err := root.Rename(tmp, dst); err != nil {
 			return "", err
 		}
-		return n, nil
+		return candidate, nil
 	}
 	return "", &RemoteError{Code: codeExists, Detail: name}
 }
@@ -288,11 +358,11 @@ type Transfer struct {
 	fin  bool
 
 	// download receiver state, guarded by mu
-	localDir string
-	root     string // final name of the top-level folder
-	cur      *incoming
-	curRel   string
-	failed   map[string]bool
+	localRoot *os.Root
+	root      string // final name of the top-level folder
+	cur       *incoming
+	curRel    string
+	failed    map[string]bool
 }
 
 func (t *Transfer) addFailure(rel string, err error) {
@@ -335,6 +405,10 @@ func (t *Transfer) finish(err error) bool {
 	if t.cur != nil {
 		t.cur.abort()
 		t.cur = nil
+	}
+	if t.localRoot != nil {
+		t.localRoot.Close()
+		t.localRoot = nil
 	}
 	t.res.Elapsed = time.Since(t.meter.start)
 	if err == nil && len(t.res.Failed) > 0 {
