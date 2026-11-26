@@ -196,7 +196,23 @@ func (c *Client) List(ctx context.Context, path string) (Listing, error) {
 	if r.Listing == nil {
 		return Listing{}, &RemoteError{Code: codeInvalid, Detail: "empty listing"}
 	}
-	return *r.Listing, nil
+	return checkedListing(*r.Listing), nil
+}
+
+// checkedListing drops entries whose name is not the last element of their
+// path. A download asks for Entry.Path and must arrive under that element
+// (replyNameMatches), so this keeps the name the user picks and the name that
+// lands on disk the same: a host cannot show "report.pdf" and deliver
+// ".zshenv".
+func checkedListing(l Listing) Listing {
+	kept := l.Entries[:0:0]
+	for _, e := range l.Entries {
+		if replyNameMatches(e.Path, e.Name) {
+			kept = append(kept, e)
+		}
+	}
+	l.Entries = kept
+	return l
 }
 
 // Stat describes one path on the host.

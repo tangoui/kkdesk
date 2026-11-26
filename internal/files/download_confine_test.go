@@ -140,3 +140,24 @@ func TestReplyNameMatchesRequest(t *testing.T) {
 		}
 	}
 }
+
+// A host cannot show one name and hand out another path: the viewer
+// downloads Entry.Path and the reply name is checked against its last
+// element, so that element must be the name the user sees.
+func TestListingDropsEntriesWhoseNameHidesThePath(t *testing.T) {
+	l := checkedListing(Listing{Path: "/home/a", Entries: []Entry{
+		{Name: "report.pdf", Path: "/home/a/report.pdf"},
+		{Name: "report.pdf", Path: "/tmp/.zshenv"},
+		{Name: "Photos", Path: "/home/a/.config", IsDir: true},
+		{Name: "a/b", Path: "/home/a/a/b"},
+		{Name: "doc.txt", Path: `C:\Users\a\doc.txt`},
+	}})
+	var got []string
+	for _, e := range l.Entries {
+		got = append(got, e.Path)
+	}
+	want := []string{"/home/a/report.pdf", `C:\Users\a\doc.txt`}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("entries = %q, want %q", got, want)
+	}
+}
