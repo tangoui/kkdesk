@@ -26,6 +26,10 @@ var dev struct {
 	manager unsafe.Pointer // IMFDXGIDeviceManager*
 	luid    uint64
 	gen     uint64
+	// retired holds replaced devices and managers: never released, because
+	// another thread may have just been handed the pointers (Device returns
+	// borrowed references). Device loss is rare; each costs one dead device.
+	retired []unsafe.Pointer
 }
 
 // ComInit initializes COM (MTA) on the calling OS thread. Callers that run
@@ -45,10 +49,9 @@ func Device() (device, manager uintptr, gen uint64, err error) {
 			return uintptr(dev.device), uintptr(dev.manager), dev.gen, nil
 		}
 		Logf("D3D11 device removed (%s); creating a new one", HR(hr))
-		// Old textures/encoders still hold references; they release the
-		// device when they are closed.
-		C.mmwm_release(dev.manager)
-		C.mmwm_release(dev.device)
+		// Old textures and encoders still hold references and release them
+		// when closed; this reference is kept (see retired).
+		dev.retired = append(dev.retired, dev.manager, dev.device)
 		dev.device, dev.manager = nil, nil
 	}
 	var d, m unsafe.Pointer
