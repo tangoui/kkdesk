@@ -15,6 +15,8 @@ import (
 	"github.com/coder/websocket"
 	"github.com/pion/turn/v4"
 	"github.com/pion/webrtc/v4"
+
+	"github.com/tangoui/kkdesk/internal/pairing"
 )
 
 type Server struct {
@@ -35,6 +37,8 @@ type Server struct {
 type registration struct {
 	conn    *websocket.Conn
 	ctx     context.Context
+	cancel  context.CancelFunc
+	key     string // the proven public key; "" for an unsigned registration
 	ready   chan struct{}
 	done    chan struct{}
 	pending *pendingPair // guarded by Server.mu
@@ -141,7 +145,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	code := NormalizeCode(msg.Code)
 	switch msg.Type {
 	case "register":
-		s.register(r.Context(), conn, code)
+		s.register(r.Context(), conn, code, msg.Key)
 	case "join":
 		s.join(r.Context(), conn, code)
 	default:
@@ -155,21 +159,36 @@ func sendError(ctx context.Context, conn *websocket.Conn, reason string) {
 	_ = write(ctx, conn, message{Type: "error", Error: reason})
 }
 
-func (s *Server) register(ctx context.Context, conn *websocket.Conn, code string) {
+// register holds code for conn. A registration with key proves the code
+// derives from that key (a signed challenge); it replaces an unsigned one
+// (someone else holding the service token cannot keep a device's code) and
+// a stale one of the same key (a reconnect). Unsigned registrations, from
+// older desktops, are first come first served as before.
+func (s *Server) register(ctx context.Context, conn *websocket.Conn, code, key string) {
+	if key != "" && !s.proveCode(ctx, conn, code, key) {
+		sendError(ctx, conn, "电脑身份校验失败")
+		return
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	h := &registration{conn: conn, ctx: ctx, ready: make(chan struct{}), done: make(chan struct{})}
+	h := &registration{conn: conn, ctx: ctx, cancel: cancel, key: key, ready: make(chan struct{}), done: make(chan struct{})}
 	s.mu.Lock()
-	if s.devices[code] != nil {
-		s.mu.Unlock()
-		sendError(ctx, conn, "设备码已上线")
-		return
+	if old := s.devices[code]; old != nil {
+		if key == "" || old.key != "" && old.key != key {
+			s.mu.Unlock()
+			sendError(ctx, conn, "设备码已上线")
+			return
+		}
+		old.cancel()
+		_ = old.conn.CloseNow()
 	}
 	s.devices[code] = h
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
-		delete(s.devices, code)
+		if s.devices[code] == h { // not replaced meanwhile
+			delete(s.devices, code)
+		}
 		close(h.done)
 		s.mu.Unlock()
 	}()
@@ -316,4 +335,22 @@ func (s *Server) issueICE(id string, stunURLs, turnURLs []string) ([]webrtc.ICES
 		servers = append(servers, webrtc.ICEServer{URLs: stunURLs})
 	}
 	return append(servers, webrtc.ICEServer{URLs: turnURLs, Username: user, Credential: credential}), nil
+}
+
+// proveCode challenges conn to sign with key and checks that code is the
+// device code of key.
+func (s *Server) proveCode(ctx context.Context, conn *websocket.Conn, code, key string) bool {
+	public, ok := pairing.PublicKey(key)
+	if !ok || NormalizeCode(pairing.DeviceCode(public)) != code {
+		return false
+	}
+	nonce := pairing.Random()
+	if writeWithTimeout(ctx, conn, message{Type: "register_challenge", Mobile: &pairing.Message{Type: "challenge", Nonce: nonce}}) != nil {
+		return false
+	}
+	authCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	msg, err := read(authCtx, conn)
+	cancel()
+	return err == nil && msg.Type == "register_proof" && msg.Mobile != nil && msg.Mobile.PublicKey == key &&
+		codeRegistrationTranscript(nonce, key).Verify(key, *msg.Mobile)
 }

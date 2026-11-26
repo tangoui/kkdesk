@@ -84,7 +84,9 @@ func (h *Host) remoteStatus(ctx context.Context, online bool, reason string) {
 func (h *Host) serveRemote(ctx context.Context, cfg rendezvous.Config, code string) {
 	for ctx.Err() == nil {
 		dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		conn, err := rendezvous.Register(dialCtx, cfg, code)
+		// Signed: nobody else holding the service token can take or keep
+		// this device's code (code is h.cfg.Pairing's).
+		conn, err := rendezvous.RegisterIdentity(dialCtx, cfg, h.cfg.Pairing)
 		cancel()
 		if err == nil {
 			h.remoteStatus(ctx, true, "")

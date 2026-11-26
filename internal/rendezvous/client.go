@@ -97,6 +97,8 @@ type message struct {
 	ICE       []webrtc.ICEServer         `json:"ice,omitempty"`
 	RelayOnly bool                       `json:"relayOnly,omitempty"`
 	Error     string                     `json:"error,omitempty"`
+	// Key is a desktop's public key in a signed registration.
+	Key string `json:"key,omitempty"`
 }
 
 func read(ctx context.Context, c *websocket.Conn) (message, error) {
@@ -165,9 +167,62 @@ func open(ctx context.Context, cfg Config, code, action, expected string) (*webs
 	return conn, msg, nil
 }
 
+// Register registers code without proving it is ours: anyone with the
+// service token can do that, and a signed registration (RegisterIdentity)
+// replaces it.
 func Register(ctx context.Context, cfg Config, code string) (*websocket.Conn, error) {
 	conn, _, err := open(ctx, cfg, code, "register", "registered")
 	return conn, err
+}
+
+// RegisterIdentity registers identity's device code and proves it is its own
+// (the code derives from the public key; the server's challenge is signed),
+// so nobody else holding the service token can take the code or keep it. A
+// server without signed registration accepts it like Register.
+func RegisterIdentity(ctx context.Context, cfg Config, identity *pairing.Store) (*websocket.Conn, error) {
+	return registerSigned(ctx, cfg, identity.DeviceCode(), identity)
+}
+
+func registerSigned(ctx context.Context, cfg Config, code string, identity *pairing.Store) (*websocket.Conn, error) {
+	if !IsCode(code) {
+		return nil, errors.New("设备码格式不正确")
+	}
+	conn, err := cfg.dial(ctx)
+	if err != nil {
+		return nil, err
+	}
+	key := identity.PublicKey()
+	err = write(ctx, conn, message{Type: "register", Code: NormalizeCode(code), Key: key})
+	var msg message
+	if err == nil {
+		msg, err = read(ctx, conn)
+	}
+	if err == nil && msg.Type == "register_challenge" {
+		if msg.Mobile == nil || !pairing.ValidNonce(msg.Mobile.Nonce) {
+			err = errors.New("无效的服务器注册挑战")
+		} else {
+			proof := pairing.Message{Type: "register", PublicKey: key}
+			identity.Sign(codeRegistrationTranscript(msg.Mobile.Nonce, key), &proof)
+			err = write(ctx, conn, message{Type: "register_proof", Mobile: &proof})
+			if err == nil {
+				msg, err = read(ctx, conn)
+			}
+		}
+	}
+	if err == nil && msg.Type != "registered" { // "registered" at once: an older server
+		err = errors.New("跨网服务响应无效")
+	}
+	if err != nil {
+		conn.CloseNow()
+		return nil, err
+	}
+	return conn, nil
+}
+
+// codeRegistrationTranscript is what a desktop signs to register its device
+// code (a purpose of its own, apart from the phone channel's registration).
+func codeRegistrationTranscript(nonce, key string) pairing.Transcript {
+	return pairing.Transcript{Purpose: "register_code", HostNonce: nonce, HostKey: key}
 }
 
 type Offer struct {
