@@ -67,12 +67,7 @@ class PairTransport {
     final uri = lanEndpoint(address);
     const timeout = Duration(seconds: 2);
     final socket = await Socket.connect(uri.host, uri.port, timeout: timeout);
-    final messages = StreamIterator(
-      socket
-          .cast<List<int>>()
-          .transform(utf8.decoder)
-          .transform(const LineSplitter()),
-    );
+    final messages = StreamIterator(boundedLines(socket.cast<List<int>>()));
     try {
       final greeting = await _next(messages, timeout);
       requireLanV2(greeting);

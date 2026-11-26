@@ -170,3 +170,34 @@ class LanIdentities {
     return result;
   }
 }
+
+/// The longest signaling line accepted from a computer, as on the desktop.
+const maxSignalLine = 256 * 1024;
+
+/// Splits [bytes] into UTF-8 lines like `utf8.decoder` with a
+/// [LineSplitter], but fails with a [FormatException] once a line grows past
+/// [maxSignalLine] bytes, so a peer cannot make the phone buffer without
+/// bound.
+Stream<String> boundedLines(Stream<List<int>> bytes) async* {
+  var pending = <int>[];
+  await for (final chunk in bytes) {
+    var start = 0;
+    for (var i = 0; i < chunk.length; i++) {
+      if (chunk[i] != 0x0A) continue;
+      pending.addAll(chunk.sublist(start, i));
+      if (pending.length > maxSignalLine) {
+        throw const FormatException('signaling message too long');
+      }
+      var line = utf8.decode(pending);
+      if (line.endsWith('\r')) line = line.substring(0, line.length - 1);
+      yield line;
+      pending = <int>[];
+      start = i + 1;
+    }
+    pending.addAll(chunk.sublist(start));
+    if (pending.length > maxSignalLine) {
+      throw const FormatException('signaling message too long');
+    }
+  }
+  if (pending.isNotEmpty) yield utf8.decode(pending);
+}

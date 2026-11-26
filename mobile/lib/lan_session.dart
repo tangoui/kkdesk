@@ -92,10 +92,7 @@ class LanSession {
       }
       _socket = socket;
       final messages = StreamIterator<String>(
-        socket
-            .cast<List<int>>()
-            .transform(utf8.decoder)
-            .transform(const LineSplitter()),
+        boundedLines(socket.cast<List<int>>()),
       );
       try {
         requireLanV2(await _receive(messages));

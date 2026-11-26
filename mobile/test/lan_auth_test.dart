@@ -152,4 +152,16 @@ void main() {
     await tester.pumpAndSettle();
     await tester.runAsync(() => store.check(endpoint, different));
   });
+
+  test('boundedLines splits lines and refuses an endless one', () async {
+    final lines = await boundedLines(Stream.fromIterable([
+      utf8.encode('{"a":1}\n{"b"'),
+      utf8.encode(':2}\r\n'),
+    ])).toList();
+    expect(lines, ['{"a":1}', '{"b":2}']);
+    final endless = Stream.fromIterable(
+      List.generate(300, (_) => List.filled(1024, 0x61)),
+    );
+    expect(boundedLines(endless).toList(), throwsFormatException);
+  });
 }
