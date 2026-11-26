@@ -80,7 +80,15 @@ abstract interface class DeviceRepository implements Listenable {
   Future<void> add(Computer computer);
 }
 
-enum PairStatus { waiting, success, rejected, timedOut, expired }
+enum PairStatus {
+  waiting,
+  success,
+  alreadyPaired,
+  rejected,
+  timedOut,
+  expired,
+  failed,
+}
 
 class PairRequest {
   const PairRequest({
@@ -89,6 +97,7 @@ class PairRequest {
     required this.verificationCode,
     required this.statuses,
     required this.cancel,
+    this.initialStatus = PairStatus.waiting,
   });
 
   final Computer computer;
@@ -96,6 +105,7 @@ class PairRequest {
   final String verificationCode;
   final Stream<PairStatus> statuses;
   final VoidCallback cancel;
+  final PairStatus initialStatus;
 }
 
 abstract interface class PairingService {

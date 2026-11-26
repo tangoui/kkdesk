@@ -44,18 +44,21 @@ class PairCredentials {
 }
 
 class PairedComputer {
-  const PairedComputer(this.computer, this.target);
+  const PairedComputer(this.computer, this.target, {this.customName = false});
   final Computer computer;
   final PairTarget target;
+  final bool customName;
 
   factory PairedComputer.fromJson(PairMessage json) => PairedComputer(
     Computer.fromJson(json['computer'] as PairMessage),
     PairTarget.fromJson(json['target'] as PairMessage),
+    customName: json['customName'] == true,
   );
 
   PairMessage toJson() => {
     'computer': computer.toJson(),
     'target': target.toJson(),
+    if (customName) 'customName': true,
   };
 }
 
@@ -192,6 +195,41 @@ class PairedDevices extends ChangeNotifier implements DeviceRepository {
 
   PairTarget? target(String id) => _records[id]?.target;
 
+  Computer? matchingComputer(PairTarget target) {
+    final saved = _records[target.id];
+    if (saved == null ||
+        saved.target.fingerprint != target.fingerprint ||
+        _presence[target.id]?.revoked == true) {
+      return null;
+    }
+    return computers.firstWhere((computer) => computer.id == target.id);
+  }
+
+  Future<void> _updateFromScan(
+    PairTarget previous,
+    PairTarget scanned,
+    String? name,
+  ) async {
+    final sameRoute =
+        previous.server == scanned.server &&
+        previous.token == scanned.token &&
+        previous.serverKey == scanned.serverKey &&
+        listEquals(previous.lan, scanned.lan);
+    await _change((records) {
+      final current = records[previous.id];
+      if (current == null || current.target != previous) return;
+      final nextName = !current.customName && name != null && name.isNotEmpty
+          ? name
+          : current.computer.name;
+      if (sameRoute && nextName == current.computer.name) return;
+      records[previous.id] = PairedComputer(
+        current.computer.renamed(nextName),
+        sameRoute ? previous : scanned,
+        customName: current.customName,
+      );
+    });
+  }
+
   Future<void> savePair(Computer computer, PairTarget target) =>
       _change((records) {
         records[computer.id] = PairedComputer(computer, target);
@@ -209,6 +247,7 @@ class PairedDevices extends ChangeNotifier implements DeviceRepository {
       records[id] = PairedComputer(
         record.computer.renamed(name.trim()),
         record.target,
+        customName: true,
       );
     }
   });
@@ -247,6 +286,7 @@ class PairedDevices extends ChangeNotifier implements DeviceRepository {
     final write = _writes.then((_) async {
       final next = Map.of(_records);
       await change(next);
+      if (mapEquals(next, _records)) return;
       await network.credentials.storage.write(
         key: _storageKey,
         value: jsonEncode(next.values.toList()),
@@ -330,6 +370,19 @@ class RealPairingService implements PairingService {
   @override
   Future<PairRequest> begin(String input, {String? server}) async {
     final target = PairTarget.parse(input);
+    final saved = devices.matchingComputer(target);
+    if (saved != null) {
+      final previous = devices.target(saved.id)!;
+      unawaited(_refreshFromScan(previous, target));
+      return PairRequest(
+        computer: saved,
+        server: target.server,
+        verificationCode: '',
+        statuses: Stream.value(PairStatus.alreadyPaired),
+        cancel: () {},
+        initialStatus: PairStatus.alreadyPaired,
+      );
+    }
     final phone = await phoneInfo();
     final pair = await devices.network.begin(target);
     final challenge = pair.challenge;
@@ -385,9 +438,18 @@ class RealPairingService implements PairingService {
         if (cancelled) return;
         final status = switch (reply['status']) {
           'committed' => PairStatus.success,
+          'already_paired'
+              when devices.matchingComputer(verifiedTarget) != null =>
+            PairStatus.alreadyPaired,
+          'already_paired' => throw const PairFailure(
+            '电脑仍保留这台手机的旧配对，请先在电脑端「已配对手机」中移除后再扫码',
+          ),
+          'busy' => throw const PairFailure('电脑正在处理另一个配对请求，请稍后再试'),
+          'invalid' => throw const PairFailure('手机信息无效'),
+          'rejected' => PairStatus.rejected,
           'expired' => PairStatus.expired,
           'timed_out' => PairStatus.timedOut,
-          _ => PairStatus.rejected,
+          final status => throw PairFailure('配对失败（${status ?? '无状态码'}）'),
         };
         if (status == PairStatus.success) {
           if (approval == null || reply['nonce'] != approval) {
@@ -401,6 +463,13 @@ class RealPairingService implements PairingService {
           );
           await devices.savePair(record, verifiedTarget);
           unawaited(devices.refresh());
+        } else if (status == PairStatus.alreadyPaired) {
+          final previous = devices.target(computer.id)!;
+          await devices._updateFromScan(
+            previous,
+            target.manual ? previous : verifiedTarget,
+            name,
+          );
         }
         if (!cancelled) states.add(status);
       } on TimeoutException {
@@ -422,6 +491,25 @@ class RealPairingService implements PairingService {
         unawaited(pair.transport.close());
       },
     );
+  }
+
+  Future<void> _refreshFromScan(PairTarget previous, PairTarget scanned) async {
+    try {
+      // The desktop sends its signed name before receiving a pairing request.
+      // Close after the challenge so the invitation is never claimed.
+      final pair = await devices.network.begin(scanned);
+      try {
+        await devices._updateFromScan(
+          previous,
+          scanned.verified(pair.transcript.hostKey),
+          pair.challenge['name'] as String?,
+        );
+      } finally {
+        await pair.transport.close();
+      }
+    } catch (_) {
+      // A known pairing can still be shown when the desktop is unreachable.
+    }
   }
 }
 
