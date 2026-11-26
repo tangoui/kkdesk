@@ -1,0 +1,154 @@
+//go:build darwin && cgo
+
+package privacy
+
+/*
+#cgo CFLAGS: -x objective-c -fobjc-arc
+#cgo LDFLAGS: -framework AppKit -framework Carbon -framework CoreGraphics
+#include <stdlib.h>
+#include "privacy_darwin.h"
+*/
+import "C"
+
+import (
+	"errors"
+	"fmt"
+	"runtime/cgo"
+	"sync"
+	"unsafe"
+)
+
+func NewScreen() Screen { return &darwinScreen{} }
+
+type darwinScreen struct {
+	mu      sync.Mutex
+	ptr     unsafe.Pointer
+	handle  cgo.Handle
+	exclude func([]uint32) error
+	exited  func(error)
+}
+
+func (s *darwinScreen) Show(exclude func([]uint32) error, exited func(error)) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if exclude == nil {
+		return errors.New("无法更新屏幕采集过滤器")
+	}
+	if s.ptr != nil {
+		return nil
+	}
+	s.handle = cgo.NewHandle(s)
+	var status C.int
+	s.ptr = C.mmprivacy_new(C.uintptr_t(s.handle), &status)
+	if s.ptr == nil {
+		s.handle.Delete()
+		return fmt.Errorf("无法注册隐私屏退出快捷键（%d）", status)
+	}
+	s.exclude, s.exited = exclude, exited
+	if err := s.refresh(); err != nil {
+		s.close()
+		return err
+	}
+	return nil
+}
+
+func (s *darwinScreen) refresh() error {
+	var count C.size_t
+	ids := C.mmprivacy_prepare(s.ptr, &count)
+	if ids == nil {
+		return errors.New("无法创建隐私遮罩窗口")
+	}
+	defer C.free(unsafe.Pointer(ids))
+	if err := s.exclude(unsafe.Slice((*uint32)(unsafe.Pointer(ids)), int(count))); err != nil {
+		return err
+	}
+	C.mmprivacy_show(s.ptr)
+	return nil
+}
+
+func (s *darwinScreen) close() {
+	C.mmprivacy_close(s.ptr)
+	s.ptr = nil
+	s.handle.Delete()
+	_ = s.exclude(nil)
+	s.exclude, s.exited = nil, nil
+}
+
+func (s *darwinScreen) Hide() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ptr != nil {
+		s.close()
+	}
+}
+
+func (s *darwinScreen) SetLockCountdown(seconds int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ptr != nil {
+		C.mmprivacy_countdown(s.ptr, C.int(seconds))
+	}
+}
+
+//export mmprivacyDarwinEvent
+func mmprivacyDarwinEvent(handle C.uintptr_t, displayChanged C.int) {
+	h := cgo.Handle(handle)
+	s := h.Value().(*darwinScreen)
+	go func() {
+		s.mu.Lock()
+		if s.ptr == nil || s.handle != h {
+			s.mu.Unlock()
+			return
+		}
+		exited := s.exited
+		var err error
+		if displayChanged != 0 {
+			err = s.refresh()
+			if err == nil {
+				s.mu.Unlock()
+				return
+			}
+		}
+		s.mu.Unlock()
+		exited(err)
+	}()
+}
+
+func NewLocker() Locker {
+	return confirmedLocker{
+		request: func() error {
+			if err := C.mmprivacy_lock(); err != nil {
+				return errors.New(C.GoString(err))
+			}
+			return nil
+		},
+		locked: func() (bool, error) {
+			switch C.mmprivacy_locked() {
+			case 1:
+				return true, nil
+			case 0:
+				return false, nil
+			default:
+				return false, errors.New("无法读取 macOS 当前登录会话的锁屏状态")
+			}
+		},
+	}
+}
+
+// ShutdownOnMain keeps main-queue AppKit cleanup available even if a
+// development tool stopped Tango's event loop directly.
+func ShutdownOnMain(cleanup func()) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		cleanup()
+	}()
+	for {
+		select {
+		case <-done:
+			return
+		default:
+			C.mmprivacy_pump_main()
+		}
+	}
+}

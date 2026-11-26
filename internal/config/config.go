@@ -64,28 +64,39 @@ var (
 	Bitrates   = []int{0, 30, 14, 8, 3}
 )
 
+// PrivacyPolicy controls whether a remote desktop session can cover the local displays.
+type PrivacyPolicy string
+
+const (
+	PrivacyAsk   PrivacyPolicy = "ask"
+	PrivacyDeny  PrivacyPolicy = "deny"
+	PrivacyAllow PrivacyPolicy = "allow"
+)
+
 // Settings are the 设置 page. The zero value is not valid; see Defaults.
 type Settings struct {
-	Rotate                string `json:"rotate"`
-	FixedPassword         string `json:"fixedPassword,omitempty"`
-	Confirm               bool   `json:"confirm"`     // ask before accepting a connection
-	AllowRemote           bool   `json:"allowRemote"` // listen at start
-	FPS                   int    `json:"fps"`
-	BitrateMbps           int    `json:"bitrateMbps"` // 0 = automatic
-	Port                  int    `json:"port"`
-	Theme                 string `json:"theme"`
-	RemoteURL             string `json:"remoteURL,omitempty"`
-	RemoteToken           string `json:"remoteToken,omitempty"`
-	RemotePublicKey       string `json:"remotePublicKey,omitempty"`
-	DefaultConnectionMode string `json:"defaultConnectionMode"`
-	AllowSessionClipboard bool   `json:"allowSessionClipboard"`
-	AllowSessionFiles     bool   `json:"allowSessionFiles"`
+	Privacy               PrivacyPolicy `json:"privacy"`
+	LockAfterDisconnect   bool          `json:"lockAfterDisconnect"`
+	Rotate                string        `json:"rotate"`
+	FixedPassword         string        `json:"fixedPassword,omitempty"`
+	Confirm               bool          `json:"confirm"`     // ask before accepting a connection
+	AllowRemote           bool          `json:"allowRemote"` // listen at start
+	FPS                   int           `json:"fps"`
+	BitrateMbps           int           `json:"bitrateMbps"` // 0 = automatic
+	Port                  int           `json:"port"`
+	Theme                 string        `json:"theme"`
+	RemoteURL             string        `json:"remoteURL,omitempty"`
+	RemoteToken           string        `json:"remoteToken,omitempty"`
+	RemotePublicKey       string        `json:"remotePublicKey,omitempty"`
+	DefaultConnectionMode string        `json:"defaultConnectionMode"`
+	AllowSessionClipboard bool          `json:"allowSessionClipboard"`
+	AllowSessionFiles     bool          `json:"allowSessionFiles"`
 }
 
 // Defaults are the settings of a new installation.
 func Defaults() Settings {
 	return Settings{
-		Rotate: RotateAfterSession, Confirm: true, AllowRemote: true,
+		Rotate: RotateAfterSession, Confirm: true, AllowRemote: true, Privacy: PrivacyAsk,
 		FPS: 60, Port: DefaultPort, Theme: ThemeSystem, DefaultConnectionMode: ConnectionControl,
 		AllowSessionClipboard: true, AllowSessionFiles: true,
 	}
@@ -120,6 +131,11 @@ func ValidFixedPassword(pw string) error {
 // repair replaces invalid values by their defaults.
 func (s *Settings) repair() {
 	d := Defaults()
+	switch s.Privacy {
+	case PrivacyAsk, PrivacyDeny, PrivacyAllow:
+	default:
+		s.Privacy = d.Privacy
+	}
 	switch s.Rotate {
 	case RotateAfterSession, Rotate12h, Rotate24h, RotateNever:
 	default:

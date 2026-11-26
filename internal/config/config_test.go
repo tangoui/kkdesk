@@ -483,3 +483,15 @@ func TestTrustedViewers(t *testing.T) {
 		t.Fatal("the oldest controller should be dropped past the limit, the newest kept")
 	}
 }
+
+func TestLegacySettingsPrivacyDefaults(t *testing.T) {
+	dir := t.TempDir()
+	s := open(t, dir)
+	if err := os.WriteFile(s.Path(), []byte(`{"settings":{"privacy":"unknown"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got := open(t, dir).Settings()
+	if got.Privacy != PrivacyAsk || got.LockAfterDisconnect {
+		t.Fatalf("privacy = %q, lock after disconnect = %v", got.Privacy, got.LockAfterDisconnect)
+	}
+}

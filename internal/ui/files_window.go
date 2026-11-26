@@ -163,6 +163,7 @@ func OpenFiles(a *tango.App, v *app.Viewer, own bool, onEnd func(msg string)) er
 			time.AfterFunc(closeDelay, func() { a.Post(s.Close) })
 		}
 	})
+	trackWindow(s)
 
 	w.cl = v.Files()
 	w.mu.Lock()

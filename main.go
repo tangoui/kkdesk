@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -37,6 +38,7 @@ import (
 	"github.com/tangoui/kkdesk/internal/app"
 	"github.com/tangoui/kkdesk/internal/config"
 	"github.com/tangoui/kkdesk/internal/pairing"
+	"github.com/tangoui/kkdesk/internal/privacy"
 	"github.com/tangoui/kkdesk/internal/rendezvous"
 	appui "github.com/tangoui/kkdesk/internal/ui"
 	"github.com/tangoui/kkdesk/internal/update"
@@ -140,8 +142,8 @@ func run(o options) error {
 			m.Invalidate()
 		}
 	}
-	quit := true // closing the last window quits, on macOS too
-	a := tango.New(tango.Options{Name: "kkdesk", ID: "com.kkdesk.desktop", QuitOnLastClose: &quit})
+	keepLoop := false // Host.Close can dispatch native cleanup to the main thread.
+	a := tango.New(tango.Options{Name: "kkdesk", ID: "com.kkdesk.desktop", QuitOnLastClose: &keepLoop})
 	// One app per configuration folder: a second launch shows the running
 	// window instead of opening the same settings and port again (both would
 	// listen, and each would save its own copy of the settings over the
@@ -211,14 +213,43 @@ func run(o options) error {
 
 	board.SetApp(a)
 
+	var viewer *app.Viewer
+	var quitOnce sync.Once
+	requestQuit := func() {
+		quitOnce.Do(func() {
+			v := viewer // requestQuit runs on the main thread
+			go func() {
+				if v != nil {
+					v.Close()
+				}
+				host.Close()
+				a.Quit()
+			}()
+		})
+	}
+	stopTracking := appui.QuitAfterLastWindow(a, requestQuit)
+	defer stopTracking()
+	a.OnQuitRequest(func() bool {
+		requestQuit()
+		return false
+	})
+
 	// Self-update: builds made by tan build, started normally (not the
 	// measurement modes -host and -connect).
 	var upd *updater.Updater
 	if releaseBuild && !o.host && o.connect == "" {
 		upd = update.New(app.Version, os.Getenv)
+		if upd != nil {
+			upd.OnEvent = func(event updater.Event) {
+				if event.Kind == updater.EventReady {
+					// Apply emits this on the update worker, before
+					// updateui asks Tango to quit.
+					host.Close()
+				}
+			}
+		}
 	}
 
-	var viewer *app.Viewer
 	openMain := func(hidden bool, errMsg string) {
 		m, err := appui.OpenMain(appui.MainOptions{
 			App: a, Host: host, Store: store, Form: &st.Form, ViewerLog: logw, Clipboard: board, Updater: upd,
@@ -264,8 +295,7 @@ func run(o options) error {
 				}
 				if err != nil {
 					fmt.Fprintln(os.Stderr, "kkdesk: window:", err)
-					viewer.Close()
-					a.Quit()
+					requestQuit()
 				}
 			})
 		}()
@@ -275,21 +305,19 @@ func run(o options) error {
 	// flush the stats before exiting.
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sig)
+	exit := make(chan struct{})
+	defer close(exit)
 	go func() {
-		<-sig
-		a.Post(func() {
-			if viewer != nil {
-				viewer.Close()
-			}
-			go func() {
-				host.Close()
-				a.Quit()
-			}()
-		})
+		select {
+		case <-sig:
+			a.Post(requestQuit)
+		case <-exit:
+		}
 	}()
 
 	err := a.Run()
-	host.Close()
+	privacy.ShutdownOnMain(host.Close)
 	if viewer != nil {
 		viewer.Close()
 		done := make(chan struct{})
@@ -332,6 +360,8 @@ func hostConfig(o options, store *config.Store, logw io.Writer) app.HostConfig {
 		BitrateMbps:             st.BitrateMbps,
 		Log:                     logw,
 		AutoAccept:              o.autoAccept || !st.Confirm,
+		PrivacyPolicy:           st.Privacy,
+		LockAfterDisconnect:     st.LockAfterDisconnect,
 		Remote:                  rendezvous.Config{URL: st.RemoteURL, Token: st.RemoteToken, PublicKey: st.RemotePublicKey},
 		DisableSessionClipboard: !st.AllowSessionClipboard,
 		DisableSessionFiles:     !st.AllowSessionFiles,

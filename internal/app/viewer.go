@@ -86,6 +86,10 @@ type ViewerState struct {
 	FPS                 int
 	Stats               stats.Second // latest per-second aggregate
 	Relayed             bool
+	PrivacyScreen       bool
+	PrivacyPending      bool
+	LockAfterDisconnect bool
+	PrivacyMessage      string
 }
 
 // Viewer connects to a host and shows its screen. Methods are safe for
@@ -107,6 +111,7 @@ type Viewer struct {
 	fps           int
 	closing       bool
 	relayed       bool
+	privacy       viewerPrivacy
 	onEnd         []func()
 	files         *files.Client
 	since         time.Time // connected at
@@ -318,6 +323,7 @@ func (v *Viewer) Connect(ctx context.Context) error {
 	v.relayed = isRemote && p.Relayed()
 	fps, bps := v.fps, v.bitrate
 	v.mu.Unlock()
+	p.OnPrivacy(v.handlePrivacy)
 	p.OnAccessibilityChange(v.notify)
 	p.OnVideo(v.video)
 	go v.watch(p)
@@ -448,6 +454,7 @@ func (v *Viewer) State() ViewerState {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	s := ViewerState{Phase: v.phase, Addr: v.cfg.Addr, Err: v.errMsg, ViewOnly: v.viewOnly, FirstHostCode: v.firstHostCode, BitrateBps: v.bitrate, FPS: v.fps, Relayed: v.relayed}
+	s.PrivacyScreen, s.PrivacyPending, s.LockAfterDisconnect, s.PrivacyMessage = v.privacy.on, v.privacy.pending, v.privacy.lockAfter, v.privacy.message
 	if v.peer != nil {
 		s.AccessibilityDenied = v.peer.AccessibilityDenied()
 	}
