@@ -5,6 +5,9 @@
 package clipsync
 
 import (
+	"errors"
+	"io"
+	"net"
 	"sync"
 	"time"
 )
@@ -20,6 +23,8 @@ type Options struct {
 	Local Clipboard
 	// Send delivers a local change to the other side.
 	Send func(string) error
+	// Done cancels this sync when its session ends. Nil disables this signal.
+	Done <-chan struct{}
 	// Allowed reports whether syncing is allowed now (the host's 剪贴板
 	// permission, a controller that is not view-only); nil means always.
 	Allowed func() bool
@@ -43,13 +48,16 @@ type Sync struct {
 	// mu is held across a read and the comparison (poll) and across a
 	// write (Receive): otherwise a read from before a received text could
 	// be taken for a new copy and sent back.
-	mu         sync.Mutex
-	last       string // the clipboard text as last seen, written or sent
-	known      bool   // last is valid
-	stopped    bool
-	pending    string // a local change not yet delivered (Send failed)
-	hasPending bool
-	errLast    string // the last error logged, to log each kind once
+	mu           sync.Mutex
+	last         string // the clipboard text as last seen, written or sent
+	known        bool   // last is valid
+	stopped      bool
+	sendClosed   bool
+	pending      string // a local change not yet delivered (Send failed)
+	hasPending   bool
+	lastReadErr  string
+	lastWriteErr string
+	lastSendErr  string
 }
 
 // Start reads the clipboard once (that text is not sent) and polls it
@@ -84,7 +92,7 @@ func (s *Sync) Stop() {
 // meta channel, which also carries the clock sync. A text not yet written
 // is replaced by a newer one.
 func (s *Sync) Receive(text string) {
-	if !s.allowed() {
+	if s.ended() || !s.allowed() {
 		return
 	}
 	for {
@@ -104,7 +112,7 @@ func (s *Sync) Receive(text string) {
 
 // apply writes received text to the local clipboard (loop goroutine).
 func (s *Sync) apply(text string) {
-	if !s.allowed() {
+	if s.ended() || !s.allowed() {
 		return
 	}
 	s.mu.Lock()
@@ -113,13 +121,24 @@ func (s *Sync) apply(text string) {
 		return
 	}
 	if err := s.o.Local.WriteText(text); err != nil {
-		s.logLocked("write clipboard: %v", err)
+		s.logLocked(&s.lastWriteErr, "write clipboard: %v", err)
 		return
 	}
 	s.last, s.known = text, true
 }
 
 func (s *Sync) allowed() bool { return s.o.Allowed == nil || s.o.Allowed() }
+
+func (s *Sync) ended() bool {
+	select {
+	case <-s.stop:
+		return true
+	case <-s.o.Done:
+		return true
+	default:
+		return false
+	}
+}
 
 func (s *Sync) loop() {
 	defer close(s.done)
@@ -129,9 +148,14 @@ func (s *Sync) loop() {
 		select {
 		case <-s.stop:
 			return
+		case <-s.o.Done:
+			return
 		case text := <-s.recv:
 			s.apply(text)
 		case <-t.C:
+			if s.ended() {
+				return
+			}
 			if text, ok := s.poll(); ok {
 				s.send(text)
 			} else if text, ok := s.retry(); ok {
@@ -141,14 +165,21 @@ func (s *Sync) loop() {
 	}
 }
 
-// send delivers a local change; a failed one is kept and tried again on the
-// next ticks until it goes through or a newer text replaces it.
+// send delivers a local change and keeps transient failures for retry.
 func (s *Sync) send(text string) {
+	if s.ended() {
+		return
+	}
 	err := s.o.Send(text)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err != nil {
-		s.logLocked("send clipboard: %v", err)
+		s.logLocked(&s.lastSendErr, "send clipboard: %v", err)
+		if errors.Is(err, io.ErrClosedPipe) || errors.Is(err, net.ErrClosed) {
+			s.sendClosed = true
+			s.pending, s.hasPending = "", false
+			return
+		}
 		s.pending, s.hasPending = text, true
 		return
 	}
@@ -177,12 +208,14 @@ func (s *Sync) retry() (string, bool) {
 func (s *Sync) poll() (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	text, err := s.o.Local.ReadText()
-	if err != nil {
-		s.logLocked("read clipboard: %v", err)
+	if s.sendClosed {
 		return "", false
 	}
-	s.errLast = ""                       // log the next failure again
+	text, err := s.o.Local.ReadText()
+	if err != nil {
+		s.logLocked(&s.lastReadErr, "read clipboard: %v", err)
+		return "", false
+	}
 	changed := s.known && text != s.last // the first read is the baseline
 	s.last, s.known = text, true
 	// A change made while not allowed is taken as seen: turning the
@@ -196,10 +229,10 @@ func (s *Sync) poll() (string, bool) {
 	return text, true
 }
 
-func (s *Sync) logLocked(format string, args ...any) {
-	if s.o.Logf == nil || format == s.errLast {
+func (s *Sync) logLocked(last *string, format string, err error) {
+	if s.o.Logf == nil || err.Error() == *last {
 		return
 	}
-	s.errLast = format
-	s.o.Logf(format, args...)
+	*last = err.Error()
+	s.o.Logf(format, err)
 }

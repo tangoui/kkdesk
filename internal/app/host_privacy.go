@@ -242,15 +242,15 @@ func (p *hostPrivacy) close() {
 	_ = p.finish(nil)
 }
 
-func (p *hostPrivacy) finish(locker privacy.Locker) error {
+func (p *hostPrivacy) finish(lock func() error) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.closed = true
 	p.cancelGrace = nil
 	p.cancelConsent()
 	var err error
-	if locker != nil && !p.locked {
-		err = locker.Lock()
+	if lock != nil && !p.locked {
+		err = lock()
 	}
 	p.hide()
 	p.current.Store(nil)
@@ -284,15 +284,14 @@ type privacyGrace struct {
 	admitted bool // guarded by Host.mu
 }
 
-func (h *Host) endDesktopPrivacy(p *hostPrivacy, graceful bool) {
-	h.graceMu.Lock()
-	defer h.graceMu.Unlock()
+func (h *Host) endDesktopPrivacy(p *hostPrivacy, graceful bool, owner *session.Peer) {
 	h.mu.Lock()
+	owned := h.peer == owner
 	lock := h.cfg.LockAfterDisconnect || p.state().lockAfter
 	graceful = graceful || h.closed || h.privacyDisconnect
 	h.mu.Unlock()
-	if !lock || graceful || p.locked {
-		h.finishDesktopPrivacy(p, lock)
+	if !owned || !lock || graceful || p.locked {
+		h.finishDesktopPrivacy(p, owned && lock, owner)
 		return
 	}
 
@@ -310,9 +309,14 @@ func (h *Host) endDesktopPrivacy(p *hostPrivacy, graceful bool) {
 	}
 	p.mu.Unlock()
 	h.mu.Lock()
+	if h.peer != owner {
+		h.mu.Unlock()
+		p.close()
+		return
+	}
 	h.grace = g
-	h.mu.Unlock()
 	g.timer = time.AfterFunc(time.Until(g.until), func() { h.finishGrace(g) })
+	h.mu.Unlock()
 	if s.on {
 		go g.countDown()
 	}
@@ -339,13 +343,26 @@ func (g *privacyGrace) countDown() {
 	}
 }
 
-func (h *Host) finishDesktopPrivacy(p *hostPrivacy, lock bool) {
-	var locker privacy.Locker
+func (h *Host) finishDesktopPrivacy(p *hostPrivacy, lock bool, owner *session.Peer) {
+	var lockScreen func() error
 	if lock {
-		locker = h.cfg.locker
+		lockScreen = func() error {
+			h.mu.Lock()
+			owned := owner == nil || owner == h.peer
+			h.mu.Unlock()
+			if !owned {
+				return nil
+			}
+			return h.cfg.locker.Lock()
+		}
 	}
-	if err := p.finish(locker); err != nil {
-		h.setErr("会话结束后锁屏失败：" + err.Error())
+	if err := p.finish(lockScreen); err != nil {
+		msg := "会话结束后锁屏失败：" + err.Error()
+		if owner == nil {
+			h.setErr(msg)
+		} else {
+			h.setPeerErr(owner, msg)
+		}
 	}
 }
 
@@ -364,7 +381,7 @@ func (h *Host) finishGrace(expected *privacyGrace) {
 	close(g.done)
 	h.grace = nil
 	h.mu.Unlock()
-	h.finishDesktopPrivacy(g.session, !g.admitted)
+	h.finishDesktopPrivacy(g.session, !g.admitted, nil)
 	h.notify()
 }
 

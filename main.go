@@ -128,13 +128,20 @@ func run(o options, handedOff bool) error {
 	}
 	dir, dirErr := config.Dir()
 	claimed := false
+	var reopenMain func() // set before Run, called on the main thread
 	// Claim before reading settings, opening logs, or deciding to relaunch.
 	if wantsSingleInstance(o, devRole) {
 		keyDir := dir
 		if dirErr != nil {
 			keyDir = "." // where openStore falls back to
 		}
-		primary, err := single.Claim(a, single.Options{Key: singleInstanceKey(keyDir)})
+		primary, err := single.Claim(a, single.Options{
+			Key:     singleInstanceKey(keyDir),
+			NoFocus: true,
+			OnSecondInstance: func([]string, string) {
+				reopenMain()
+			},
+		})
 		if !primary {
 			log.Printf("kkdesk: already running; handed over to it (%v)", err)
 			return nil
@@ -255,8 +262,10 @@ func run(o options, handedOff bool) error {
 
 	var viewer *app.Viewer
 	var quitOnce sync.Once
+	quitting := false
 	requestQuit := func() {
 		quitOnce.Do(func() {
+			quitting = true
 			v := viewer // requestQuit runs on the main thread
 			go func() {
 				if v != nil {
@@ -323,9 +332,24 @@ func run(o options, handedOff bool) error {
 			}
 		}
 	}
+	reopenMain = func() {
+		if quitting {
+			return
+		}
+		if m := mainWin.Load(); m != nil && m.Present() {
+			return
+		}
+		openMain(false, "")
+		mainWin.Load().Present()
+	}
+	if claimed {
+		a.OnEventKind(tango.EventReopen, func(tango.AppEvent) { reopenMain() })
+	}
 	a.OnReady(func() {
 		if o.connect == "" {
-			openMain(false, "")
+			if mainWin.Load() == nil {
+				openMain(false, "")
+			}
 			if upd != nil {
 				// Confirms a just-installed version (otherwise it is rolled
 				// back), then checks once a day in the background.

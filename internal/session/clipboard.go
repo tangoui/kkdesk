@@ -3,7 +3,11 @@ package session
 import (
 	"encoding/binary"
 	"errors"
+	"io"
+	"net"
 	"sync/atomic"
+
+	"github.com/pion/webrtc/v4"
 )
 
 // MaxClipboard bounds the clipboard text sent or accepted (bytes of UTF-8).
@@ -29,10 +33,15 @@ func (p *Peer) SendClipboard(text string) error {
 	if len(text) > MaxClipboard {
 		return ErrClipboardTooLong
 	}
+	select {
+	case <-p.Done():
+		return io.ErrClosedPipe
+	default:
+	}
 	p.mu.Lock()
 	dc := p.dcMeta
 	p.mu.Unlock()
-	if dc == nil {
+	if dc == nil || dc.ReadyState() == webrtc.DataChannelStateConnecting {
 		return errors.New("session: meta channel not open")
 	}
 	id := clipIDs.Add(1)
@@ -41,6 +50,11 @@ func (p *Peer) SendClipboard(text string) error {
 		n := min(len(b), clipChunkSize)
 		last := n == len(b)
 		if err := dc.Send(clipChunk(id, last, b[:n])); err != nil {
+			// Pion delivers OnClose from its receive loop. A failed
+			// write can see the closed transport before that loop exits.
+			if errors.Is(err, io.ErrClosedPipe) || errors.Is(err, net.ErrClosed) {
+				p.shutdown()
+			}
 			return err
 		}
 		if last {

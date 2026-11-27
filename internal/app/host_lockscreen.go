@@ -21,6 +21,8 @@ type hostDesktop struct {
 	opts        capture.Options
 	releaseKeys func()
 
+	sourceMu    sync.Mutex // serializes refresh and final Close
+	closed      bool       // guarded by sourceMu
 	mu          sync.Mutex
 	locked      bool
 	normal      capture.Session
@@ -32,7 +34,9 @@ type hostDesktop struct {
 }
 
 func (d *hostDesktop) refresh(ctx context.Context) error {
-	if ctx.Err() != nil {
+	d.sourceMu.Lock()
+	defer d.sourceMu.Unlock()
+	if d.closed || ctx.Err() != nil {
 		return nil
 	}
 	locked, err := d.h.cfg.screenLocked()
@@ -62,7 +66,7 @@ func (d *hostDesktop) refresh(ctx context.Context) error {
 			return nil
 		}
 		if help := d.h.cfg.captureHelp(); help != "" {
-			d.h.setErr(help)
+			d.h.setPeerErr(d.video.peer, help)
 			return errCapturePermission
 		}
 		normal, err = d.h.cfg.startDesktop(d.options(), d.video.frame)
@@ -116,14 +120,14 @@ func (d *hostDesktop) startLocked(ctx context.Context) error {
 			// Unlock requests use a separate path.
 			log.Printf("kkdesk host: start lock screen capture: %v", err)
 		}
-		d.h.setLockScreenFailure(state)
+		d.h.setLockScreenFailure(d.video.peer, state)
 		return nil
 	}
 	d.mu.Lock()
 	d.helper = helper
 	d.unavailable = session.LockScreenUnknown
 	d.mu.Unlock()
-	d.h.ClearLockScreenFailure()
+	d.h.setLockScreenFailure(d.video.peer, session.LockScreenUnknown)
 	d.attach(helper)
 	return nil
 }
@@ -196,7 +200,14 @@ func (d *hostDesktop) stopSource() {
 	d.video.forceKey.Store(true)
 }
 
-func (d *hostDesktop) close() { d.stopSource() }
+func (d *hostDesktop) close() {
+	d.sourceMu.Lock()
+	defer d.sourceMu.Unlock()
+	if !d.closed {
+		d.closed = true
+		d.stopSource()
+	}
+}
 
 func (d *hostDesktop) state() session.LockScreenState {
 	d.mu.Lock()
@@ -317,7 +328,9 @@ func (h *Host) tryUnlock(parent context.Context, helper lockscreen.Session, secr
 	}
 	if *attempts >= 3 {
 		h.mu.Lock()
-		h.notice = "本次远程连接的解锁尝试已达上限"
+		if parent.Err() == nil {
+			h.notice = "本次远程连接的解锁尝试已达上限"
+		}
 		h.mu.Unlock()
 		h.notify()
 		return session.UnlockTooMany
