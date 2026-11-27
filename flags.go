@@ -69,11 +69,12 @@ func parseFlags(args []string) (options, *flag.FlagSet, error) {
 	return o, fs, nil
 }
 
-// defaultAppLog is kkdesk.log in app.OutputDir on Windows (users send it
-// back after a test), none elsewhere.
+// Keep the log writable when the app runs from a protected installation.
 func defaultAppLog() string {
-	if runtime.GOOS == "windows" {
-		return filepath.Join(app.OutputDir(), "kkdesk.log")
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		if dir, err := config.Dir(); err == nil {
+			return filepath.Join(dir, "kkdesk.log")
+		}
 	}
 	return ""
 }

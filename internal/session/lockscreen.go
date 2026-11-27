@@ -25,6 +25,11 @@ const (
 	LockScreenComponentUnavailable
 	LockScreenPlatformUnsupported
 	LockScreenSignatureRequired
+	LockScreenWrongInstallLocation
+	LockScreenServiceUnavailable
+	LockScreenComponentNeedsUpdate
+	LockScreenComponentError
+	LockScreenApprovalRequired
 )
 
 type UnlockResult byte
@@ -70,7 +75,7 @@ func (p *Peer) OnUnlockResult(fn func(UnlockResult)) {
 }
 
 func (p *Peer) SendLockScreen(state LockScreenState) error {
-	if !p.isHost || !p.canSendLockScreen() || state < LockScreenUnlocked || state > LockScreenSignatureRequired {
+	if !p.isHost || !p.canSendLockScreen() || state < LockScreenUnlocked || state > LockScreenApprovalRequired {
 		return errLockScreenMessage
 	}
 	return p.sendMeta([]byte{metaLockScreen, byte(state)})
@@ -118,7 +123,7 @@ func (p *Peer) handleLockScreen(msg webrtc.DataChannelMessage) {
 			return
 		}
 		state := LockScreenState(b[1])
-		if state < LockScreenUnlocked || state > LockScreenSignatureRequired {
+		if state < LockScreenUnlocked || state > LockScreenApprovalRequired {
 			return
 		}
 		p.mu.Lock()

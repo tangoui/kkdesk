@@ -10,6 +10,8 @@ import "C"
 import (
 	"context"
 	"encoding/binary"
+	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -36,11 +38,15 @@ type macRemote struct {
 }
 
 func startMac(ctx context.Context, opts capture.Options, out func(capture.Frame)) (Session, error) {
-	if macOwnCode().team == "" {
-		return nil, ErrNeedsSignature
+	info, err := Component()
+	if err != nil {
+		return nil, fmt.Errorf("inspect macOS lock screen component: %w", err)
+	}
+	if err := info.startError(); err != nil {
+		return nil, err
 	}
 	if !macLocked(uint32(os.Geteuid())) {
-		return nil, ErrUnavailable
+		return nil, fmt.Errorf("%w: macOS console session is no longer locked", ErrService)
 	}
 	c, err := macDial(ctx, macHost)
 	if err != nil {
@@ -54,25 +60,33 @@ func startMac(ctx context.Context, opts capture.Options, out func(capture.Frame)
 	_ = c.SetDeadline(time.Now().Add(5 * time.Second))
 	if _, err := c.Write(options[:]); err != nil {
 		_ = c.Close()
-		return nil, ErrUnavailable
+		return nil, fmt.Errorf("%w: send lock screen capture options: %w", ErrService, err)
 	}
 	fd, err := macReceiveFD(c)
 	if err != nil {
 		_ = c.Close()
-		return nil, ErrUnavailable
+		if errors.Is(err, ErrUnavailable) {
+			return nil, errors.New("macOS lock screen helper returned an invalid frame descriptor")
+		}
+		return nil, fmt.Errorf("%w: receive macOS lock screen frames: %w", ErrService, err)
 	}
 	defer unix.Close(fd)
 	mode, err := unix.FcntlInt(uintptr(fd), unix.F_GETFL, 0)
 	var st unix.Stat_t
-	if err != nil || mode&unix.O_ACCMODE != unix.O_RDONLY || (unix.Fstat(fd, &st) != nil) ||
-		st.Size != 2*macFrameSlotBytes {
+	if err == nil {
+		err = unix.Fstat(fd, &st)
+	}
+	if err != nil || mode&unix.O_ACCMODE != unix.O_RDONLY || st.Size != 2*macFrameSlotBytes {
 		_ = c.Close()
-		return nil, ErrUnavailable
+		if err != nil {
+			return nil, fmt.Errorf("inspect macOS lock screen frame descriptor: %w", err)
+		}
+		return nil, errors.New("macOS lock screen frames were not shared read-only with the expected size")
 	}
 	view, err := unix.Mmap(fd, 0, 2*macFrameSlotBytes, unix.PROT_READ, unix.MAP_SHARED)
 	if err != nil {
 		_ = c.Close()
-		return nil, err
+		return nil, fmt.Errorf("map macOS lock screen frames: %w", err)
 	}
 	s := &macRemote{conn: c, view: view, done: make(chan struct{})}
 	s.SetFPS(opts.FPS)

@@ -149,6 +149,7 @@ type HostState struct {
 	PrivacyDeadline     time.Time
 	LockAfterDisconnect bool
 	LockDeadline        time.Time
+	LockScreenFailure   session.LockScreenState // last helper failure observed while locked
 }
 
 // Host accepts controllers and streams this screen to one at a time. Its
@@ -188,6 +189,7 @@ type Host struct {
 	privacyDisconnect bool
 	graceMu           sync.Mutex
 	grace             *privacyGrace // guarded by mu. Operations also take graceMu.
+	lockScreenFailure session.LockScreenState
 
 	fileAccess atomic.Bool // current 文件传输 permission
 	clipAccess atomic.Bool // current 剪贴板 permission
@@ -514,7 +516,7 @@ func (h *Host) State() HostState {
 	defer h.mu.Unlock()
 	s := HostState{Phase: h.phase, Addrs: h.addrs, Port: Port, Password: h.password, Err: h.errMsg, Notice: h.notice,
 		FileAccess: h.fileAccess.Load(), ClipboardAccess: h.clipAccess.Load(), Enabled: h.wantOn, PasswordSince: h.pwSince, Rotate: h.cfg.Rotate,
-		HasFixed: h.cfg.Fixed != "", AutoAccept: h.cfg.AutoAccept, PairingCancellation: h.mobile.cancellation}
+		HasFixed: h.cfg.Fixed != "", AutoAccept: h.cfg.AutoAccept, PairingCancellation: h.mobile.cancellation, LockScreenFailure: h.lockScreenFailure}
 	if h.privacy != nil {
 		state := h.privacy.state()
 		s.PrivacyScreen, s.PrivacyRequest, s.PrivacyDeadline = state.on, state.request, state.deadline
@@ -556,6 +558,18 @@ func (h *Host) State() HostState {
 		}
 	}
 	return s
+}
+
+func (h *Host) ClearLockScreenFailure() { h.setLockScreenFailure(session.LockScreenUnknown) }
+
+func (h *Host) setLockScreenFailure(state session.LockScreenState) {
+	h.mu.Lock()
+	changed := h.lockScreenFailure != state
+	h.lockScreenFailure = state
+	h.mu.Unlock()
+	if changed {
+		h.notify()
+	}
 }
 
 // SetEnabled starts or stops listening. Stopping does not end an active

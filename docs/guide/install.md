@@ -76,4 +76,4 @@ netsh interface ipv4 show excludedportrange protocol=tcp
 ./kkdesk -selftest        # Windows: .\kkdesk.exe -selftest
 ```
 
-结果写在 `kkdesk-selftest.log`（Windows 上在 `kkdesk.exe` 旁边，macOS 上在当前目录），退出码 0 表示通过。Windows 版还会一直把诊断日志写到同目录的 `kkdesk.log`。反馈问题时请附上这个文件。
+结果写在 `kkdesk-selftest.log`（Windows 上在 `kkdesk.exe` 旁边，macOS 上在当前目录），退出码 0 表示通过。应用运行时的诊断日志位于配置目录下的 `kkdesk.log`。Windows 默认为 `%APPDATA%\kkdesk`，macOS 默认为 `~/Library/Application Support/kkdesk`。

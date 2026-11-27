@@ -1,11 +1,15 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"log"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/tangoui/kkdesk/internal/capture"
 	"github.com/tangoui/kkdesk/internal/lockscreen"
@@ -24,7 +28,7 @@ func TestLockScreenReportsUnsupportedWithNoHelper(t *testing.T) {
 		screenLocked: func() (bool, error) { return true, nil },
 		startDesktop: noCapture(t),
 		startLockScreen: func(context.Context, capture.Options, func(capture.Frame)) (lockscreen.Session, error) {
-			return nil, lockscreen.ErrUnavailable
+			return nil, lockscreen.ErrNotInstalled
 		},
 	})
 	waitFor(t, "unsupported lock screen", func() bool { return lockScreenUnavailable(p.LockScreen()) })
@@ -39,6 +43,50 @@ func TestLockScreenReportsSignatureRequirement(t *testing.T) {
 		},
 	})
 	waitFor(t, "signature required", func() bool { return p.LockScreen() == session.LockScreenSignatureRequired })
+}
+
+func TestLockScreenReportsUnexpectedComponentFailure(t *testing.T) {
+	_, p := startTestLockHost(t, HostConfig{
+		screenLocked: func() (bool, error) { return true, nil },
+		startDesktop: noCapture(t),
+		startLockScreen: func(context.Context, capture.Options, func(capture.Frame)) (lockscreen.Session, error) {
+			return nil, errors.New("map frames: access denied")
+		},
+	})
+	waitFor(t, "lock screen diagnosis", func() bool { return p.LockScreen() != session.LockScreenUnknown })
+	if got := p.LockScreen(); got != session.LockScreenComponentError {
+		t.Fatalf("lock screen state = %d, want component error", got)
+	}
+}
+
+func TestLockScreenStartLogsFailureWhenReasonChanges(t *testing.T) {
+	var logs bytes.Buffer
+	out := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(out) })
+
+	err := fmt.Errorf("%w: pipe not found", lockscreen.ErrService)
+	d := &hostDesktop{h: &Host{notify: func() {}}, video: &videoSender{}}
+	d.h.cfg.startLockScreen = func(context.Context, capture.Options, func(capture.Frame)) (lockscreen.Session, error) {
+		return nil, err
+	}
+	check := func() {
+		t.Helper()
+		d.next = time.Time{}
+		if err := d.startLocked(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check()
+	check()
+	err = errors.New("mapping access denied")
+	check()
+	check()
+	for _, detail := range []string{"pipe not found", "mapping access denied"} {
+		if count := strings.Count(logs.String(), detail); count != 1 {
+			t.Errorf("logged %q %d times, want once", detail, count)
+		}
+	}
 }
 
 func lockScreenUnavailable(state session.LockScreenState) bool {

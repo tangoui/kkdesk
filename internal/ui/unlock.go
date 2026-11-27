@@ -19,6 +19,16 @@ func lockScreenReason(state session.LockScreenState) string {
 		return "对方系统暂不支持锁屏远程操作"
 	case session.LockScreenSignatureRequired:
 		return "锁屏远控不可用（需要正式签名的 kkdesk）"
+	case session.LockScreenWrongInstallLocation:
+		return "对方的 kkdesk 未从安装位置运行，请在对方电脑上从安装位置启动 kkdesk"
+	case session.LockScreenServiceUnavailable:
+		return "对方锁屏远控服务未运行或无法连接助手"
+	case session.LockScreenComponentNeedsUpdate:
+		return "请在对方电脑上更新锁屏远控组件"
+	case session.LockScreenComponentError:
+		return "对方锁屏远控组件出错，详见对方日志"
+	case session.LockScreenApprovalRequired:
+		return "请在对方电脑的系统设置中批准锁屏远控组件"
 	default:
 		return ""
 	}

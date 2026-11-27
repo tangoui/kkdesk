@@ -70,13 +70,19 @@ func Component() (ComponentInfo, error) {
 	if err := verifyService(service, path); err != nil {
 		return info, err
 	}
+	if err := verifyInstallDirectory(filepath.Dir(path)); err != nil {
+		return info, fmt.Errorf("verify lock screen installation: %w", err)
+	}
 	status, err := service.Query()
 	if err != nil {
 		return info, err
 	}
-	same, err := sameImage(source, path)
-	if err != nil {
-		return info, err
+	same := info.UsingInstall
+	if !same {
+		same, err = sameImage(source, path)
+		if err != nil {
+			return info, err
+		}
 	}
 	switch {
 	case !same:

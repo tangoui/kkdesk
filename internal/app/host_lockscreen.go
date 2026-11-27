@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"runtime"
 	"sync"
 	"time"
 
@@ -103,21 +102,50 @@ func (d *hostDesktop) startLocked(ctx context.Context) error {
 	d.next = time.Now().Add(time.Second)
 	helper, err := d.h.cfg.startLockScreen(ctx, d.options(), d.video.frame)
 	if err != nil {
-		d.mu.Lock()
-		if errors.Is(err, lockscreen.ErrNeedsSignature) {
-			d.unavailable = session.LockScreenSignatureRequired
-		} else {
-			d.unavailable = session.LockScreenComponentUnavailable
+		if ctx.Err() != nil {
+			return nil
 		}
+		state := lockScreenStartFailure(err)
+		d.mu.Lock()
+		changed := d.unavailable != state
+		d.unavailable = state
 		d.mu.Unlock()
+		if changed {
+			// Start errors contain component, OS and IPC details only.
+			// Unlock requests use a separate path.
+			log.Printf("kkdesk host: start lock screen capture: %v", err)
+		}
+		d.h.setLockScreenFailure(state)
 		return nil
 	}
 	d.mu.Lock()
 	d.helper = helper
 	d.unavailable = session.LockScreenUnknown
 	d.mu.Unlock()
+	d.h.ClearLockScreenFailure()
 	d.attach(helper)
 	return nil
+}
+
+func lockScreenStartFailure(err error) session.LockScreenState {
+	switch {
+	case errors.Is(err, lockscreen.ErrNotInstalled):
+		return session.LockScreenComponentUnavailable
+	case errors.Is(err, lockscreen.ErrWrongLocation):
+		return session.LockScreenWrongInstallLocation
+	case errors.Is(err, lockscreen.ErrService):
+		return session.LockScreenServiceUnavailable
+	case errors.Is(err, lockscreen.ErrNeedsUpdate):
+		return session.LockScreenComponentNeedsUpdate
+	case errors.Is(err, lockscreen.ErrNeedsSignature):
+		return session.LockScreenSignatureRequired
+	case errors.Is(err, lockscreen.ErrNeedsApproval):
+		return session.LockScreenApprovalRequired
+	case errors.Is(err, lockscreen.ErrUnsupported):
+		return session.LockScreenPlatformUnsupported
+	default:
+		return session.LockScreenComponentError
+	}
 }
 
 func (d *hostDesktop) options() capture.Options {
@@ -179,8 +207,8 @@ func (d *hostDesktop) state() session.LockScreenState {
 		return session.LockScreenReady
 	case d.unavailable != session.LockScreenUnknown:
 		return d.unavailable
-	case d.h.cfg.startLockScreen != nil || runtime.GOOS == "windows":
-		return session.LockScreenComponentUnavailable
+	case d.h.cfg.startLockScreen != nil:
+		return session.LockScreenUnknown
 	default:
 		return session.LockScreenPlatformUnsupported
 	}

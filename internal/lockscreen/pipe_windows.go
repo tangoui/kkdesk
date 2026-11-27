@@ -120,7 +120,7 @@ func openPipe(session uint32) (*os.File, error) {
 	h, err := windows.CreateFile(pipeName(session), pipeClientAccess, 0, nil, windows.OPEN_EXISTING,
 		windows.FILE_FLAG_OVERLAPPED|windows.SECURITY_SQOS_PRESENT|windows.SECURITY_IDENTIFICATION, 0)
 	if err != nil {
-		return nil, ErrUnavailable
+		return nil, fmt.Errorf("%w: open lock screen pipe: %w", ErrService, err)
 	}
 	sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
 	if err == nil {
@@ -134,5 +134,8 @@ func openPipe(session uint32) (*os.File, error) {
 		}
 	}
 	_ = windows.CloseHandle(h)
-	return nil, ErrUnavailable
+	if err != nil {
+		return nil, fmt.Errorf("verify lock screen pipe owner: %w", err)
+	}
+	return nil, errors.New("lock screen pipe has an unexpected owner or server session")
 }

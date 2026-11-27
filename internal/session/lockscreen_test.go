@@ -82,6 +82,28 @@ func TestLockScreenStateBeforeSubscription(t *testing.T) {
 	}
 }
 
+func TestLockScreenDiagnosticStatesRoundTrip(t *testing.T) {
+	host, viewer := connect(t)
+	changed := make(chan LockScreenState, 1)
+	viewer.OnLockScreenChange(func() { changed <- viewer.LockScreen() })
+	for state := LockScreenState(6); state <= 10; state++ {
+		if err := host.SendLockScreen(state); err != nil {
+			t.Fatalf("send state %d: %v", state, err)
+		}
+		select {
+		case got := <-changed:
+			if got != state {
+				t.Fatalf("received state %d, want %d", got, state)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("state %d did not arrive", state)
+		}
+	}
+	if err := host.SendLockScreen(11); err == nil {
+		t.Fatal("accepted unknown lock screen state")
+	}
+}
+
 func TestUnlockMetaRoundTrip(t *testing.T) {
 	host, viewer := connect(t)
 	requests, results := make(chan string, 1), make(chan UnlockResult, 1)
