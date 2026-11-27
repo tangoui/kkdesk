@@ -1,4 +1,4 @@
-!include "LogicLib.nsh"
+﻿!include "LogicLib.nsh"
 
 !macro customUnInstall
   ; Remove the user executable while we can still report a file-in-use error.
@@ -7,7 +7,7 @@
   Delete "$INSTDIR\kkdesk.exe"
   IfErrors 0 kkdesk_check_component
   IfSilent kkdesk_uninstall_failed
-  MessageBox MB_OK|MB_ICONEXCLAMATION "Close kkdesk and run the uninstaller again."
+  MessageBox MB_OK|MB_ICONEXCLAMATION "请先退出 kkdesk，再重新运行卸载程序。"
   kkdesk_uninstall_failed:
   SetErrorLevel 1
   Abort
@@ -18,7 +18,7 @@
   ReadRegStr $0 HKLM "SYSTEM\CurrentControlSet\Services\KKDeskLockScreen" "ImagePath"
   StrCmp $0 "" kkdesk_component_done
   MessageBox MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2 \
-    "Also uninstall the kkdesk lock screen component? Windows will ask for administrator approval." \
+    "要同时卸载 kkdesk 锁屏远控组件吗？Windows 会请求管理员批准。" \
     IDNO kkdesk_component_retained
 
   ; Do not elevate a binary from the user-writable installation directory.
@@ -47,7 +47,7 @@
 
   kkdesk_component_retained:
   MessageBox MB_OK|MB_ICONINFORMATION \
-    "The lock screen component remains installed. You can remove it from kkdesk Settings with administrator approval."
+    "锁屏远控组件仍然保留。之后可以在 kkdesk「设置 › 安全」中卸载（需要管理员批准）。"
 
   kkdesk_component_done:
 !macroend
