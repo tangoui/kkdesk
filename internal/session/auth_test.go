@@ -1,9 +1,9 @@
 package session
 
 import (
-	"fmt"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"

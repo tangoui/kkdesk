@@ -1,8 +1,8 @@
 package input
 
 import (
-	"math"
 	"bytes"
+	"math"
 	"testing"
 )
 
