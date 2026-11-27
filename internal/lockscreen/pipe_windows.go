@@ -14,7 +14,21 @@ import (
 const pipeClientAccess = windows.FILE_READ_DATA | windows.FILE_WRITE_DATA |
 	windows.FILE_READ_ATTRIBUTES | windows.READ_CONTROL | windows.SYNCHRONIZE
 
-var peekNamedPipe = windows.NewLazySystemDLL("kernel32.dll").NewProc("PeekNamedPipe")
+var (
+	peekNamedPipe               = windows.NewLazySystemDLL("kernel32.dll").NewProc("PeekNamedPipe")
+	getNamedPipeServerSessionID = windows.NewLazySystemDLL("kernel32.dll").NewProc("GetNamedPipeServerSessionId")
+)
+
+// pipeServerSession reads the server's session from the pipe itself: the
+// desktop process runs unelevated and may not open the SYSTEM helper to ask
+// ProcessIdToSessionId.
+func pipeServerSession(h windows.Handle) (uint32, error) {
+	var session uint32
+	if ok, _, err := getNamedPipeServerSessionID.Call(uintptr(h), uintptr(unsafe.Pointer(&session))); ok == 0 {
+		return 0, err
+	}
+	return session, nil
+}
 
 func pipeConnected(h windows.Handle) bool {
 	ok, _, _ := peekNamedPipe.Call(uintptr(h), 0, 0, 0, 0, 0)
@@ -122,20 +136,32 @@ func openPipe(session uint32) (*os.File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: open lock screen pipe: %w", ErrService, err)
 	}
+	if err := verifyPipeServer(h, session); err != nil {
+		_ = windows.CloseHandle(h)
+		return nil, err
+	}
+	return os.NewFile(uintptr(h), "kkdesk lock screen"), nil
+}
+
+// verifyPipeServer checks that a SYSTEM-owned pipe is served from session.
+func verifyPipeServer(h windows.Handle, session uint32) error {
 	sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
-	if err == nil {
-		owner, _, ownerErr := sd.Owner()
-		if ownerErr == nil && owner != nil && owner.IsWellKnown(windows.WinLocalSystemSid) {
-			var pid, serverSession uint32
-			if windows.GetNamedPipeServerProcessId(h, &pid) == nil &&
-				windows.ProcessIdToSessionId(pid, &serverSession) == nil && serverSession == session {
-				return os.NewFile(uintptr(h), "kkdesk lock screen"), nil
-			}
-		}
-	}
-	_ = windows.CloseHandle(h)
 	if err != nil {
-		return nil, fmt.Errorf("verify lock screen pipe owner: %w", err)
+		return fmt.Errorf("verify lock screen pipe owner: %w", err)
 	}
-	return nil, errors.New("lock screen pipe has an unexpected owner or server session")
+	owner, _, err := sd.Owner()
+	if err != nil {
+		return fmt.Errorf("verify lock screen pipe owner: %w", err)
+	}
+	if owner == nil || !owner.IsWellKnown(windows.WinLocalSystemSid) {
+		return fmt.Errorf("lock screen pipe is owned by %v, not LocalSystem", owner)
+	}
+	server, err := pipeServerSession(h)
+	if err != nil {
+		return fmt.Errorf("verify lock screen pipe session: %w", err)
+	}
+	if server != session {
+		return fmt.Errorf("lock screen pipe is served from session %d, not %d", server, session)
+	}
+	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"strconv"
 	"strings"
@@ -40,7 +41,40 @@ func (i localIdentity) matches(console localIdentity) bool {
 }
 
 func allowLockedDesktop(session, active uint32, locked bool, desktop string) bool {
-	return session != ^uint32(0) && session == active && locked && strings.EqualFold(desktop, "Winlogon")
+	return lockedDesktopProblem(session, active, locked, desktop) == ""
+}
+
+// lockedDesktopProblem says why the helper may not serve a session, or ""
+// when it is the active console and locked. The input desktop of a locked
+// console is Default while the lock screen curtain (LockApp) shows and
+// Winlogon on the sign-in page.
+func lockedDesktopProblem(session, active uint32, locked bool, desktop string) string {
+	switch {
+	case session == ^uint32(0):
+		return "no session"
+	case session != active:
+		return fmt.Sprintf("session %d is not the active console (%d)", session, active)
+	case !locked:
+		return fmt.Sprintf("session %d is not locked", session)
+	case !strings.EqualFold(desktop, "Winlogon") && !strings.EqualFold(desktop, "Default"):
+		return fmt.Sprintf("input desktop is %q, not Winlogon or Default", desktop)
+	}
+	return ""
+}
+
+// applyFollowing injects with apply; when that fails it enters the current
+// input desktop and tries once more. Typing on the lock screen curtain
+// switches the console to the sign-in page (Default to Winlogon), and input
+// sent from the old desktop is refused.
+func applyFollowing(apply, enter func() error) error {
+	err := apply()
+	if err == nil {
+		return nil
+	}
+	if enterErr := enter(); enterErr != nil {
+		return fmt.Errorf("%w (and following the input desktop: %w)", err, enterErr)
+	}
+	return apply()
 }
 
 func frameBounds(width, height uint32, sequence uint64) (offset, size int, ok bool) {

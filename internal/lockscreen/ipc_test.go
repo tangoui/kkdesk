@@ -1,6 +1,10 @@
 package lockscreen
 
-import "testing"
+import (
+	"errors"
+	"strings"
+	"testing"
+)
 
 func TestIPCClientIdentity(t *testing.T) {
 	want := localIdentity{
@@ -24,14 +28,38 @@ func TestIPCClientIdentity(t *testing.T) {
 	}
 }
 
+// A locked Windows 11 console shows the lock screen curtain (LockApp) on
+// the Default desktop and the sign-in page on Winlogon: both are served.
 func TestIPCSecureDesktopRequiresLockedConsole(t *testing.T) {
-	if !allowLockedDesktop(3, 3, true, "Winlogon") {
+	if !allowLockedDesktop(3, 3, true, "Winlogon") || !allowLockedDesktop(3, 3, true, "Default") {
 		t.Fatal("valid locked console was rejected")
 	}
 	if allowLockedDesktop(3, 3, false, "Winlogon") ||
+		allowLockedDesktop(3, 3, false, "Default") ||
 		allowLockedDesktop(3, 4, true, "Winlogon") ||
-		allowLockedDesktop(3, 3, true, "Default") {
-		t.Fatal("allowed an unlocked, inactive, or non-Winlogon desktop")
+		allowLockedDesktop(3, 3, true, "Screen-saver") {
+		t.Fatal("allowed an unlocked, inactive, or unexpected desktop")
+	}
+}
+
+// The helper logs why it stops serving, so each refusal names its cause.
+func TestLockedDesktopProblemNamesTheCause(t *testing.T) {
+	for _, tc := range []struct {
+		session, active uint32
+		locked          bool
+		desktop, want   string
+	}{
+		{3, 3, true, "Winlogon", ""},
+		{3, 3, true, "winlogon", ""},
+		{^uint32(0), 3, true, "Winlogon", "no session"},
+		{3, 4, true, "Winlogon", "session 3 is not the active console (4)"},
+		{3, 3, false, "Winlogon", "session 3 is not locked"},
+		{3, 3, true, "Default", ""},
+		{3, 3, true, "Screen-saver", `input desktop is "Screen-saver", not Winlogon or Default`},
+	} {
+		if got := lockedDesktopProblem(tc.session, tc.active, tc.locked, tc.desktop); got != tc.want {
+			t.Errorf("lockedDesktopProblem(%d, %d, %v, %q) = %q, want %q", tc.session, tc.active, tc.locked, tc.desktop, got, tc.want)
+		}
 	}
 }
 
@@ -70,5 +98,31 @@ func TestHelperLaunchRequiresServiceProcess(t *testing.T) {
 		if _, _, ok := helperLaunchArgs(args); ok {
 			t.Fatalf("accepted invalid launch args %v", args)
 		}
+	}
+}
+
+// Typing on the lock screen curtain moves the console to the sign-in page;
+// the next keys fail on the old desktop until the helper follows it.
+func TestApplyFollowingRetriesOnTheNewDesktop(t *testing.T) {
+	onNew := false
+	tries, enters := 0, 0
+	apply := func() error {
+		tries++
+		if !onNew {
+			return errors.New("SendInput sent 0 of 1 events")
+		}
+		return nil
+	}
+	enter := func() error { enters++; onNew = true; return nil }
+	if err := applyFollowing(apply, enter); err != nil || tries != 2 || enters != 1 {
+		t.Fatalf("applyFollowing = %v after %d tries and %d desktop switches, want success after 2 and 1", err, tries, enters)
+	}
+	if err := applyFollowing(apply, enter); err != nil || tries != 3 || enters != 1 {
+		t.Fatalf("a working desktop was switched again: %v, %d tries, %d switches", err, tries, enters)
+	}
+	stuck := errors.New("access denied")
+	if err := applyFollowing(func() error { return stuck }, func() error { return errors.New("no desktop") }); err == nil ||
+		!strings.Contains(err.Error(), "access denied") || !strings.Contains(err.Error(), "no desktop") {
+		t.Fatalf("a failed switch should report both errors, got %v", err)
 	}
 }
