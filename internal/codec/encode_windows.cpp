@@ -16,7 +16,11 @@
 #include <mfidl.h>
 #include <mftransform.h>
 #include <codecapi.h>
+// Some mingw-w64 releases (Ubuntu 24.04's) define CodecAPIEventData in both
+// strmif.h and icodecapi.h; rename the second copy so the two do not clash.
+#define CodecAPIEventData kkdesk_icodecapi_CodecAPIEventData
 #include <icodecapi.h>
+#undef CodecAPIEventData
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
