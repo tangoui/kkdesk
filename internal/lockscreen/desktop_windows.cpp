@@ -31,8 +31,8 @@ int kklock_state(uint32_t session) {
     return state;
 }
 
-uintptr_t kklock_open_desktop(uint32_t *error) {
-    HDESK desktop = OpenInputDesktop(0, FALSE, DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS);
+uintptr_t kklock_open_desktop(uint32_t access, uint32_t *error) {
+    HDESK desktop = OpenInputDesktop(0, FALSE, access);
     *error = desktop ? 0 : GetLastError();
     return reinterpret_cast<uintptr_t>(desktop);
 }

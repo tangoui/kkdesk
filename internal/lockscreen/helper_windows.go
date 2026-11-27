@@ -31,6 +31,10 @@ import (
 	"github.com/tangoui/kkdesk/internal/winmedia"
 )
 
+// helperDesktopAccess is what the helper asks of the input desktop:
+// SendInput also needs DESKTOP_JOURNALPLAYBACK on the thread's desktop.
+const helperDesktopAccess = 0x0001 | 0x0080 | 0x0020 // DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS | DESKTOP_JOURNALPLAYBACK
+
 func windowsSessionLocked(session uint32) bool { return C.kklock_state(C.uint32_t(session)) == 0 }
 
 func runHelper(exe string, servicePID uint32, sasName string, logger *log.Logger) error {
@@ -60,7 +64,7 @@ func runHelper(exe string, servicePID uint32, sasName string, logger *log.Logger
 		reason := func() string {
 			desktop := "?"
 			var code C.uint32_t
-			if desk := C.kklock_open_desktop(&code); desk == 0 {
+			if desk := C.kklock_open_desktop(helperDesktopAccess, &code); desk == 0 {
 				desktop = fmt.Sprintf("(OpenInputDesktop: %v)", syscall.Errno(code))
 			} else {
 				var name [128]uint16
@@ -103,7 +107,7 @@ func runHelper(exe string, servicePID uint32, sasName string, logger *log.Logger
 	}()
 	enter := func() error {
 		var code C.uint32_t
-		next := C.kklock_open_desktop(&code)
+		next := C.kklock_open_desktop(helperDesktopAccess, &code)
 		if next == 0 {
 			return fmt.Errorf("open input desktop: %w", syscall.Errno(code))
 		}

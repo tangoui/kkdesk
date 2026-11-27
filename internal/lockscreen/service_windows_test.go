@@ -50,3 +50,13 @@ func TestPipeServerVerificationUsesThePipe(t *testing.T) {
 		t.Fatalf("verifyPipeServer on a user-owned pipe = %v, want an owner error", err)
 	}
 }
+
+// SendInput refuses a thread whose input desktop handle lacks
+// DESKTOP_JOURNALPLAYBACK, even on the input desktop: it failed with
+// "Access is denied" for every key on the lock screen.
+func TestHelperDesktopAllowsInput(t *testing.T) {
+	const journalPlayback = 0x0020 // DESKTOP_JOURNALPLAYBACK
+	if helperDesktopAccess&journalPlayback == 0 {
+		t.Error("helper desktop access lacks DESKTOP_JOURNALPLAYBACK")
+	}
+}
