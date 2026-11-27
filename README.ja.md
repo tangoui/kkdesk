@@ -48,7 +48,7 @@ Go と [Tango](https://github.com/tangoui/tango) で作ったネイティブの�
 
 ## はじめかた
 
-正式版は [GitHub Releases](https://github.com/tangoui/kkdesk/releases) で公開し、自動更新に対応する予定です。最初のリリースまでは、下記の手順でソースからビルドするか、GitHub Actions のビルドを使ってください。
+OS と CPU に合ったインストーラーをダウンロードしてください。macOS では DMG を開き、kkdesk を「アプリケーション」にドラッグします。Windows x64 では `setup.exe` を実行し、現在のユーザー用にインストールします。Linux x64 または ARM64 では AppImage を使うか、Debian や Ubuntu に deb をインストールします。 [GitHub Releases](https://github.com/tangoui/kkdesk/releases)
 
 1. 操作される側のコンピューターで **リモート操作を許可** をオンにします。接続ページに LAN アドレス、一時パスワード、そしてネットワーク越えサービスを設定していれば `KD-…` で始まるデバイスコードが表示されます。
 2. 操作する側でアドレスまたはデバイスコードとパスワードを入力し、**接続** を押します。「接続前に確認する」がオンの場合は、ホスト側で承認します。

@@ -48,7 +48,7 @@ One app, two roles: share this computer's screen, or view and control another on
 
 ## Getting started
 
-Releases will be published on [GitHub Releases](https://github.com/tangoui/kkdesk/releases) and update themselves. Until the first release, build from source (below) or take a build from GitHub Actions.
+Download the installer for your system and architecture. Open the DMG and drag kkdesk to Applications on macOS. On Windows x64, run `setup.exe` to install for the current user. On Linux x64 or ARM64, use the AppImage or install the deb on Debian or Ubuntu. [GitHub Releases](https://github.com/tangoui/kkdesk/releases)
 
 1. On the computer to be controlled, turn on **Allow remote control**. The Connect page shows its LAN addresses, a temporary password and, with a cross-network service configured, its `KD-…` device code.
 2. On the controlling computer, enter the address or device code and the password, then **Connect**. If *Ask before connecting* is on, the host accepts the request.

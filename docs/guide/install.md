@@ -1,13 +1,13 @@
 # 安装与首次运行
 
-正式版本发布在 [GitHub Releases](https://github.com/tangoui/kkdesk/releases)，装好后会[自动更新](./update)。第一个正式版本发布之前，请[从源码构建](/dev/build)。
+在 GitHub Releases 选择对应系统和架构的安装包。[下载 kkdesk](https://github.com/tangoui/kkdesk/releases)
 
 | 系统 | 下载 | 安装 |
 |---|---|---|
-| macOS（Apple 芯片） | `kkdesk-<版本>-darwin-arm64.app.tar.gz` | 双击解压，把 `kkdesk.app` 拖进「应用程序」。 |
-| macOS（Intel） | `kkdesk-<版本>-darwin-amd64.app.tar.gz` | 同上。 |
-| Windows（x64） | `kkdesk-<版本>-windows-amd64.exe` | 不需要安装，放进一个固定的文件夹双击运行。只依赖系统自带的 DLL。 |
-| Linux（x64、arm64） | `kkdesk-<版本>-linux-<架构>.tar.gz` | 解压到一个单独的文件夹运行。Linux 版目前**只能传文件**，不能共享屏幕或查看远端画面。 |
+| macOS（Apple 芯片） | `kkdesk-<版本>-darwin-arm64.dmg` | 打开 DMG，把 `kkdesk.app` 拖到「应用程序」快捷方式，再从「应用程序」打开。 |
+| macOS（Intel） | `kkdesk-<版本>-darwin-amd64.dmg` | 同上。 |
+| Windows（x64） | `kkdesk-<版本>-windows-amd64-setup.exe` | 双击安装到当前用户目录，默认位置为 `%LOCALAPPDATA%\Programs\kkdesk`，无需管理员权限。 |
+| Linux（x64、arm64） | `kkdesk-<版本>-linux-<架构>.AppImage` 或 `kkdesk-<版本>-linux-<架构>.deb` | 给 AppImage 添加执行权限后打开。Debian 或 Ubuntu 可用 `sudo apt install ./<文件名>.deb` 安装。Linux 版目前**只能传文件**。 |
 
 ::: tip macOS 第一次打开
 发布版还没有用开发者证书签名和公证。第一次打开时，macOS 会提示无法验证开发者：到「系统设置 › 隐私与安全性」，在下方找到 kkdesk，点 **仍要打开**（较早的 macOS 上也可以在「应用程序」里右键点 kkdesk › 打开）。之后正常双击即可；自动更新装上的新版本不会再出现这个提示，但可能要重新授权屏幕录制和辅助功能，见 [自动更新](./update)。
@@ -45,6 +45,10 @@
 临时签名的版本更新后，需要在 macOS 中重新授予辅助功能权限。如果 kkdesk 已在列表中却仍然无法控制，点「−」删除旧条目，重新添加并开启 kkdesk，再退出并重新打开 kkdesk。
 
 ## Windows
+
+安装程序会创建开始菜单和桌面快捷方式。完成页默认勾选启动 kkdesk。锁屏远控组件可在 **设置 › 安全** 单独安装到 Program Files，该操作需要管理员批准。
+
+通过 **Windows 设置 › 应用 › 已安装的应用** 卸载时，可以选择同时卸载锁屏远控组件。选择保留组件或取消管理员批准时，卸载程序会提示组件仍在。无论选择哪一项，`%APPDATA%\kkdesk` 下的用户配置都保留。
 
 ### 防火墙
 

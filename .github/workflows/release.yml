@@ -24,7 +24,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  TAN_VERSION: v0.2.1 # github.com/tangoui/tango/cmd/tan
+  TAN_VERSION: v0.4.0 # github.com/tangoui/tango/cmd/tan
 
 jobs:
   version:
@@ -43,86 +43,9 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-  macos:
+  desktop:
     needs: version
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-go@v7.0.0
-        with:
-          go-version-file: go.mod
-      - name: Install tan
-        run: go install github.com/tangoui/tango/cmd/tan@$TAN_VERSION
-      - name: Build and sign ad hoc
-        run: |
-          tan build -platform darwin/arm64,darwin/amd64 -o build
-          bash scripts/bundle-macos-lockscreen.sh build/darwin-*/kkdesk.app
-          for app in build/darwin-*/kkdesk.app; do
-            codesign --force --deep --sign - "$app"
-            codesign --verify --deep --strict "$app"
-          done
-          tar -czf macos-build.tar.gz build # keeps the bundles' permissions
-      - uses: actions/upload-artifact@v7.0.2
-        with:
-          name: build-macos
-          path: macos-build.tar.gz
-
-  windows:
-    needs: version
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-go@v7.0.0
-        with:
-          go-version-file: go.mod
-      - name: Install mingw-w64 and tan
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix
-          go install github.com/tangoui/tango/cmd/tan@$TAN_VERSION
-      - name: Build
-        env:
-          CC: x86_64-w64-mingw32-gcc-posix
-          CXX: x86_64-w64-mingw32-g++-posix
-        run: |
-          tan build -platform windows/amd64 -o build
-          tar -czf windows-build.tar.gz build
-      - uses: actions/upload-artifact@v7.0.2
-        with:
-          name: build-windows
-          path: windows-build.tar.gz
-
-  linux:
-    needs: version
-    strategy:
-      matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-24.04
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-go@v7.0.0
-        with:
-          go-version-file: go.mod
-      - name: Install tan
-        run: go install github.com/tangoui/tango/cmd/tan@$TAN_VERSION
-      - name: Build kkdesk and kkdesk-server
-        env:
-          VERSION: ${{ needs.version.outputs.version }}
-        run: |
-          tan build -platform linux/${{ matrix.arch }} -o build
-          mkdir -p server
-          CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o server/kkdesk-server ./cmd/kkdesk-server
-          tar -czf "server/kkdesk-server-$VERSION-linux-${{ matrix.arch }}.tar.gz" -C server kkdesk-server
-          rm server/kkdesk-server
-          tar -czf linux-build.tar.gz build server
-      - uses: actions/upload-artifact@v7.0.2
-        with:
-          name: build-linux-${{ matrix.arch }}
-          path: linux-build.tar.gz
+    uses: ./.github/workflows/package-desktop.yml
 
   android:
     needs: version
@@ -132,7 +55,7 @@ jobs:
       ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
 
   publish:
-    needs: [version, macos, windows, linux, android]
+    needs: [version, desktop, android]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -150,7 +73,7 @@ jobs:
         with:
           path: artifacts
       - name: Unpack the builds
-        run: for f in artifacts/*/*.tar.gz; do tar -xzf "$f"; done
+        run: for f in artifacts/build-*/*.tar.gz; do tar -xzf "$f"; done
       - name: Previous release (for binary patches)
         run: |
           prev=$(gh release view --json tagName -q .tagName 2>/dev/null || true)
@@ -165,9 +88,9 @@ jobs:
         run: |
           notes=()
           [ -f "docs/releases/$VERSION.md" ] && notes=(-notes "@docs/releases/$VERSION.md")
-          tan release-manifest -build build -o release $PREV_ARGS \
+          tan release-manifest -build build -o release -windows exe -linux dir $PREV_ARGS \
             -url "https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/" "${notes[@]}"
-          cp server/*.tar.gz artifacts/build-android/*.apk release/
+          cp server/*.tar.gz artifacts/build-android/*.apk artifacts/installers-*/* release/
           (cd release && sha256sum * > SHA256SUMS)
           ls -la release
       - name: Publish the release

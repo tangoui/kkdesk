@@ -173,11 +173,25 @@ func run(o options, handedOff bool) error {
 
 	var relaunch *installedRelaunch
 	var restartErr error
+	var install windowsDesktopInstall
+	if releaseBuild {
+		install = desktopInstall()
+	}
 	_, configured := os.LookupEnv(config.EnvDir)
 	autoSwitch := claimed && wantsAutomaticInstalledRelaunch(os.Args[1:], configured, devRole, handedOff)
 	if platform := newInstalledAppPlatform(); platform != nil && dirErr == nil {
 		relaunch = &installedRelaunch{platform: platform, pending: filepath.Join(dir, "lockscreen-relaunch.pending")}
 		if autoSwitch {
+			// A login item can still point at Program Files after the user
+			// copy has updated. Start the user copy so it can confirm the
+			// update and offer to update the component.
+			if install.stale {
+				if err := platform.StartInstalled(install.userExe); err == nil {
+					return nil
+				} else {
+					log.Printf("kkdesk: start updated user app: %v", err)
+				}
+			}
 			var switched bool
 			switched, restartErr = relaunch.attempt(true)
 			if switched {
@@ -304,7 +318,12 @@ func run(o options, handedOff bool) error {
 	// measurement modes -host and -connect).
 	var upd *updater.Updater
 	if releaseBuild && !o.host && o.connect == "" {
-		upd = update.New(app.Version, os.Getenv)
+		exe, _ := os.Executable()
+		userExe := install.userExe
+		if install.stale {
+			userExe = "" // The running version is not the registered copy's version.
+		}
+		upd = update.ForDesktopInstall(update.New(app.Version, os.Getenv), runtime.GOOS, exe, os.Getenv("APPIMAGE"), install.protected, userExe)
 		if upd != nil {
 			upd.OnEvent = func(event updater.Event) {
 				if event.Kind == updater.EventReady {

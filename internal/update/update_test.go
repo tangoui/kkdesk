@@ -45,3 +45,29 @@ func TestManifestOverride(t *testing.T) {
 		t.Fatalf("a file URL was accepted: %+v", u)
 	}
 }
+
+func TestDesktopInstallUpdateTarget(t *testing.T) {
+	for _, tc := range []struct {
+		name, platform, exe, appImage, userExe, target string
+		protected, disabled                            bool
+	}{
+		{name: "Windows per-user exe", platform: "windows", exe: "user/kkdesk.exe"},
+		{name: "Windows protected copy", platform: "windows", protected: true, userExe: "user/kkdesk.exe", target: "user/kkdesk.exe"},
+		{name: "Windows without user installer", platform: "windows", protected: true, disabled: true},
+		{name: "Linux AppImage", platform: "linux", appImage: "/home/me/kkdesk.AppImage", disabled: true},
+		{name: "Linux deb", platform: "linux", exe: "/usr/bin/kkdesk", disabled: true},
+		{name: "Linux archive", platform: "linux", exe: "/home/me/kkdesk/kkdesk"},
+		{name: "macOS", platform: "darwin", exe: "/Applications/kkdesk.app/Contents/MacOS/kkdesk"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			u := New("1.2.3", func(string) string { return "" })
+			u = ForDesktopInstall(u, tc.platform, tc.exe, tc.appImage, tc.protected, tc.userExe)
+			if (u == nil) != tc.disabled {
+				t.Fatalf("updater disabled = %v, want %v", u == nil, tc.disabled)
+			}
+			if u != nil && u.Target != tc.target {
+				t.Errorf("target = %q, want %q", u.Target, tc.target)
+			}
+		})
+	}
+}

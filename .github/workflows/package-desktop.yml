@@ -1,0 +1,142 @@
+name: Package desktop
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  TAN_VERSION: v0.4.0 # github.com/tangoui/tango/cmd/tan
+
+jobs:
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Install tan
+        run: go install github.com/tangoui/tango/cmd/tan@$TAN_VERSION
+      - name: Build, sign and verify disk images
+        run: |
+          version=$(jq -er .version tan.json)
+          tan build -platform darwin/arm64,darwin/amd64 -o build
+          bash scripts/bundle-macos-lockscreen.sh build/darwin-*/kkdesk.app
+          mkdir installers
+          for arch in arm64 amd64; do
+            app="build/darwin-$arch/kkdesk.app"
+            codesign --force --deep --sign - "$app"
+            codesign --verify --deep --strict "$app"
+            bash scripts/package-macos.sh "$app" "$PWD/installers/kkdesk-$version-darwin-$arch.dmg"
+          done
+          tar -czf macos-build.tar.gz build # keeps the bundles' permissions
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: build-macos
+          path: macos-build.tar.gz
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: installers-macos
+          path: installers/*.dmg
+          if-no-files-found: error
+
+  windows:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Install mingw-w64, NSIS and tan
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix nsis
+          go install github.com/tangoui/tango/cmd/tan@$TAN_VERSION
+      - name: Build and package the Windows executable
+        env:
+          CC: x86_64-w64-mingw32-gcc-posix
+          CXX: x86_64-w64-mingw32-g++-posix
+        run: |
+          version=$(jq -er .version tan.json)
+          tan package -platform windows/amd64 -o build
+          mkdir installers
+          mv "build/kkdesk-$version-windows-amd64-setup.exe" installers/
+          7z x -o"$RUNNER_TEMP/setup" installers/*-setup.exe kkdesk.exe
+          cmp build/windows-amd64/kkdesk.exe "$RUNNER_TEMP/setup/kkdesk.exe"
+          tar -czf windows-build.tar.gz build/windows-amd64/kkdesk.exe
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: build-windows
+          path: windows-build.tar.gz
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: installers-windows
+          path: installers/*-setup.exe
+          if-no-files-found: error
+
+  linux:
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            appimage_arch: x86_64
+            appimagetool_sha256: ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            appimage_arch: aarch64
+            appimagetool_sha256: f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Install tan and appimagetool
+        env:
+          APPIMAGE_ARCH: ${{ matrix.appimage_arch }}
+          APPIMAGETOOL_SHA256: ${{ matrix.appimagetool_sha256 }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends file desktop-file-utils squashfs-tools
+          go install github.com/tangoui/tango/cmd/tan@$TAN_VERSION
+          mkdir -p "$RUNNER_TEMP/appimage-bin"
+          tool="$RUNNER_TEMP/appimage-bin/appimagetool"
+          curl -fsSL --retry 3 "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-$APPIMAGE_ARCH.AppImage" -o "$tool"
+          echo "$APPIMAGETOOL_SHA256  $tool" | sha256sum --check
+          chmod +x "$tool"
+          echo "$RUNNER_TEMP/appimage-bin" >> "$GITHUB_PATH"
+      - name: Build and verify Linux packages and kkdesk-server
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1" # hosted runners can package without mounting via FUSE
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          version=$(jq -er .version tan.json)
+          base="kkdesk-$version-linux-$TARGET_ARCH"
+          tan package -platform "linux/$TARGET_ARCH" -format appimage,deb -o build
+          mkdir installers
+          mv "build/$base.AppImage" "build/$base.deb" installers/
+          test "$(dpkg-deb -f "installers/$base.deb" Architecture)" = "$TARGET_ARCH"
+          dpkg-deb -x "installers/$base.deb" "$RUNNER_TEMP/deb"
+          cmp "build/linux-$TARGET_ARCH/kkdesk" "$RUNNER_TEMP/deb/usr/bin/kkdesk"
+          (cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE/installers/$base.AppImage" --appimage-extract usr/bin/kkdesk)
+          cmp "build/linux-$TARGET_ARCH/kkdesk" "$RUNNER_TEMP/squashfs-root/usr/bin/kkdesk"
+          mkdir server
+          CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o server/kkdesk-server ./cmd/kkdesk-server
+          tar -czf "server/kkdesk-server-$version-linux-$TARGET_ARCH.tar.gz" -C server kkdesk-server
+          rm server/kkdesk-server
+          tar -czf linux-build.tar.gz "build/linux-$TARGET_ARCH" server
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: build-linux-${{ matrix.arch }}
+          path: linux-build.tar.gz
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: installers-linux-${{ matrix.arch }}
+          path: installers/*
+          if-no-files-found: error

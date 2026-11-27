@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 
 	"github.com/tangoui/kkdesk/internal/lockscreen"
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
 )
 
 const installedHandoffArg = "--lockscreen-handoff="
@@ -20,6 +22,35 @@ const installedHandoffArg = "--lockscreen-handoff="
 type windowsInstalledApp struct{}
 
 func newInstalledAppPlatform() installedAppPlatform { return windowsInstalledApp{} }
+
+func desktopInstall() windowsDesktopInstall {
+	exe, err := os.Executable()
+	if err != nil || !lockscreen.IsProtectedExecutable(exe) {
+		return windowsDesktopInstall{}
+	}
+	install := windowsDesktopInstall{protected: true}
+	// The 32-bit NSIS installer writes this entry even for amd64 kkdesk.
+	const uninstallKey = `Software\Microsoft\Windows\CurrentVersion\Uninstall\com.kkdesk.desktop`
+	key, err := registry.OpenKey(registry.CURRENT_USER, uninstallKey, registry.QUERY_VALUE|registry.WOW64_32KEY)
+	if err != nil {
+		return install
+	}
+	defer key.Close()
+	dir, _, err := key.GetStringValue("InstallLocation")
+	if err != nil || !filepath.IsAbs(dir) {
+		return install
+	}
+	path := filepath.Join(dir, "kkdesk.exe")
+	if lockscreen.IsProtectedExecutable(path) {
+		return install
+	}
+	same, err := lockscreen.MatchesProtectedExecutable(path)
+	if err == nil {
+		install.userExe = path
+		install.stale = !same
+	}
+	return install
+}
 
 func (windowsInstalledApp) Component() (lockscreen.ComponentInfo, error) {
 	return lockscreen.Component()

@@ -17,6 +17,12 @@ type installedAppPlatform interface {
 	StartInstalled(path string) error
 }
 
+type windowsDesktopInstall struct {
+	protected bool
+	userExe   string
+	stale     bool
+}
+
 type installedRelaunch struct {
 	platform installedAppPlatform
 	pending  string
