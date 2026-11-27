@@ -10,6 +10,7 @@ import (
 	"github.com/tangoui/tango/service/updater/updateui"
 	"github.com/tangoui/tango/sys/shell"
 	"github.com/tangoui/tango/ui"
+	"github.com/tangoui/tango/ui/icon/antd"
 	"github.com/tangoui/tango/ui/layout"
 	"github.com/tangoui/tango/ui/text"
 	"github.com/tangoui/tango/ui/theme"
@@ -49,6 +50,7 @@ func (s *settingsState) init(st config.Settings) {
 
 var settingsNav = []ui.MenuItem{
 	{Key: "security", Label: "安全"},
+	{Key: "phones", Label: "已配对手机"},
 	{Key: "quality", Label: "画质"},
 	{Key: "network", Label: "局域网"},
 	{Key: "remote", Label: "跨网连接"},
@@ -134,6 +136,8 @@ func (m *Main) settingsPage(c *ui.Context, hs app.HostState) {
 						m.remoteSettings(c, f, hs)
 					case "general":
 						m.generalSettings(c, f)
+					case "phones":
+						m.phoneSettings(c, f)
 					default:
 						m.securitySettings(c, f, hs)
 					}
@@ -141,6 +145,27 @@ func (m *Main) settingsPage(c *ui.Context, hs app.HostState) {
 			})
 		}, layout.Grow(1), layout.MinW(0), layout.Padding(insets(24, 24, 24, 24)))
 	}, layout.Gap(16), layout.AlignItems(layout.AlignStart))
+}
+
+// phoneSettings is the 已配对手机 section: the phones paired by QR code and
+// a shortcut to pair another one.
+func (m *Main) phoneSettings(c *ui.Context, f *ui.FormW) {
+	f.Item("已配对手机").Help("扫码配对过的手机可以直接连接本机。打开「无需确认」后，这台手机连接时不再弹出确认。").Body(func() {
+		m.pairedPhones(c)
+	})
+	helpGap(c)
+	f.Item("配对新手机").Body(func() {
+		available := m.o.Host.PairingAvailable()
+		ui.Row(c, func() {
+			if ui.Button(c, "手机扫码配对").Icon(antd.ScanOutlined).Disabled(!available).Clicked() {
+				m.pairing.open = true
+				c.Invalidate()
+			}
+			if !available {
+				ui.Text(c, "先在「安全」里打开「允许被远程控制」").Secondary()
+			}
+		}, layout.Gap(8), layout.Middle(), layout.WrapItems())
+	})
 }
 
 func (m *Main) securitySettings(c *ui.Context, f *ui.FormW, hs app.HostState) {
@@ -219,8 +244,6 @@ func (m *Main) securitySettings(c *ui.Context, f *ui.FormW, hs app.HostState) {
 			m.o.Host.SetSessionDefaults(s.sessionClipboard, on)
 		})
 	})
-	helpGap(c)
-	f.Item("已配对手机").Body(func() { m.pairedPhones(c) })
 	helpGap(c)
 	f.Item("隐私屏").Body(func() {
 		options := []ui.Option{

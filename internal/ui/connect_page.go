@@ -61,14 +61,11 @@ func (m *Main) hostCard(c *ui.Context, hs app.HostState) {
 			if len(hs.Addrs) == 0 {
 				ui.Text(c, "没有可用的网络地址").Secondary()
 			}
-			for i, a := range hs.Addrs {
+			for _, a := range hs.Addrs {
 				addr := fmt.Sprintf("%s:%d", a, hs.Port)
-				size := float32(26)
-				if i > 0 {
-					size = 18
-				}
 				ui.Row(c, func() {
-					mono(c, addr, size, text.Semibold, th.Text)
+					// The same size as the device code below.
+					mono(c, addr, 18, text.Semibold, th.Text)
 					ui.Spacer(c)
 					if ui.IconButton(c, icon.Copy, "复制地址 "+addr).Size(28, 16).Clicked() {
 						copyText(c, addr, "已复制地址")

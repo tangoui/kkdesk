@@ -87,7 +87,7 @@ void main() {
     expect(find.text('在线 · 直连 · 每次需电脑确认'), findsWidgets);
     expect(find.text('离线 · 每次需电脑确认'), findsWidgets);
     expect(find.text('在线 · 中继 · 电脑端已设为免确认'), findsOneWidget);
-    expect(find.text('免确认需在电脑端「设置 → 安全 → 已配对手机」中开启'), findsOneWidget);
+    expect(find.text('免确认需在电脑端「设置 → 已配对手机」中开启'), findsOneWidget);
     expect(find.text('更改名称'), findsNothing);
     await tester.tap(find.text('办公室台式机'));
     await tester.pumpAndSettle();
