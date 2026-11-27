@@ -32,25 +32,21 @@ meta 通道新增"光标形状"消息（被控端 → 控制端，1 字节形状
 ### 控制端显示
 
 - 鼠标在远程画面（`internal/ui/session_window.go` 的 NativeView）上时显示对方形状；离开画面区域恢复正常界面光标。
-- **Tango 依赖**：当前 Tango 的 `ui.NativeView` 固定以 `input.CursorDefault` 交互，不能改光标。需要在 Tango 里给 `NativeViewW` 加一个设置光标的方法（如 `Cursor(input.Cursor) *NativeViewW`，命名按 Tango 风格），三平台后端按现有光标机制生效。这是 Tango 仓库的独立改动，遵守 Tango 的规则（见下）。
+- **Tango 依赖**：kkdesk 当前锁定的 Tango 版本中，`ui.NativeViewW` 已继承 `Box.Cursor(input.Cursor) *Box`。`uihost.NativeHostW` 嵌入 `NativeViewW`，可直接调用该方法，沿用三个桌面平台已有的光标机制。
 
-## Tango 改动的规则
+## Tango 版本
 
-- 仓库 `/Users/admin/min/tango`，在独立 worktree 里改，不动主工作区未提交的改动。
-- 提交作者固定 `tango <903300326@qq.com>`（仓库已配置），**提交信息不加 Co-Authored-By**。
-- 推送前检查：`gofmt -l .`（含构建标签文件）为空、`go test ./...`、`GOOS=linux go vet ./...`、`GOOS=windows go vet ./...`、`apitxt -check`（公开 API 变化要更新 api/go/*.txt）。
-- 不合并、不推送；由派单会话审核后推送 Tango，再把 kkdesk 的 Tango 依赖升级到推送后的版本。开发期间 kkdesk 可以用临时 `go.work` 或 `replace` 指向本地 Tango worktree，但**不得把 replace 提交进 kkdesk**。
+沿用 `go.mod` 当前锁定的 Tango 版本。无需修改 Tango 仓库、升级依赖或配置本地 `go.work` / `replace`。
 
 ## 测试
 
 - 被控端：形状映射表（各平台系统光标 → 线上码）单元测试；只在变化时发送；会话开始发一次；未知形状发箭头。
 - 协议：认证前不处理、files-only 不发、往返测试。
 - 控制端：线上码 → Tango 枚举映射；远程画面区域的光标随消息变化（用 Tango 测试驱动检查节点的光标）。
-- Tango：NativeView 光标方法的测试。
-- 全部检查：kkdesk 的 `gofmt`、`go vet`、`go test`、相关包 `-race`、Linux/Windows vet；Tango 按上面的推送前检查。
+- 全部检查：kkdesk 的 `gofmt`、`go vet`、`go test`、相关包 `-race`、Linux/Windows vet。
 
 ## 我替用户做的决定
 
 1. 只同步形状、不传图片；Tango 不支持的形状显示箭头。
 2. 仅查看会话也同步。
-3. 需要给 Tango 加 NativeView 光标接口，Tango 与 kkdesk 分两个分支，Tango 先审先推。
+3. 直接使用 Tango 已有的 `Box.Cursor`，所有改动在 kkdesk。
