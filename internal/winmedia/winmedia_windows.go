@@ -65,6 +65,21 @@ func Device() (device, manager uintptr, gen uint64, err error) {
 	return uintptr(d), uintptr(m), dev.gen, nil
 }
 
+// ResetDevice retires the current device so the next Device call creates a
+// new one (with a new generation). Use it when the device is still usable
+// but stale: after a display change its adapter keeps listing the outputs
+// it saw when it was created. Users of the old device notice the new
+// generation and recreate what they built on it.
+func ResetDevice() {
+	dev.mu.Lock()
+	defer dev.mu.Unlock()
+	if dev.device == nil {
+		return
+	}
+	dev.retired = append(dev.retired, dev.manager, dev.device)
+	dev.device, dev.manager = nil, nil
+}
+
 // AdapterLUID returns the LUID (HighPart<<32 | LowPart) of the adapter
 // the device was created on, 0 before the first Device call.
 func AdapterLUID() uint64 {

@@ -298,21 +298,32 @@ func (s *winSession) handleError(st *dupState, err error) {
 // open (re)creates the duplication; on a new device generation the
 // converter and ring are dropped too.
 func (s *winSession) open(st *dupState) error {
-	dev, _, gen, err := winmedia.Device()
-	if err != nil {
-		return err
-	}
-	if st.device != 0 && st.gen != gen {
-		st.closeAll()
-	}
-	st.device, st.gen = dev, gen
-	if st.dup != nil {
-		C.mmcap_close(st.dup)
-		st.dup = nil
-	}
 	var d *C.mmcapDup
 	var info C.mmcapInfo
-	if hr := int32(C.mmcap_open(winmedia.Ptr(dev), &d, &info)); hr < 0 || d == nil {
+	var devErr error
+	hr := openReopening(func() int32 {
+		dev, _, gen, err := winmedia.Device()
+		if err != nil {
+			devErr = err
+			return 0
+		}
+		if st.device != 0 && st.gen != gen {
+			st.closeAll()
+		}
+		st.device, st.gen = dev, gen
+		if st.dup != nil {
+			C.mmcap_close(st.dup)
+			st.dup = nil
+		}
+		return int32(C.mmcap_open(winmedia.Ptr(dev), &d, &info))
+	}, func() {
+		winmedia.Logf("capture: the primary monitor is not on the D3D11 device's adapter (display changed); recreating the device")
+		winmedia.ResetDevice()
+	})
+	if devErr != nil {
+		return devErr
+	}
+	if hr < 0 || d == nil {
 		return winmedia.Check("DuplicateOutput", hr)
 	}
 	st.dup, st.info = d, info
