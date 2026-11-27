@@ -54,7 +54,7 @@ dlls=$(x86_64-w64-mingw32-objdump -p "$out/kkdesk.exe" | grep 'DLL Name' | awk '
 	echo "imported DLLs:"
 	echo "$dlls" | sed 's/^/  /'
 } >>"$log"
-bad=$(echo "$dlls" | tr 'A-Z' 'a-z' | grep -Ev "$system_dlls" || true)
+bad=$(echo "$dlls" | tr 'A-Z' 'a-z' | grep -Ev "$system_dlls|^wtsapi32\.dll$" || true)
 if [ -n "$bad" ]; then
 	echo "non-system DLL dependencies:" >&2
 	echo "$bad" >&2
@@ -67,6 +67,8 @@ echo "$dlls" | sed 's/^/  /'
 size=$(stat -f %z "$out/kkdesk.exe" 2>/dev/null || stat -c %s "$out/kkdesk.exe")
 sha=$(shasum -a 256 "$out/kkdesk.exe" | awk '{print $1}')
 echo "kkdesk.exe: $size bytes, sha256 $sha" >>"$log"
+(cd "$out" && shasum -a 256 kkdesk.exe > SHA256SUMS)
+cp "$root/docs/guide/windows-lockscreen-test.md" "$out/README-锁屏实测.md"
 
 cat >"$out/README.txt" <<EOF
 kkdesk Windows 测试版（${version}，$(date +%Y-%m-%d) 构建）
@@ -75,6 +77,7 @@ kkdesk Windows 测试版（${version}，$(date +%Y-%m-%d) 构建）
 用途：在 Windows 电脑上共享屏幕，由 Mac 远程查看和控制，测量延迟、帧率和 CPU。
 支持 Windows 10 1809 及以上 / Windows 11，64 位（x64）。这一版还没有在真实 Windows 上跑过，
 请先做第 2 步自检，把结果发回来。
+测试锁屏时允许远程操作请看同目录的 README-锁屏实测.md。
 
 1) 把本文件夹里的 kkdesk.exe 复制到 Windows 上任意一个目录（例如 D:\\kkdesk）。
 
@@ -99,7 +102,7 @@ kkdesk Windows 测试版（${version}，$(date +%Y-%m-%d) 构建）
    把同目录下的 host.jsonl 和 kkdesk.log 发回来。
 
 已知限制：
-- 以管理员身份运行的窗口、UAC 弹窗、锁屏和 Ctrl+Alt+Del 界面无法被远程控制（Windows 的安全限制）；
+- 以管理员身份运行的窗口和未锁屏时的 UAC、Ctrl+Alt+Del 界面无法被普通权限的主程序远程控制；
   弹出 UAC 时画面可能暂停，关掉后会自动恢复。
 - 只共享主显示器；多显示器时其他显示器看不到也点不到。
 - 远端画面里不显示 Windows 的鼠标指针（Mac 上看到的是自己的指针）。

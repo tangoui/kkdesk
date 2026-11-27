@@ -95,6 +95,7 @@ type Main struct {
 	dev                 devicesState
 	xfer                filesPageState
 	set                 settingsState
+	lockScreen          lockScreenSettingsState
 	screenRecording     screenRecordingGuide
 	accessibility       accessibilityGuide
 	pairing             pairingUI

@@ -241,9 +241,9 @@ func (m *Main) securitySettings(c *ui.Context, f *ui.FormW, hs app.HostState) {
 				m.update(c, func(st *config.Settings) { st.LockAfterDisconnect = on })
 				m.o.Host.SetAutoLockAfterDisconnect(on)
 			})
-			ui.Alert(c, "warning", "锁屏后 kkdesk 无法远程解锁，需要有人在电脑前输入密码。").ShowIcon(true).Show()
 		}, layout.Gap(8))
 	})
+	m.lockScreenSettings(c, f)
 }
 
 // switchRow is a switch with its text; changed runs on a toggle.

@@ -30,6 +30,7 @@ import (
 	"github.com/tangoui/kkdesk/internal/files"
 	"github.com/tangoui/kkdesk/internal/inject"
 	"github.com/tangoui/kkdesk/internal/input"
+	"github.com/tangoui/kkdesk/internal/lockscreen"
 	"github.com/tangoui/kkdesk/internal/pairing"
 	"github.com/tangoui/kkdesk/internal/privacy"
 	"github.com/tangoui/kkdesk/internal/rendezvous"
@@ -87,6 +88,10 @@ type HostConfig struct {
 	privacyScreen           func() privacy.Screen
 	locker                  privacy.Locker
 	screenLocked            func() (bool, error)
+	startDesktop            func(capture.Options, func(capture.Frame)) (capture.Session, error)
+	startLockScreen         lockscreen.StartFunc
+	captureHelp             func() string
+	unlockTimeout           time.Duration
 	Remote                  rendezvous.Config
 	Pairing                 *pairing.Store
 	IdentityErr             error
@@ -214,6 +219,18 @@ func NewHost(cfg HostConfig, notify func()) *Host {
 	}
 	if cfg.screenLocked == nil {
 		cfg.screenLocked = privacy.SessionLocked
+	}
+	if cfg.startDesktop == nil {
+		cfg.startDesktop = capture.Start
+	}
+	if cfg.startLockScreen == nil {
+		cfg.startLockScreen = lockscreen.PlatformStart()
+	}
+	if cfg.captureHelp == nil {
+		cfg.captureHelp = CaptureHelp
+	}
+	if cfg.unlockTimeout <= 0 {
+		cfg.unlockTimeout = 15 * time.Second
 	}
 	h := &Host{cfg: cfg, notify: notify, addrs: LocalIPv4()}
 	h.remote.code = h.deviceCode()
@@ -1005,16 +1022,6 @@ func (h *Host) handle(p *session.Peer, listenCtx context.Context, remote bool, p
 		h.mu.Unlock()
 		return
 	}
-	if help := CaptureHelp(); help != "" {
-		h.setErr(help)
-		log.Printf("kkdesk host: %s", help)
-		p.CloseWithReason("被控端没有屏幕录制权限")
-		return
-	}
-	if h.screenLocked() {
-		h.refuseLocked(p)
-		return
-	}
 	h.mu.Lock()
 	h.phase, h.since = HostActive, time.Now()
 	h.mu.Unlock()
@@ -1022,8 +1029,8 @@ func (h *Host) handle(p *session.Peer, listenCtx context.Context, remote bool, p
 	stopClip := h.syncClipboard(p)
 	err := h.stream(p)
 	stopClip()
-	if errors.Is(err, errScreenLocked) {
-		h.refuseLocked(p)
+	if errors.Is(err, errCapturePermission) {
+		p.CloseWithReason(err.Error())
 		return
 	}
 	if err != nil {
@@ -1037,32 +1044,7 @@ func (h *Host) handle(p *session.Peer, listenCtx context.Context, remote bool, p
 	h.mu.Unlock()
 }
 
-// screenLockedReason is what a controller is told when the host shows the
-// lock screen: kkdesk runs as a normal process, which Windows keeps off the
-// lock screen (capture fails with DXGI_ERROR_NOT_FOUND).
-const screenLockedReason = "对方电脑已锁屏，需要有人在电脑前解锁后才能远程控制"
-
-var errScreenLocked = errors.New(screenLockedReason)
-
-// captureStart is capture.Start; tests replace it.
-var captureStart = capture.Start
-
-// screenLocked reports whether the host shows the lock screen; an unreadable
-// state counts as unlocked so capture reports its own error.
-func (h *Host) screenLocked() bool {
-	locked, err := h.cfg.screenLocked()
-	if err != nil {
-		log.Printf("kkdesk host: %v", err)
-		return false
-	}
-	return locked
-}
-
-func (h *Host) refuseLocked(p *session.Peer) {
-	h.setErr("本机已锁屏，远程控制端看不到画面；解锁后对方可以重新连接")
-	log.Printf("kkdesk host: %s refused: the screen is locked", p.RemoteAddr())
-	p.CloseWithReason(screenLockedReason)
-}
+var errCapturePermission = errors.New("被控端没有屏幕录制权限")
 
 // serveFiles starts the file server of an accepted session (both modes);
 // it stops when the session closes.
@@ -1102,8 +1084,33 @@ func (h *Host) stream(p *session.Peer) error {
 	vs.forceKey.Store(true)
 	p.OnKeyframeRequest(func() { vs.forceKey.Store(true) })
 
-	refreshAccessibility, releaseInput := h.wireInput(p)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		select {
+		case <-p.Done():
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	opts := capture.Options{FPS: fps, MaxWidth: maxW, ExcludeApp: captureExcludeApp(p.RemoteAddr())}
+	desktop := &hostDesktop{h: h, video: vs, opts: opts}
+	refreshAccessibility, releaseInput, releaseKeys := h.wireInput(p, desktop.input)
+	desktop.releaseKeys = releaseKeys
+	defer desktop.close()
 	defer releaseInput()
+	if err := desktop.refresh(ctx); err != nil {
+		return err
+	}
+	state := desktop.state()
+	attempts := h.serveUnlock(ctx, p, desktop)
+	defer func() {
+		cancel()
+		<-attempts
+	}()
+	_ = p.SendLockScreen(state)
+	lockTick := time.NewTicker(300 * time.Millisecond)
+	defer lockTick.Stop()
 	var accessibilityTick <-chan time.Time
 	if refreshAccessibility != nil {
 		ticker := time.NewTicker(2 * time.Second)
@@ -1111,18 +1118,6 @@ func (h *Host) stream(p *session.Peer) error {
 		accessibilityTick = ticker.C
 	}
 
-	opts := capture.Options{FPS: fps, MaxWidth: maxW, ExcludeApp: captureExcludeApp(p.RemoteAddr())}
-	log.Printf("kkdesk host: capture %d fps, max width %d, exclude %q", opts.FPS, opts.MaxWidth, opts.ExcludeApp)
-	capt, err := captureStart(opts, vs.frame)
-	if err != nil {
-		if h.screenLocked() {
-			return errScreenLocked
-		}
-		return fmt.Errorf("启动屏幕采集失败：%w", err)
-	}
-	vs.mu.Lock()
-	vs.capt = capt
-	vs.mu.Unlock()
 	p.OnQuality(vs.setQuality)
 	requests := make(chan session.PrivacyMessage, 16)
 	h.mu.Lock()
@@ -1135,7 +1130,7 @@ func (h *Host) stream(p *session.Peer) error {
 		if ps.detached.Load() {
 			return nil
 		}
-		return capture.ExcludeWindows(capt, ids)
+		return desktop.excludeWindows(ids)
 	}
 	h.privacy = ps
 	h.mu.Unlock()
@@ -1145,39 +1140,37 @@ func (h *Host) stream(p *session.Peer) error {
 		default:
 		}
 	})
+	defer func() {
+		p.OnPrivacy(nil)
+		h.endDesktopPrivacy(ps, p.ReceivedBye())
+	}()
 	tk := time.NewTicker(StatsSummaryInterval)
-loop:
+	defer tk.Stop()
 	for {
 		select {
 		case <-p.Done():
-			break loop
+			return nil
 		case m := <-requests:
 			select {
 			case <-p.Done():
-				break loop
+				return nil
 			default:
 				ps.handle(p, m, h.cfg.locker)
+			}
+		case <-lockTick.C:
+			if err := desktop.refresh(ctx); err != nil {
+				return err
+			}
+			if current := desktop.state(); current != state {
+				state = current
+				_ = p.SendLockScreen(state)
 			}
 		case <-accessibilityTick:
 			refreshAccessibility()
 		case <-tk.C:
-			log.Printf("kkdesk host: %s", statsSummary(rec.Last(), capt.Stats()))
+			log.Printf("kkdesk host: %s", statsSummary(rec.Last(), desktop.stats()))
 		}
 	}
-	tk.Stop()
-	p.OnPrivacy(nil)
-	h.endDesktopPrivacy(ps, p.ReceivedBye())
-	st := capt.Stats()
-	capt.Close() // no frame callbacks after this
-	log.Printf("kkdesk host: capture frames complete=%d idle=%d other=%d display-after-callback=%d resent=%d reopened=%d",
-		st.Complete, st.Idle, st.Other, st.Late, st.Resent, st.Reopened)
-	vs.mu.Lock()
-	if vs.enc != nil {
-		vs.enc.Close()
-		vs.enc = nil
-	}
-	vs.mu.Unlock()
-	return nil
 }
 
 // injectLimitsOnce logs InjectLimits once per process.
@@ -1187,7 +1180,7 @@ var injectLimitsOnce sync.Once
 // for the lifetime of this desktop session, and release, which ends input and
 // lets go of the keys and buttons the controller left down (a session that
 // drops mid-drag or with a modifier held would otherwise leave them held).
-func (h *Host) wireInput(p *session.Peer) (refresh, release func()) {
+func (h *Host) wireInput(p *session.Peer, lockInput func(input.Event) bool) (refresh, release, releaseKeys func()) {
 	var granted atomic.Bool
 	help := InjectHelp()
 	granted.Store(help == "")
@@ -1229,7 +1222,7 @@ func (h *Host) wireInput(p *session.Peer) (refresh, release func()) {
 	p.OnInput(func(e input.Event) {
 		mu.Lock()
 		defer mu.Unlock()
-		if stopped || inj == nil || !granted.Load() {
+		if stopped || lockInput(e) || inj == nil || !granted.Load() {
 			return
 		}
 		if err := inj.Apply(e); err != nil {
@@ -1243,11 +1236,7 @@ func (h *Host) wireInput(p *session.Peer) (refresh, release func()) {
 			log.Printf("kkdesk host: injected first remote input event (kind %d)", e.Kind)
 		}
 	})
-	release = func() {
-		p.OnInput(nil)
-		mu.Lock()
-		defer mu.Unlock()
-		stopped = true
+	clearKeys := func() {
 		if inj == nil {
 			return
 		}
@@ -1259,7 +1248,19 @@ func (h *Host) wireInput(p *session.Peer) (refresh, release func()) {
 			log.Printf("kkdesk host: released %d keys/buttons left down by the controller", len(ups))
 		}
 	}
-	return refresh, release
+	releaseKeys = func() {
+		mu.Lock()
+		defer mu.Unlock()
+		clearKeys()
+	}
+	release = func() {
+		p.OnInput(nil)
+		mu.Lock()
+		defer mu.Unlock()
+		stopped = true
+		clearKeys()
+	}
+	return refresh, release, releaseKeys
 }
 
 // videoSender encodes captured frames and sends them to the peer.

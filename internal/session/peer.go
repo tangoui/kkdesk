@@ -89,6 +89,10 @@ type Peer struct {
 	onKeyframe            func()
 	onQuality             func(Quality)
 	onPrivacy             func(PrivacyMessage)
+	lockScreen            LockScreenState
+	onLockScreenChange    func()
+	onUnlock              func([]byte)
+	onUnlockResult        func(UnlockResult)
 	receivedBye           atomic.Bool
 	accessibilityDenied   bool
 	onAccessibilityChange func()
@@ -291,6 +295,9 @@ func (p *Peer) handleMeta(msg webrtc.DataChannelMessage) {
 	if len(b) == 0 {
 		return
 	}
+	if b[0] == metaUnlockRequest {
+		defer clear(b[1:])
+	}
 	if b[0] != metaBye && p.handlePasswordMeta(msg) {
 		return
 	}
@@ -303,6 +310,8 @@ func (p *Peer) handleMeta(msg webrtc.DataChannelMessage) {
 		p.shutdown()
 	case byte(PrivacyRequest), byte(PrivacyState), byte(LockOnDisconnectRequest), byte(LockOnDisconnectState), byte(LockNowRequest), byte(LockNowResult):
 		p.handlePrivacy(msg)
+	case metaLockScreen, metaUnlockRequest, metaUnlockResult:
+		p.handleLockScreen(msg)
 	case metaQuality:
 		p.handleQuality(b)
 	case metaClip:

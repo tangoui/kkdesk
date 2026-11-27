@@ -22,6 +22,7 @@ import (
 	"github.com/tangoui/kkdesk/internal/app"
 	"github.com/tangoui/kkdesk/internal/display"
 	"github.com/tangoui/kkdesk/internal/input"
+	"github.com/tangoui/kkdesk/internal/session"
 )
 
 // closeDelay keeps the session window up briefly after the session ends so
@@ -70,6 +71,10 @@ type sessionWin struct {
 	viewport                     sessionViewport
 	menuOpen                     atomic.Bool
 	fullscreen                   atomic.Bool
+	unlockOpen                   bool
+	unlockRemember               bool
+	unlockSecret                 string
+	unlockError                  string
 }
 
 // OpenSession opens the session window for a connected viewer. onEnd gets
@@ -133,6 +138,17 @@ func (w *sessionWin) page(c *ui.Context) {
 		fw, fh := w.v.FrameSize()
 		space := c.Size()
 		space.H -= sessionStripHeight
+		unlockMessage := st.UnlockMessage
+		if w.unlockError != "" {
+			unlockMessage = w.unlockError
+		}
+		if unlockMessage != "" && !st.ViewOnly && st.Phase != app.ViewerClosed {
+			const noticeHeight = 38
+			ui.Column(c, func() {
+				ui.Alert(c, "warning", unlockMessage).Banner().Show()
+			}, layout.H(noticeHeight), layout.Shrink(0))
+			space.H -= noticeHeight
+		}
 		if st.AccessibilityDenied && st.Phase != app.ViewerClosed && !w.accessibilityNoticeDismissed {
 			const noticeHeight = 38
 			ui.Column(c, func() {
@@ -165,6 +181,7 @@ func (w *sessionWin) page(c *ui.Context) {
 		w.viewport.render(c, space, fw, fh, func(viewport ui.ID, opts ...layout.Option) {
 			w.screen(c, st, viewport, fw, fh, opts...)
 		})
+		w.unlockDialog(c, st)
 	}, layout.Grow(1)).Bg(theme.Hex("#000000"))
 }
 
@@ -206,13 +223,18 @@ func (w *sessionWin) phaseTags(c *ui.Context, st app.ViewerState) {
 	}
 	switch st.Phase {
 	case app.ViewerConnecting, app.ViewerWaiting:
-		ui.Tag(c, "等待对方确认…").Color("processing")
+		if st.LockScreen == session.LockScreenUnknown || st.LockScreen == session.LockScreenUnlocked {
+			ui.Tag(c, "等待对方确认…").Color("processing")
+		}
 	case app.ViewerClosed:
 		msg := st.Err
 		if msg == "" {
 			msg = "连接已断开"
 		}
 		ui.Tag(c, msg).Color("error")
+	}
+	if reason := lockScreenReason(st.LockScreen); reason != "" && st.Phase != app.ViewerClosed {
+		ui.Tag(c, reason).Color("warning")
 	}
 	if st.ViewOnly || st.AccessibilityDenied {
 		ui.Tag(c, "仅查看").Color("blue")
@@ -272,6 +294,7 @@ func (w *sessionWin) popupMenu(x, y int, st app.ViewerState) {
 	m.Separator()
 	m.Check("仅查看", st.ViewOnly, func() { v.SetViewOnly(!st.ViewOnly) })
 	addPrivacyMenu(m, v, st)
+	w.addUnlockMenu(m, st)
 	m.Separator()
 	t := m.Submenu("工具")
 	t.Add("文件传输", func() {
@@ -338,6 +361,10 @@ func addQualityMenus(m *menu.Menu, v *app.Viewer, st app.ViewerState) {
 // screen is the remote screen: a native video view over a box that reads
 // the pointer and keyboard and forwards them.
 func (w *sessionWin) screen(c *ui.Context, st app.ViewerState, viewport ui.ID, fw, fh int, opts ...layout.Option) {
+	cover := uihost.CoverIgnore
+	if w.unlockOpen {
+		cover = uihost.CoverHide
+	}
 	nh := uihost.NativeHost(c, "remote", uihost.NativeHostOptions{
 		Create: func() (uintptr, error) {
 			view, err := display.New()
@@ -355,7 +382,7 @@ func (w *sessionWin) screen(c *ui.Context, st app.ViewerState, viewport ui.ID, f
 			}
 		},
 		PassInput: true,
-		Covered:   uihost.CoverIgnore,
+		Covered:   cover,
 	}, opts...)
 	nh.Bg(theme.Hex("#000000"))
 	// PassInput takes the box out of the Tab order; the remote screen still
@@ -370,7 +397,7 @@ func (w *sessionWin) screen(c *ui.Context, st app.ViewerState, viewport ui.ID, f
 	if err := nh.Err(); err != nil {
 		screenError(c, err)
 	}
-	if st.Phase == app.ViewerClosed {
+	if st.Phase == app.ViewerClosed || w.unlockOpen {
 		return
 	}
 	c.CaptureTab(id)
