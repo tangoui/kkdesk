@@ -160,7 +160,10 @@ func OpenMain(o MainOptions) (*Main, error) {
 			}
 		})
 	})
-	s.OnClosed(func() { go m.prober.Close() }) // probing stops with the window
+	s.OnClosed(func() {
+		m.surface.Store(nil)
+		go m.prober.Close()
+	})
 	return m, nil
 }
 
@@ -169,6 +172,29 @@ func (m *Main) Invalidate() {
 	if r := m.runner.Load(); r != nil {
 		r.Invalidate()
 	}
+}
+
+// Present brings the main window forward if it is still open. Main thread.
+func (m *Main) Present() bool {
+	s := m.surface.Load()
+	if s == nil {
+		return false
+	}
+	presentMainWindow(s)
+	return true
+}
+
+func presentMainWindow(s interface {
+	State() tango.WindowState
+	Restore() error
+	Show()
+	Focus()
+}) {
+	if s.State() == tango.StateMinimized {
+		_ = s.Restore()
+	}
+	s.Show()
+	s.Focus()
 }
 
 // ShowError shows msg on the form and brings the window up. Main thread.
