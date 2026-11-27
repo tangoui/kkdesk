@@ -28,6 +28,7 @@ type hostDesktop struct {
 	held        input.Held
 	next        time.Time // earliest retry after a failed helper connection
 	unavailable session.LockScreenState
+	inputErr    string // last lock screen input failure logged
 }
 
 func (d *hostDesktop) refresh(ctx context.Context) error {
@@ -219,8 +220,18 @@ func (d *hostDesktop) state() session.LockScreenState {
 func (d *hostDesktop) input(e input.Event) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.locked && d.helper != nil && d.helper.Apply(e) == nil {
-		d.held.Track(e)
+	if d.locked && d.helper != nil {
+		err := d.helper.Apply(e)
+		if err == nil {
+			d.held.Track(e)
+		}
+		if reason := fmt.Sprint(err); err != nil && reason != d.inputErr {
+			log.Printf("kkdesk host: lock screen input: %v", err)
+			d.inputErr = reason
+		} else if err == nil && d.inputErr != "" {
+			log.Printf("kkdesk host: lock screen input works again")
+			d.inputErr = ""
+		}
 	}
 	return d.locked
 }

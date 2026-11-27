@@ -62,6 +62,21 @@ func lockedDesktopProblem(session, active uint32, locked bool, desktop string) s
 	return ""
 }
 
+// applyFollowing injects with apply; when that fails it enters the current
+// input desktop and tries once more. Typing on the lock screen curtain
+// switches the console to the sign-in page (Default to Winlogon), and input
+// sent from the old desktop is refused.
+func applyFollowing(apply, enter func() error) error {
+	err := apply()
+	if err == nil {
+		return nil
+	}
+	if enterErr := enter(); enterErr != nil {
+		return fmt.Errorf("%w (and following the input desktop: %w)", err, enterErr)
+	}
+	return apply()
+}
+
 func frameBounds(width, height uint32, sequence uint64) (offset, size int, ok bool) {
 	if sequence == 0 || width == 0 || height == 0 || width > maxFrameWidth || height > maxFrameHeight {
 		return 0, 0, false

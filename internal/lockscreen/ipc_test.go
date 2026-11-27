@@ -1,6 +1,10 @@
 package lockscreen
 
-import "testing"
+import (
+	"errors"
+	"strings"
+	"testing"
+)
 
 func TestIPCClientIdentity(t *testing.T) {
 	want := localIdentity{
@@ -94,5 +98,31 @@ func TestHelperLaunchRequiresServiceProcess(t *testing.T) {
 		if _, _, ok := helperLaunchArgs(args); ok {
 			t.Fatalf("accepted invalid launch args %v", args)
 		}
+	}
+}
+
+// Typing on the lock screen curtain moves the console to the sign-in page;
+// the next keys fail on the old desktop until the helper follows it.
+func TestApplyFollowingRetriesOnTheNewDesktop(t *testing.T) {
+	onNew := false
+	tries, enters := 0, 0
+	apply := func() error {
+		tries++
+		if !onNew {
+			return errors.New("SendInput sent 0 of 1 events")
+		}
+		return nil
+	}
+	enter := func() error { enters++; onNew = true; return nil }
+	if err := applyFollowing(apply, enter); err != nil || tries != 2 || enters != 1 {
+		t.Fatalf("applyFollowing = %v after %d tries and %d desktop switches, want success after 2 and 1", err, tries, enters)
+	}
+	if err := applyFollowing(apply, enter); err != nil || tries != 3 || enters != 1 {
+		t.Fatalf("a working desktop was switched again: %v, %d tries, %d switches", err, tries, enters)
+	}
+	stuck := errors.New("access denied")
+	if err := applyFollowing(func() error { return stuck }, func() error { return errors.New("no desktop") }); err == nil ||
+		!strings.Contains(err.Error(), "access denied") || !strings.Contains(err.Error(), "no desktop") {
+		t.Fatalf("a failed switch should report both errors, got %v", err)
 	}
 }

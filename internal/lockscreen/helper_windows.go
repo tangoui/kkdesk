@@ -163,14 +163,14 @@ func acceptClient(want localIdentity, valid func() bool, enter func() error, sas
 		return nil
 	}
 	active := func() bool { return valid() && pipeConnected(pipe) }
-	if err := serveClient(file, proc, active, enter, sas); err != nil && active() &&
+	if err := serveClient(file, proc, active, enter, sas, logger); err != nil && active() &&
 		!errors.Is(err, io.EOF) && !errors.Is(err, windows.ERROR_BROKEN_PIPE) {
 		logger.Printf("ipc pid=%d session ended: %v", client.pid, err)
 	}
 	return nil
 }
 
-func serveClient(file *os.File, proc windows.Handle, valid func() bool, enter func() error, sas func() bool) error {
+func serveClient(file *os.File, proc windows.Handle, valid func() bool, enter func() error, sas func() bool, logger *log.Logger) error {
 	fileMap, err := windows.CreateFileMapping(windows.InvalidHandle, nil, windows.PAGE_READWRITE, 0, 2*frameSlotBytes, nil)
 	if err != nil {
 		return err
@@ -230,6 +230,8 @@ func serveClient(file *os.File, proc windows.Handle, valid func() bool, enter fu
 		}
 	}()
 	var sequence uint64
+	var injected int
+	var inputErr string // last input failure logged
 	var payload [maxSecretBytes]byte
 	defer clear(payload[:])
 	frame := make([]byte, frameSlotBytes)
@@ -261,7 +263,8 @@ func serveClient(file *os.File, proc windows.Handle, valid func() bool, enter fu
 			if native != nil {
 				hr = int32(C.kklock_grab(native, unsafe.Pointer(&frame[0]), frameSlotBytes, &width, &height, &rotation))
 			}
-			if hr == winmedia.DXGIErrorAccessLost {
+			if hr == winmedia.DXGIErrorAccessLost || hr == winmedia.DXGIErrorInvalidCall {
+				// Lost on a desktop switch; reopened on the new desktop.
 				C.kklock_close_capture(native)
 				native = nil
 			} else if hr < 0 {
@@ -291,9 +294,20 @@ func serveClient(file *os.File, proc windows.Handle, valid func() bool, enter fu
 				if err != nil {
 					return err
 				}
-				if in.Apply(e) == nil {
+				err = applyFollowing(func() error { return in.Apply(e) }, enter)
+				if err == nil {
 					held.Track(e)
 					success = true
+					injected++
+				}
+				if reason := fmt.Sprint(err); err != nil && reason != inputErr || err == nil && inputErr != "" {
+					if err != nil {
+						logger.Printf("lock screen input failed after %d events: %v", injected, err)
+						inputErr = reason
+					} else {
+						logger.Printf("lock screen input works again (%d events)", injected)
+						inputErr = ""
+					}
 				}
 			case ipcUnlock:
 				for _, e := range held.Release() {
