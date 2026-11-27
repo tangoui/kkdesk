@@ -710,8 +710,10 @@ func (p *Peer) Done() <-chan struct{} { return p.done }
 // shutdown marks the peer done and closes it in the background (safe to call
 // from pion callbacks).
 func (p *Peer) shutdown() {
-	p.doneOnce.Do(func() { close(p.done) })
-	go p.Close()
+	p.doneOnce.Do(func() {
+		close(p.done)
+		go p.Close()
+	})
 }
 
 // Close tells the other side goodbye and tears down the connection. It is

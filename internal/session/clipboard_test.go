@@ -1,10 +1,45 @@
 package session
 
 import (
+	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestClosedMetaWriteEndsPeerWhileReceiveIsBlocked(t *testing.T) {
+	host, ctl := connect(t)
+	// Keep the other channels open when the controller sees the meta reset,
+	// so the host has to detect the failed write on its own.
+	ctl.dcMeta.OnClose(func() {})
+	receiving := make(chan struct{})
+	release := make(chan struct{})
+	defer close(release)
+	host.OnClipboard(func(string) {
+		close(receiving)
+		<-release
+	})
+	if err := ctl.SendClipboard("inbound"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-receiving:
+	case <-time.After(2 * time.Second):
+		t.Fatal("meta channel did not enter receive callback")
+	}
+	if err := host.dcMeta.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := host.SendClipboard("outbound"); !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("SendClipboard = %v, want a closed pipe", err)
+	}
+	select {
+	case <-host.Done():
+	case <-time.After(time.Second):
+		t.Fatal("peer stayed active after the meta transport closed")
+	}
+}
 
 // Clipboard text goes both ways over the meta channel; text longer than one
 // chunk (and with multi-byte characters cut across chunks) arrives whole.
