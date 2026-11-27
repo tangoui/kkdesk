@@ -1109,6 +1109,11 @@ func (h *Host) stream(p *session.Peer) error {
 		<-attempts
 	}()
 	_ = p.SendLockScreen(state)
+	var cursor cursorPublisher
+	sampleCursor := func() { cursor.sample(hostCursor, p.SendCursor) }
+	sampleCursor()
+	cursorTick := time.NewTicker(time.Second / 30)
+	defer cursorTick.Stop()
 	lockTick := time.NewTicker(300 * time.Millisecond)
 	defer lockTick.Stop()
 	var accessibilityTick <-chan time.Time
@@ -1167,6 +1172,8 @@ func (h *Host) stream(p *session.Peer) error {
 			}
 		case <-accessibilityTick:
 			refreshAccessibility()
+		case <-cursorTick.C:
+			sampleCursor()
 		case <-tk.C:
 			log.Printf("kkdesk host: %s", statsSummary(rec.Last(), desktop.stats()))
 		}

@@ -84,6 +84,7 @@ type ViewerState struct {
 	Err                 string // why it ended, "" for a normal exit
 	ViewOnly            bool
 	AccessibilityDenied bool
+	Cursor              session.CursorShape
 	BitrateBps          int // 0 = auto
 	FPS                 int
 	Stats               stats.Second // latest per-second aggregate
@@ -339,6 +340,7 @@ func (v *Viewer) Connect(ctx context.Context) error {
 	p.OnUnlockResult(func(result session.UnlockResult) { v.handleUnlockResult(p, result) })
 	p.OnLockScreenChange(v.notify)
 	p.OnAccessibilityChange(v.notify)
+	p.OnCursorChange(v.notify)
 	p.OnVideo(v.video)
 	go v.watch(p)
 	addSession(v)
@@ -473,6 +475,7 @@ func (v *Viewer) State() ViewerState {
 	s.UnlockPending, s.UnlockSavedFailed, s.UnlockMessage = v.unlock.attempt != nil, v.unlock.savedFailed, v.unlock.message
 	if v.peer != nil {
 		s.AccessibilityDenied = v.peer.AccessibilityDenied()
+		s.Cursor = v.peer.Cursor()
 		s.LockScreen = v.peer.LockScreen()
 		s.CanRememberUnlock = v.cfg.unlockStore != nil && unlockAccount(v.peer.HostKey()) != ""
 	}

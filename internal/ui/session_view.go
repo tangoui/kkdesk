@@ -6,10 +6,35 @@ import (
 	"github.com/tangoui/tango/sys/menu"
 	"github.com/tangoui/tango/ui"
 	"github.com/tangoui/tango/ui/geom"
+	tin "github.com/tangoui/tango/ui/input"
 	"github.com/tangoui/tango/ui/layout"
 
 	"github.com/tangoui/kkdesk/internal/display"
+	"github.com/tangoui/kkdesk/internal/session"
 )
+
+func remoteCursor(shape session.CursorShape) tin.Cursor {
+	switch shape {
+	case session.CursorPointer:
+		return tin.CursorPointer
+	case session.CursorText:
+		return tin.CursorText
+	case session.CursorNotAllowed:
+		return tin.CursorNotAllowed
+	case session.CursorResizeEW:
+		return tin.CursorResizeEW
+	case session.CursorResizeNS:
+		return tin.CursorResizeNS
+	case session.CursorMove:
+		return tin.CursorMove
+	case session.CursorGrab:
+		return tin.CursorGrab
+	case session.CursorGrabbing:
+		return tin.CursorGrabbing
+	default:
+		return tin.CursorDefault
+	}
+}
 
 type sessionViewport struct {
 	actual     bool

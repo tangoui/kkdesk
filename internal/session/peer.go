@@ -96,6 +96,8 @@ type Peer struct {
 	receivedBye           atomic.Bool
 	accessibilityDenied   bool
 	onAccessibilityChange func()
+	cursor                CursorShape
+	onCursorChange        func()
 	// onClipboard receives clipboard text; clip joins its chunks (meta
 	// channel callback only).
 	onClipboard func(string)
@@ -320,6 +322,8 @@ func (p *Peer) handleMeta(msg webrtc.DataChannelMessage) {
 		p.handleClock(b)
 	case metaAccessibility:
 		p.handleAccessibility(msg)
+	case metaCursor:
+		p.handleCursor(msg)
 	case metaCapture:
 		if len(b) != 13 || p.isHost {
 			return
