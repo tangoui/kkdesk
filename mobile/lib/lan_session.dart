@@ -6,6 +6,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
+import 'desktop_meta.dart';
+import 'desktop_status.dart';
 import 'files/file_transfer_service.dart';
 import 'files/lan_file_transfer_service.dart';
 import 'lan_auth.dart';
@@ -29,11 +31,15 @@ class LanSession {
     required this.onStream,
     required this.onEnded,
     this.onAccessibilityChanged,
+    this.onDesktopChanged,
+    this.onUnlockResult,
   });
 
   final void Function(MediaStream stream) onStream;
   final void Function(String message) onEnded;
   final VoidCallback? onAccessibilityChanged;
+  final VoidCallback? onDesktopChanged;
+  final void Function(UnlockResult)? onUnlockResult;
   bool _accessibilityDenied = false;
   bool get accessibilityDenied => _accessibilityDenied;
 
@@ -49,6 +55,7 @@ class LanSession {
   Socket? _socket;
   RTCDataChannel? _move;
   RTCDataChannel? _input;
+  RTCDataChannel? _meta;
   LanFileTransferService? _files;
   Timer? _ping;
   Timer? _stats;
@@ -59,6 +66,23 @@ class LanSession {
   bool relay = false;
   String? firstHostCode;
   _LanPasswordExchange? _passwordExchange;
+  LanSessionMode? _mode;
+  bool _pairAnswerVerified = false;
+  bool _ended = false;
+  bool _disconnecting = false;
+  String? _hostKey;
+  String? get hostKey => _hostKey;
+  DesktopStatus _desktopStatus = const DesktopStatus();
+  DesktopStatus get desktopStatus => _desktopStatus;
+  final _initialDesktopUpdates = <Object, DesktopMeta>{};
+
+  bool get desktopReady =>
+      !_closed &&
+      !_ended &&
+      !_disconnecting &&
+      _mode == LanSessionMode.desktop &&
+      _hostKey != null &&
+      _meta?.state == RTCDataChannelState.RTCDataChannelOpen;
 
   bool get inputReady =>
       _passwordExchange == null &&
@@ -122,9 +146,11 @@ class LanSession {
         await exchange.authenticate(lanPasswordProof(password, offer, answer));
         if (_closed) throw const LanAuthFailure('连接已取消');
         firstHostCode = await identities.remember(endpoint, key);
+        if (_closed) throw const LanAuthFailure('连接已取消');
         if (exchange.ended case final reason?) throw LanAuthFailure(reason);
         _files = LanFileTransferService(exchange.files, address);
         _passwordExchange = null;
+        _admitDesktop(key);
         _startClock(exchange.meta);
         if (exchange.accessibility case final granted?) {
           _setAccessibilityDenied(!granted);
@@ -178,12 +204,15 @@ class LanSession {
             reply['status'] == 'busy' ? '电脑正在处理其他连接' : '电脑无法建立远程连接',
           );
         }
+        _pairAnswerVerified = true;
         await peer.setRemoteDescription(
           RTCSessionDescription(reply['sdp'] as String, 'answer'),
         );
         if (!await ready.future.timeout(const Duration(seconds: 10))) {
           throw const SocketException('无法建立 WebRTC 连接');
         }
+        if (_closed || _ended) throw const PairFailure('连接已取消');
+        _admitDesktop(pair.transcript.hostKey);
         if (mode == LanSessionMode.files) await files;
       } catch (_) {
         await _resetPeer();
@@ -197,7 +226,11 @@ class LanSession {
 
   Future<void> _resetPeer() async {
     _ping?.cancel();
-    _move = _input = null;
+    _move = _input = _meta = null;
+    _pairAnswerVerified = false;
+    _hostKey = null;
+    _initialDesktopUpdates.clear();
+    _desktopStatus = const DesktopStatus();
     final files = _files;
     final peer = _peer;
     _files = null;
@@ -222,6 +255,7 @@ class LanSession {
       throw StateError('连接已取消');
     }
     _peer = peer;
+    _mode = mode;
     final exchange = _passwordExchange;
     peer.onTrack = (event) {
       if (!_closed && event.track.kind == 'video' && event.streams.isNotEmpty) {
@@ -244,9 +278,9 @@ class LanSession {
             pending.complete(false);
           } else if (_passwordExchange != null) {
             exchange!.stop('远程连接已断开');
-          } else if (!_closed) {
+          } else if (identical(_peer, peer)) {
             unawaited(_files?.close());
-            onEnded('远程连接已断开');
+            _end('远程连接已断开');
           }
         default:
           break;
@@ -263,6 +297,7 @@ class LanSession {
     _move = await peer.createDataChannel('input-move', _UnreliableChannel());
     _input = await peer.createDataChannel('input', RTCDataChannelInit());
     final meta = await peer.createDataChannel('meta', RTCDataChannelInit());
+    _meta = meta;
     final filesChannel = await peer.createDataChannel(
       'files',
       RTCDataChannelInit()..ordered = true,
@@ -277,11 +312,15 @@ class LanSession {
     }
     if (_closed) throw const LanAuthFailure('连接已取消');
     meta.onDataChannelState = (state) {
+      if (_closed || _peer != peer) return;
       _ping?.cancel();
       if (state == RTCDataChannelState.RTCDataChannelOpen &&
           _passwordExchange == null &&
           !_closed) {
         _startClock(meta);
+      }
+      if (_hostKey != null && mode == LanSessionMode.desktop) {
+        onDesktopChanged?.call();
       }
     };
     meta.onMessage = (message) {
@@ -289,18 +328,26 @@ class LanSession {
       if (!message.isBinary ||
           message.binary.isEmpty ||
           _closed ||
+          _ended ||
           _peer != peer) {
         return;
       }
       final bytes = message.binary;
       if (_passwordExchange != null) {
+        if (mode == LanSessionMode.desktop && exchange!.accepted) {
+          _receiveDesktop(bytes);
+        }
         exchange!.receive(bytes);
         return;
       }
       if (bytes[0] == 0x62) {
-        onEnded(_byeReason(bytes));
+        _end(_byeReason(bytes));
       } else if (decodeAccessibility(bytes) case final granted?) {
         _setAccessibilityDenied(!granted);
+      } else if (mode == LanSessionMode.desktop &&
+          (_hostKey != null || _pairAnswerVerified) &&
+          _receiveDesktop(bytes)) {
+        return;
       } else if (_measure && bytes[0] == 0x63 && bytes.length == 13) {
         final capture = ByteData.sublistView(bytes);
         _captures[capture.getUint32(1)] = capture.getInt64(5);
@@ -336,6 +383,95 @@ class LanSession {
       }
     }
     return peer;
+  }
+
+  void _admitDesktop(String key) {
+    if (_mode != LanSessionMode.desktop) return;
+    _hostKey = key;
+    for (final update in _initialDesktopUpdates.values) {
+      _desktopStatus = _desktopStatus.apply(update);
+    }
+    _initialDesktopUpdates.clear();
+    onDesktopChanged?.call();
+  }
+
+  bool _receiveDesktop(Uint8List bytes) {
+    final update = DesktopMeta.decode(bytes);
+    if (update == null) return false;
+    if (_hostKey == null) {
+      // Keep only the latest state per kind while authentication finishes.
+      if (update is! UnlockReply) {
+        final key = update is PrivacyReply ? update.kind : update.runtimeType;
+        _initialDesktopUpdates
+          ..remove(key)
+          ..[key] = update;
+      }
+    } else if (update is UnlockReply) {
+      onUnlockResult?.call(update.result);
+    } else {
+      if (update is CursorUpdate && update.shape == _desktopStatus.cursor) {
+        return true;
+      }
+      _desktopStatus = _desktopStatus.apply(update);
+      onDesktopChanged?.call();
+    }
+    return true;
+  }
+
+  void _end(String reason) {
+    if (_ended || _closed || _disconnecting) return;
+    _ended = true;
+    onEnded(reason);
+  }
+
+  Future<bool> setPrivacyScreen(bool on) =>
+      _sendDesktop(encodePrivacyRequest(on));
+
+  Future<bool> setLockAfterDisconnect(bool on) =>
+      _sendDesktop(encodeLockAfterDisconnectRequest(on));
+
+  Future<bool> lockAndDisconnect() => _sendDesktop(encodeLockNowRequest());
+
+  Future<bool> sendUnlock(Uint8List secret) async {
+    if (!desktopReady || desktopStatus.lockScreen != LockScreenState.ready) {
+      return false;
+    }
+    final frame = encodeUnlockRequest(secret);
+    if (frame == null) return false;
+    try {
+      return await _sendDesktop(frame);
+    } finally {
+      frame.fillRange(1, frame.length, 0);
+    }
+  }
+
+  Future<bool> _sendDesktop(Uint8List bytes) async {
+    if (!desktopReady) return false;
+    try {
+      await _meta!.send(RTCDataChannelMessage.fromBinary(bytes));
+      return true;
+    } on Exception {
+      return false;
+    }
+  }
+
+  Future<void> disconnect() async {
+    if (_disconnecting || _closed) return;
+    final meta = desktopReady ? _meta : null;
+    _disconnecting = true;
+    try {
+      if (meta != null) {
+        await meta
+            .send(RTCDataChannelMessage.fromBinary(Uint8List.fromList([0x62])))
+            .timeout(const Duration(milliseconds: 150));
+        // Give the empty bye time to arrive before tearing down WebRTC.
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+      }
+    } on Exception {
+      // Close even if the data channel is already gone.
+    } finally {
+      await close();
+    }
   }
 
   void _publishTrack(MediaStream stream, String? trackId) {
@@ -459,7 +595,7 @@ class LanSession {
     try {
       await channel!.send(RTCDataChannelMessage.fromBinary(data));
     } catch (error) {
-      if (!_closed) onEnded('数据通道已断开');
+      _end('数据通道已断开');
     }
   }
 
@@ -500,6 +636,7 @@ class _LanPasswordExchange {
   String? ended;
   RTCTrackEvent? track;
   bool? accessibility;
+  bool accepted = false;
 
   Future<void> authenticate(Uint8List proof) async {
     try {
@@ -529,7 +666,10 @@ class _LanPasswordExchange {
     if (bytes[0] == 0x62) {
       stop(_byeReason(bytes));
     } else if (LanAuthResult.decode(bytes) case final result?) {
-      if (!_reply.isCompleted) _reply.complete(result);
+      if (!_reply.isCompleted) {
+        accepted = result.failure == null;
+        _reply.complete(result);
+      }
     } else if (decodeAccessibility(bytes) case final granted?) {
       accessibility = granted;
     }

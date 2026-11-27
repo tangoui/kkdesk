@@ -190,6 +190,15 @@ class _PreviewSession extends LanRemoteSession {
 
 class _Pair implements AuthenticatedPair {
   @override
+  final transcript = const PairTranscript(
+    purpose: 'connect',
+    clientNonce: '',
+    hostNonce: '',
+    clientKey: '',
+    hostKey: '',
+  );
+
+  @override
   final PairTransport transport = _Transport();
 
   @override

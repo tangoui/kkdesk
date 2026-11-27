@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
+import 'desktop_status.dart';
 import 'files/file_transfer_service.dart';
 import 'lan_auth.dart';
 import 'lan_session.dart';
@@ -10,7 +11,7 @@ import 'mobile_services.dart';
 import 'pairing/transport.dart';
 import 'touch_controller.dart';
 
-class LanRemoteSession extends ChangeNotifier implements RemoteSession {
+class LanRemoteSession extends ChangeNotifier implements DesktopRemoteSession {
   LanRemoteSession(this.address, this._password) : _paired = null;
   LanRemoteSession.paired(this.address, this._paired) : _password = '';
 
@@ -27,6 +28,7 @@ class LanRemoteSession extends ChangeNotifier implements RemoteSession {
     onStream: _onStream,
     onEnded: _onEnded,
     onAccessibilityChanged: notifyListeners,
+    onDesktopChanged: notifyListeners,
   );
   RemoteStatus _status = const RemoteStatus();
   Timer? _stats;
@@ -39,6 +41,18 @@ class LanRemoteSession extends ChangeNotifier implements RemoteSession {
   static const firstFrameTimeout = Duration(seconds: 45);
   Future<void>? _initializing;
   bool _closed = false;
+
+  @override
+  DesktopStatus get desktopStatus => _session.desktopStatus;
+  @override
+  bool get desktopReady => !_closed && _session.desktopReady;
+  @override
+  Future<bool> setPrivacyScreen(bool on) => _session.setPrivacyScreen(on);
+  @override
+  Future<bool> setLockAfterDisconnect(bool on) =>
+      _session.setLockAfterDisconnect(on);
+  @override
+  Future<bool> lockAndDisconnect() => _session.lockAndDisconnect();
 
   @override
   RemoteStatus get status => RemoteStatus(
@@ -208,7 +222,7 @@ class LanRemoteSession extends ChangeNotifier implements RemoteSession {
     try {
       await _initializing;
       _renderer.srcObject = null;
-      await _session.close();
+      await _session.disconnect();
     } finally {
       try {
         await _renderer.dispose();
