@@ -223,6 +223,9 @@ func NewHost(cfg HostConfig, notify func()) *Host {
 	if cfg.startDesktop == nil {
 		cfg.startDesktop = capture.Start
 	}
+	if cfg.startLockScreen == nil {
+		cfg.startLockScreen = lockscreen.PlatformStart()
+	}
 	if cfg.captureHelp == nil {
 		cfg.captureHelp = CaptureHelp
 	}

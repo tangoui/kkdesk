@@ -37,6 +37,7 @@ import (
 
 	"github.com/tangoui/kkdesk/internal/app"
 	"github.com/tangoui/kkdesk/internal/config"
+	"github.com/tangoui/kkdesk/internal/lockscreen"
 	"github.com/tangoui/kkdesk/internal/pairing"
 	"github.com/tangoui/kkdesk/internal/privacy"
 	"github.com/tangoui/kkdesk/internal/rendezvous"
@@ -80,6 +81,13 @@ func appVersion() string {
 }
 
 func main() {
+	if handled, err := lockscreen.Dispatch(os.Args[1:]); handled {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "kkdesk:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	app.Version = appVersion()
 	app.PrepareProcess() // Windows: per-monitor DPI awareness, before any window or display query
 	o, fs, err := parseFlags(os.Args[1:])
