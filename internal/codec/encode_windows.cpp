@@ -250,7 +250,10 @@ HRESULT configure(mmEncW *e, IMFDXGIDeviceManager *mgr) {
             e->outId = out;
         }
     }
-    e->mft->QueryInterface(IID_PPV_ARGS(&e->api));
+    // ICodecAPI's IID spelled out: older mingw-w64 headers (Ubuntu 24.04)
+    // declare no __uuidof for it, which fails at link time.
+    static const GUID kIID_ICodecAPI = {0x901db4c7, 0x31ce, 0x41a2, {0x85, 0xdc, 0x8f, 0xa0, 0xbf, 0x41, 0xb8, 0xda}};
+    e->mft->QueryInterface(kIID_ICodecAPI, reinterpret_cast<void **>(&e->api));
     if (mgr) {
         hr = e->mft->ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER, (ULONG_PTR)mgr);
         if (FAILED(hr)) {
