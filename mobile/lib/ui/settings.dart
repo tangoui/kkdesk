@@ -384,7 +384,7 @@ class _PairedDevicesState extends State<_PairedDevices> {
             padding: const EdgeInsets.fromLTRB(24, 12, 24, 16),
             child: Center(
               child: Text(
-                '免确认需在电脑端「设置 → 安全 → 已配对手机」中开启',
+                '免确认需在电脑端「设置 → 已配对手机」中开启',
                 style: TextStyle(color: context.muted, fontSize: 13),
                 textAlign: TextAlign.center,
               ),
