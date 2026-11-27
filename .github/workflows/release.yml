@@ -174,4 +174,8 @@ jobs:
         run: |
           notes="docs/releases/$VERSION.md"
           [ -f "$notes" ] || { echo "kkdesk $VERSION" > "$RUNNER_TEMP/notes.md"; notes="$RUNNER_TEMP/notes.md"; }
-          gh release create "$GITHUB_REF_NAME" release/* --title "kkdesk $VERSION" --notes-file "$notes" --verify-tag
+          # A version with a pre-release suffix (0.1.0-beta.1) is published as a
+          # pre-release: it is not "latest", so installed apps do not update to it.
+          pre=()
+          case "$VERSION" in *-*) pre=(--prerelease --latest=false) ;; esac
+          gh release create "$GITHUB_REF_NAME" release/* --title "kkdesk $VERSION" --notes-file "$notes" --verify-tag "${pre[@]}"
