@@ -30,7 +30,7 @@ class LanRemoteSession extends ChangeNotifier implements DesktopRemoteSession {
     onStream: _onStream,
     onEnded: _onEnded,
     onAccessibilityChanged: notifyListeners,
-    onDesktopChanged: notifyListeners,
+    onDesktopChanged: _onDesktopChanged,
     onUnlockResult: (result) => unawaited(unlock.receive(result)),
   );
   RemoteStatus _status = const RemoteStatus();
@@ -44,6 +44,7 @@ class LanRemoteSession extends ChangeNotifier implements DesktopRemoteSession {
   static const firstFrameTimeout = Duration(seconds: 45);
   Future<void>? _initializing;
   bool _closed = false;
+  bool _negotiated = false;
 
   @override
   late final unlock = RemoteUnlock(
@@ -112,11 +113,8 @@ class LanRemoteSession extends ChangeNotifier implements DesktopRemoteSession {
         await _session.connect(address, _password);
         if (!_closed && firstHostCode != null) notifyListeners();
       }
-      if (_closed || status.phase != RemotePhase.connecting) return;
-      _frameTimeout = Timer(firstFrameTimeout, () {
-        _onEnded('等待远程画面超时');
-        unawaited(_session.close());
-      });
+      _negotiated = true;
+      _updateFrameTimeout();
     } catch (error) {
       _onEnded(
         error is LanAuthFailure
@@ -132,6 +130,27 @@ class LanRemoteSession extends ChangeNotifier implements DesktopRemoteSession {
             : '无法连接已配对的电脑，请检查电脑和跨网服务是否在线。',
         identityChanged: error is LanIdentityChanged ? error : null,
       );
+    }
+  }
+
+  void _onDesktopChanged() {
+    if (_closed) return;
+    _updateFrameTimeout();
+    notifyListeners();
+  }
+
+  void _updateFrameTimeout() {
+    if (_closed || !_negotiated || _status.phase != RemotePhase.connecting) {
+      return;
+    }
+    if (desktopStatus.lockReason != null) {
+      _frameTimeout?.cancel();
+      _frameTimeout = null;
+    } else {
+      _frameTimeout ??= Timer(firstFrameTimeout, () {
+        _onEnded('等待远程画面超时');
+        unawaited(_session.close());
+      });
     }
   }
 

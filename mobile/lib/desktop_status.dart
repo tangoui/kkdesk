@@ -17,6 +17,20 @@ class DesktopStatus {
   final LockScreenState lockScreen;
   final RemoteCursor cursor;
 
+  String? get lockReason => switch (lockScreen) {
+    LockScreenState.unknown || LockScreenState.unlocked => null,
+    LockScreenState.ready => '对方电脑已锁屏',
+    LockScreenState.componentUnavailable => '对方电脑未安装锁屏远控组件',
+    LockScreenState.platformUnsupported => '对方系统暂不支持锁屏远程操作',
+    LockScreenState.signatureRequired => '锁屏远控不可用（需要正式签名的 kkdesk）',
+    LockScreenState.wrongInstallLocation =>
+      '对方的 kkdesk 未从安装位置运行，请在对方电脑上从安装位置启动 kkdesk',
+    LockScreenState.serviceUnavailable => '对方锁屏远控服务未运行或无法连接助手',
+    LockScreenState.componentNeedsUpdate => '请在对方电脑上更新锁屏远控组件',
+    LockScreenState.componentError => '对方锁屏远控组件出错，详见对方日志',
+    LockScreenState.approvalRequired => '请在对方电脑的系统设置中批准锁屏远控组件',
+  };
+
   DesktopStatus apply(DesktopMeta update) => switch (update) {
     PrivacyReply() => _applyPrivacy(update),
     LockScreenUpdate(:final state) => DesktopStatus(
