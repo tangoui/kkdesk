@@ -437,6 +437,9 @@ func (w *sessionWin) screen(c *ui.Context, st app.ViewerState, viewport ui.ID, f
 		Covered:   cover,
 	}, opts...)
 	nh.Bg(theme.Hex("#000000"))
+	if st.Phase != app.ViewerClosed && !w.unlockOpen {
+		nh.Cursor(remoteCursor(st.Cursor))
+	}
 	// PassInput takes the box out of the Tab order; the remote screen still
 	// needs keyboard focus to forward keys, so make it focusable again and
 	// focus it (on open and on every click).
