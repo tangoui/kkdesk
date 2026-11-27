@@ -78,6 +78,15 @@ func ResetDevice() {
 	}
 	dev.retired = append(dev.retired, dev.manager, dev.device)
 	dev.device, dev.manager = nil, nil
+	dev.gen++ // users notice at once, before anyone creates the next device
+}
+
+// Generation returns the current device generation without creating a
+// device: it changes when the device is replaced (Device, ResetDevice).
+func Generation() uint64 {
+	dev.mu.Lock()
+	defer dev.mu.Unlock()
+	return dev.gen
 }
 
 // AdapterLUID returns the LUID (HighPart<<32 | LowPart) of the adapter

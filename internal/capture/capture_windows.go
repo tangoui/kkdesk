@@ -220,6 +220,14 @@ func (s *winSession) run() {
 			continue
 		}
 
+		if winmedia.Generation() != st.gen {
+			// The shared device was replaced (lost, or reset after a display
+			// change): the encoder moves to the new one, so must we.
+			winmedia.Logf("capture: D3D11 device replaced; re-creating the duplication on it")
+			st.closeAll()
+			continue
+		}
+
 		interval := minFrameInterval(int(s.fps.Load()))
 		if wait := time.Until(lastDeliver.Add(interval)); wait > 0 {
 			if !s.sleep(wait) {

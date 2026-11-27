@@ -20,3 +20,14 @@ func TestResetDeviceGivesNewGeneration(t *testing.T) {
 		t.Fatalf("after ResetDevice: generation %d -> %d, device %#x -> %#x; want a new device", g1, g2, d1, d2)
 	}
 }
+
+func TestGeneration(t *testing.T) {
+	if _, _, _, err := Device(); err != nil {
+		t.Skipf("no D3D11 device: %v", err)
+	}
+	g := Generation()
+	ResetDevice()
+	if Generation() == g {
+		t.Fatal("Generation did not change after ResetDevice")
+	}
+}
