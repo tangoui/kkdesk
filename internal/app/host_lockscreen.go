@@ -107,8 +107,14 @@ func (d *hostDesktop) startLocked(ctx context.Context) error {
 		}
 		state := lockScreenStartFailure(err)
 		d.mu.Lock()
+		changed := d.unavailable != state
 		d.unavailable = state
 		d.mu.Unlock()
+		if changed {
+			// Start errors contain component, OS and IPC details only.
+			// Unlock requests use a separate path.
+			log.Printf("kkdesk host: start lock screen capture: %v", err)
+		}
 		d.h.setLockScreenFailure(state)
 		return nil
 	}

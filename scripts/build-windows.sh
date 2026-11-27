@@ -99,7 +99,7 @@ kkdesk Windows 测试版（${version}，$(date +%Y-%m-%d) 构建）
        kkdesk -connect <Windows 的 IP>:21118 -password <6 位密码> -log view.jsonl
 
 5) 测试完在 Windows 上关闭 kkdesk 窗口（或在 PowerShell 里按 Ctrl+C），
-   把同目录下的 host.jsonl 和 kkdesk.log 发回来。
+   把当前目录的 host.jsonl 和 %APPDATA%\kkdesk\kkdesk.log 发回来。
 
 已知限制：
 - 以管理员身份运行的窗口和未锁屏时的 UAC、Ctrl+Alt+Del 界面无法被普通权限的主程序远程控制；

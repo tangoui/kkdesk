@@ -23,12 +23,13 @@ kkdesk -connect addr -password pw [-view-only | -files] [-log file]
 | `-maxwidth N` | `1920` | 被控端：采集画面缩小到不超过这个宽度，0 表示原始分辨率。 |
 | `-autoaccept` | `false` | 被控端：不询问，直接接受连接（测量用）。 |
 | `-log file` | | 把每秒的统计数据写成 JSON Lines。 |
-| `-applog file` | Windows：`kkdesk.log`；macOS：不写 | 人类可读的诊断日志，`""` 表示不写。 |
+| `-applog file` | Windows 和 macOS 的配置目录下的 `kkdesk.log` | 人类可读的诊断日志，`""` 表示不写。 |
 | `-selftest` | | 不开界面、不联网，检查屏幕采集、编码和输入注入，写出 `kkdesk-selftest.log` 和 `selftest.h264` 后退出，退出码 0 表示通过。 |
 
 ## 说明
 
-- Windows 上 `kkdesk.log`、`kkdesk-selftest.log`、`selftest.h264` 写在 `kkdesk.exe` 所在目录，目录不可写时写到当前目录；macOS 上写到当前目录。
+- 诊断日志所在的配置目录默认为 Windows 的 `%APPDATA%\kkdesk` 或 macOS 的 `~/Library/Application Support/kkdesk`。
+- Windows 上 `kkdesk-selftest.log` 和 `selftest.h264` 写在 `kkdesk.exe` 所在目录，目录不可写时写到当前目录。macOS 上写到当前目录。
 
 - 给了 `-host` 或 `-password` 时，临时密码在本次运行中不更换，方便测量脚本重复连接。
 - `-host` 模式不同步剪贴板，避免测量时动到系统剪贴板。

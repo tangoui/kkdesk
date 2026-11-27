@@ -114,6 +114,11 @@ func main() {
 func run(o options) error {
 	var appLog *app.AppLog
 	if o.appLog != "" {
+		if !o.set["applog"] {
+			if err := os.MkdirAll(filepath.Dir(o.appLog), 0700); err != nil {
+				fmt.Fprintln(os.Stderr, "kkdesk: diagnostic log directory:", err)
+			}
+		}
 		l, err := app.OpenAppLog(o.appLog)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "kkdesk: diagnostic log:", err)
