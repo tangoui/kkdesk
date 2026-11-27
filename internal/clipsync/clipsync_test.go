@@ -2,6 +2,8 @@ package clipsync
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -221,6 +223,46 @@ func TestRetriesFailedSend(t *testing.T) {
 	time.Sleep(5 * tick)
 	if got := out.list(); len(got) != 1 || got[0] != "copied" {
 		t.Fatalf("sent %q, want [copied] once", got)
+	}
+}
+
+func TestClosedPipeStopsSending(t *testing.T) {
+	b := &fakeBoard{}
+	var attempts atomic.Int32
+	s := Start(Options{Local: b, Interval: tick, Send: func(string) error {
+		attempts.Add(1)
+		return fmt.Errorf("transport: %w", io.ErrClosedPipe)
+	}})
+	defer s.Stop()
+	b.set("first copy")
+	waitFor(t, "first send", func() bool { return attempts.Load() > 0 })
+	b.set("second copy")
+	time.Sleep(5 * tick)
+	if got := attempts.Load(); got != 1 {
+		t.Fatalf("send attempts = %d, want 1 after terminal failure", got)
+	}
+}
+
+func TestSendErrorsDeduplicatedAcrossPolls(t *testing.T) {
+	b := &fakeBoard{}
+	var attempts atomic.Int32
+	var logs sent
+	s := Start(Options{Local: b, Interval: tick, Send: func(string) error {
+		switch attempts.Add(1) {
+		case 1, 2:
+			return errors.New("channel busy")
+		case 3, 4:
+			return errors.New("channel blocked")
+		default:
+			return nil
+		}
+	}, Logf: func(format string, args ...any) { _ = logs.send(fmt.Sprintf(format, args...)) }})
+	defer s.Stop()
+	b.set("copied")
+	waitFor(t, "successful retry", func() bool { return attempts.Load() >= 5 })
+	s.Stop()
+	if got := strings.Join(logs.list(), "\n"); got != "send clipboard: channel busy\nsend clipboard: channel blocked" {
+		t.Fatalf("logged %q", got)
 	}
 }
 
