@@ -133,6 +133,9 @@ func (s lockService) watch(ctx context.Context) {
 		}
 	}()
 	var retryAt time.Time
+	// Moving the helper's token into the console session needs
+	// SeTcbPrivilege; LocalSystem usually has it enabled, but not always.
+	s.logger.Printf("SeTcbPrivilege: %s", enableTCB())
 	for {
 		select {
 		case <-ctx.Done():
@@ -190,16 +193,16 @@ func (h *helperProcess) exited() bool {
 func startHelper(exe string, session uint32) (*helperProcess, error) {
 	var original, primary windows.Token
 	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_DUPLICATE, &original); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open service token: %w", err)
 	}
 	defer original.Close()
 	access := uint32(windows.TOKEN_ASSIGN_PRIMARY | windows.TOKEN_DUPLICATE | windows.TOKEN_QUERY | windows.TOKEN_ADJUST_SESSIONID)
 	if err := windows.DuplicateTokenEx(original, access, nil, windows.SecurityImpersonation, windows.TokenPrimary, &primary); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("duplicate service token: %w", err)
 	}
 	defer primary.Close()
 	if err := windows.SetTokenInformation(primary, windows.TokenSessionId, (*byte)(unsafe.Pointer(&session)), uint32(unsafe.Sizeof(session))); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("move token to session %d (needs SeTcbPrivilege; %s): %w", session, tcbState(), err)
 	}
 	ready := false
 	var nonce [16]byte
@@ -207,7 +210,7 @@ func startHelper(exe string, session uint32) (*helperProcess, error) {
 	sasName := hex.EncodeToString(nonce[:])
 	sas, err := createSASEvent(sasName)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create SAS event: %w", err)
 	}
 	defer func() {
 		if !ready {
@@ -228,4 +231,58 @@ func startHelper(exe string, session uint32) (*helperProcess, error) {
 	defer windows.CloseHandle(proc.Thread)
 	ready = true
 	return &helperProcess{session: session, proc: proc.Process, sas: sas}, nil
+}
+
+// tcbState reports whether the service's token holds SeTcbPrivilege and
+// whether it is enabled (diagnostics for the helper start).
+func tcbState() string {
+	var token windows.Token
+	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_QUERY, &token); err != nil {
+		return "token unreadable: " + err.Error()
+	}
+	defer token.Close()
+	var luid windows.LUID
+	if err := windows.LookupPrivilegeValue(nil, windows.StringToUTF16Ptr("SeTcbPrivilege"), &luid); err != nil {
+		return "lookup failed: " + err.Error()
+	}
+	var n uint32
+	_ = windows.GetTokenInformation(token, windows.TokenPrivileges, nil, 0, &n)
+	if n == 0 {
+		return "privileges unreadable"
+	}
+	buf := make([]byte, n)
+	if err := windows.GetTokenInformation(token, windows.TokenPrivileges, &buf[0], n, &n); err != nil {
+		return "privileges unreadable: " + err.Error()
+	}
+	privs := (*windows.Tokenprivileges)(unsafe.Pointer(&buf[0]))
+	for _, p := range unsafe.Slice(&privs.Privileges[0], privs.PrivilegeCount) {
+		if p.Luid == luid {
+			if p.Attributes&windows.SE_PRIVILEGE_ENABLED != 0 {
+				return "present, enabled"
+			}
+			return "present, disabled"
+		}
+	}
+	return "absent"
+}
+
+// enableTCB enables SeTcbPrivilege on the service's token if it holds it,
+// and reports the state before and after.
+func enableTCB() string {
+	before := tcbState()
+	var token windows.Token
+	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_ADJUST_PRIVILEGES|windows.TOKEN_QUERY, &token); err != nil {
+		return before + "; open for adjust: " + err.Error()
+	}
+	defer token.Close()
+	var luid windows.LUID
+	if err := windows.LookupPrivilegeValue(nil, windows.StringToUTF16Ptr("SeTcbPrivilege"), &luid); err != nil {
+		return before + "; lookup: " + err.Error()
+	}
+	tp := windows.Tokenprivileges{PrivilegeCount: 1}
+	tp.Privileges[0] = windows.LUIDAndAttributes{Luid: luid, Attributes: windows.SE_PRIVILEGE_ENABLED}
+	if err := windows.AdjustTokenPrivileges(token, false, &tp, 0, nil, nil); err != nil {
+		return before + "; enable: " + err.Error()
+	}
+	return "before: " + before + "; after: " + tcbState()
 }
