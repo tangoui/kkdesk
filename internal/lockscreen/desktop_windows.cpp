@@ -31,16 +31,27 @@ int kklock_state(uint32_t session) {
     return state;
 }
 
-uintptr_t kklock_open_desktop(void) {
-    return reinterpret_cast<uintptr_t>(OpenInputDesktop(0, FALSE, DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS));
+uintptr_t kklock_open_desktop(uint32_t *error) {
+    HDESK desktop = OpenInputDesktop(0, FALSE, DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS);
+    *error = desktop ? 0 : GetLastError();
+    return reinterpret_cast<uintptr_t>(desktop);
 }
 
-int kklock_enter_desktop(uintptr_t desktop) {
-    return SetThreadDesktop(reinterpret_cast<HDESK>(desktop));
+int kklock_enter_desktop(uintptr_t desktop, uint32_t *error) {
+    BOOL ok = SetThreadDesktop(reinterpret_cast<HDESK>(desktop));
+    *error = ok ? 0 : GetLastError();
+    return ok;
 }
 
 void kklock_close_desktop(uintptr_t desktop) {
     CloseDesktop(reinterpret_cast<HDESK>(desktop));
+}
+
+int kklock_desktop_name(uintptr_t desktop, uint16_t *name, uint32_t count) {
+    if (!count) return 0;
+    name[0] = 0;
+    return GetUserObjectInformationW(reinterpret_cast<HDESK>(desktop), UOI_NAME, name,
+        static_cast<DWORD>((count - 1) * sizeof(uint16_t)), nullptr);
 }
 
 int kklock_is_winlogon(uintptr_t desktop) {

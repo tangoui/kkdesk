@@ -35,6 +35,26 @@ func TestIPCSecureDesktopRequiresLockedConsole(t *testing.T) {
 	}
 }
 
+// The helper logs why it stops serving, so each refusal names its cause.
+func TestLockedDesktopProblemNamesTheCause(t *testing.T) {
+	for _, tc := range []struct {
+		session, active uint32
+		locked          bool
+		desktop, want   string
+	}{
+		{3, 3, true, "Winlogon", ""},
+		{3, 3, true, "winlogon", ""},
+		{^uint32(0), 3, true, "Winlogon", "no session"},
+		{3, 4, true, "Winlogon", "session 3 is not the active console (4)"},
+		{3, 3, false, "Winlogon", "session 3 is not locked"},
+		{3, 3, true, "Default", `input desktop is "Default", not Winlogon`},
+	} {
+		if got := lockedDesktopProblem(tc.session, tc.active, tc.locked, tc.desktop); got != tc.want {
+			t.Errorf("lockedDesktopProblem(%d, %d, %v, %q) = %q, want %q", tc.session, tc.active, tc.locked, tc.desktop, got, tc.want)
+		}
+	}
+}
+
 func TestIPCFrameBoundsAndSlots(t *testing.T) {
 	a, n, ok := frameBounds(1920, 1080, 1)
 	if !ok || a != frameSlotBytes || n != 1920*1080*4 {

@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"strconv"
 	"strings"
@@ -40,7 +41,23 @@ func (i localIdentity) matches(console localIdentity) bool {
 }
 
 func allowLockedDesktop(session, active uint32, locked bool, desktop string) bool {
-	return session != ^uint32(0) && session == active && locked && strings.EqualFold(desktop, "Winlogon")
+	return lockedDesktopProblem(session, active, locked, desktop) == ""
+}
+
+// lockedDesktopProblem says why the helper may not serve a session, or ""
+// when it is the active console, locked, on the Winlogon desktop.
+func lockedDesktopProblem(session, active uint32, locked bool, desktop string) string {
+	switch {
+	case session == ^uint32(0):
+		return "no session"
+	case session != active:
+		return fmt.Sprintf("session %d is not the active console (%d)", session, active)
+	case !locked:
+		return fmt.Sprintf("session %d is not locked", session)
+	case !strings.EqualFold(desktop, "Winlogon"):
+		return fmt.Sprintf("input desktop is %q, not Winlogon", desktop)
+	}
+	return ""
 }
 
 func frameBounds(width, height uint32, sequence uint64) (offset, size int, ok bool) {

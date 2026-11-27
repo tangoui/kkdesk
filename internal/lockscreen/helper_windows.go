@@ -13,10 +13,12 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"os"
 	"runtime"
+	"syscall"
 	"time"
 	"unicode/utf16"
 	"unicode/utf8"
@@ -51,30 +53,57 @@ func runHelper(exe string, servicePID uint32, sasName string, logger *log.Logger
 		return err
 	}
 	want := localIdentity{session: session, sid: sid, image: exe}
-	valid := func() bool {
-		if !allowLockedDesktop(session, windows.WTSGetActiveConsoleSessionId(), windowsSessionLocked(session), "Winlogon") {
-			return false
+	// problem says why the helper may not serve now; a change of reason
+	// is logged so a refusal can be traced.
+	reported := "-"
+	problem := func() string {
+		reason := func() string {
+			desktop := "?"
+			var code C.uint32_t
+			if desk := C.kklock_open_desktop(&code); desk == 0 {
+				desktop = fmt.Sprintf("(OpenInputDesktop: %v)", syscall.Errno(code))
+			} else {
+				var name [128]uint16
+				if C.kklock_desktop_name(desk, (*C.uint16_t)(unsafe.Pointer(&name[0])), C.uint32_t(len(name))) != 0 {
+					desktop = windows.UTF16ToString(name[:])
+				}
+				C.kklock_close_desktop(desk)
+			}
+			if p := lockedDesktopProblem(session, windows.WTSGetActiveConsoleSessionId(), windowsSessionLocked(session), desktop); p != "" {
+				return p
+			}
+			if current, err := consoleUser(session); err != nil {
+				return fmt.Sprintf("console user: %v", err)
+			} else if current != sid {
+				return "the console user changed"
+			}
+			return ""
+		}()
+		if reason != reported {
+			if reason == "" {
+				logger.Printf("helper session %d: serving the locked console", session)
+			} else {
+				logger.Printf("helper session %d: not serving: %s", session, reason)
+			}
+			reported = reason
 		}
-		if current, err := consoleUser(session); err != nil || current != sid {
-			return false
-		}
-		desk := C.kklock_open_desktop()
-		if desk == 0 {
-			return false
-		}
-		defer C.kklock_close_desktop(desk)
-		return C.kklock_is_winlogon(desk) != 0
+		return reason
 	}
+	valid := func() bool { return problem() == "" }
 	if !valid() {
 		return ErrUnavailable
 	}
-	desk := C.kklock_open_desktop()
+	var code C.uint32_t
+	desk := C.kklock_open_desktop(&code)
 	if desk == 0 {
-		return ErrUnavailable
+		return fmt.Errorf("open input desktop: %w", syscall.Errno(code))
 	}
 	defer C.kklock_close_desktop(desk)
-	if C.kklock_is_winlogon(desk) == 0 || C.kklock_enter_desktop(desk) == 0 {
+	if C.kklock_is_winlogon(desk) == 0 {
 		return ErrUnavailable
+	}
+	if C.kklock_enter_desktop(desk, &code) == 0 {
+		return fmt.Errorf("enter the Winlogon desktop: %w", syscall.Errno(code))
 	}
 	sasEvent, err := windows.OpenEvent(windows.EVENT_MODIFY_STATE, false, sasEventName(sasName))
 	if err != nil {
