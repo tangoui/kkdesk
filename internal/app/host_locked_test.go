@@ -24,7 +24,7 @@ func TestLockScreenReportsUnsupportedWithNoHelper(t *testing.T) {
 		screenLocked: func() (bool, error) { return true, nil },
 		startDesktop: noCapture(t),
 		startLockScreen: func(context.Context, capture.Options, func(capture.Frame)) (lockscreen.Session, error) {
-			return nil, lockscreen.ErrUnavailable
+			return nil, lockscreen.ErrNotInstalled
 		},
 	})
 	waitFor(t, "unsupported lock screen", func() bool { return lockScreenUnavailable(p.LockScreen()) })
@@ -39,6 +39,20 @@ func TestLockScreenReportsSignatureRequirement(t *testing.T) {
 		},
 	})
 	waitFor(t, "signature required", func() bool { return p.LockScreen() == session.LockScreenSignatureRequired })
+}
+
+func TestLockScreenReportsUnexpectedComponentFailure(t *testing.T) {
+	_, p := startTestLockHost(t, HostConfig{
+		screenLocked: func() (bool, error) { return true, nil },
+		startDesktop: noCapture(t),
+		startLockScreen: func(context.Context, capture.Options, func(capture.Frame)) (lockscreen.Session, error) {
+			return nil, errors.New("map frames: access denied")
+		},
+	})
+	waitFor(t, "lock screen diagnosis", func() bool { return p.LockScreen() != session.LockScreenUnknown })
+	if got := p.LockScreen(); got != session.LockScreenComponentError {
+		t.Fatalf("lock screen state = %d, want component error", got)
+	}
 }
 
 func lockScreenUnavailable(state session.LockScreenState) bool {

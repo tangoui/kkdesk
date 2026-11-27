@@ -20,6 +20,32 @@ type ComponentInfo struct {
 	UsingInstall  bool
 }
 
+func (i ComponentInfo) NeedsInstalledLaunch() bool {
+	return !i.UsingInstall && i.InstalledPath != "" && (i.State == ComponentRunning || i.State == ComponentStopped)
+}
+
+func (i ComponentInfo) startError() error {
+	if i.NeedsInstalledLaunch() {
+		return ErrWrongLocation
+	}
+	switch i.State {
+	case ComponentAbsent:
+		return ErrNotInstalled
+	case ComponentRunning:
+		return nil
+	case ComponentStopped:
+		return ErrService
+	case ComponentNeedsUpdate:
+		return ErrNeedsUpdate
+	case ComponentNeedsApproval:
+		return ErrNeedsApproval
+	case ComponentNeedsSignature:
+		return ErrNeedsSignature
+	default:
+		return ErrUnsupported
+	}
+}
+
 type installStep struct {
 	apply func() error
 	undo  func() error

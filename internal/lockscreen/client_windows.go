@@ -10,11 +10,12 @@ import "C"
 import (
 	"context"
 	"encoding/binary"
+	"errors"
+	"fmt"
 	"io"
 	"log"
 	"os"
 	"runtime"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -41,17 +42,16 @@ type windowsRemote struct {
 }
 
 func startWindows(ctx context.Context, opts capture.Options, out func(capture.Frame)) (Session, error) {
-	want, err := protectedExe()
+	info, err := Component()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("inspect Windows lock screen component: %w", err)
 	}
-	exe, err := os.Executable()
-	if err != nil || !strings.EqualFold(exe, want) {
-		return nil, ErrUnavailable
+	if err := info.startError(); err != nil {
+		return nil, err
 	}
 	session := windows.WTSGetActiveConsoleSessionId()
 	if !windowsSessionLocked(session) {
-		return nil, ErrUnavailable
+		return nil, fmt.Errorf("%w: Windows console session is no longer locked", ErrService)
 	}
 	file, err := openPipe(session)
 	if err != nil {
@@ -64,17 +64,20 @@ func startWindows(ctx context.Context, opts capture.Options, out func(capture.Fr
 		}
 	}()
 	if err := file.SetDeadline(time.Now().Add(time.Second)); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("set lock screen pipe deadline: %w", err)
 	}
 	var shared uint64
-	if err := binary.Read(file, binary.LittleEndian, &shared); err != nil || shared == 0 {
-		return nil, ErrUnavailable
+	if err := binary.Read(file, binary.LittleEndian, &shared); err != nil {
+		return nil, fmt.Errorf("%w: read lock screen helper handshake: %w", ErrService, err)
+	}
+	if shared == 0 {
+		return nil, errors.New("lock screen helper returned an invalid frame mapping handle")
 	}
 	h := windows.Handle(shared)
 	defer windows.CloseHandle(h)
 	view, err := windows.MapViewOfFile(h, windows.FILE_MAP_READ, 0, 0, 2*frameSlotBytes)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("map Windows lock screen frames: %w", err)
 	}
 	s := &windowsRemote{file: file, view: view, done: make(chan struct{})}
 	s.SetFPS(opts.FPS)

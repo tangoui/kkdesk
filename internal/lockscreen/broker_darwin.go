@@ -5,6 +5,7 @@ package lockscreen
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -153,17 +154,17 @@ func macDial(ctx context.Context, role byte) (*net.UnixConn, error) {
 	dialer := net.Dialer{Timeout: time.Second}
 	conn, err := dialer.DialContext(ctx, "unix", macSocket)
 	if err != nil {
-		return nil, ErrUnavailable
+		return nil, fmt.Errorf("%w: dial macOS lock screen daemon: %w", ErrService, err)
 	}
 	c := conn.(*net.UnixConn)
 	if !macAuthorize(c, 0) {
 		_ = c.Close()
-		return nil, ErrUnavailable
+		return nil, fmt.Errorf("%w: macOS lock screen daemon identity could not be verified", ErrNeedsSignature)
 	}
 	_ = c.SetWriteDeadline(time.Now().Add(time.Second))
 	if _, err := c.Write([]byte{role}); err != nil {
 		_ = c.Close()
-		return nil, ErrUnavailable
+		return nil, fmt.Errorf("%w: send macOS lock screen handshake: %w", ErrService, err)
 	}
 	return c, nil
 }
@@ -211,7 +212,7 @@ func runMacAgent() error {
 	uid := uint32(os.Geteuid())
 	for {
 		if macConsoleUser() == uid {
-			if err := macAgentSession(uid); err != nil && !errors.Is(err, ErrUnavailable) &&
+			if err := macAgentSession(uid); err != nil && !errors.Is(err, ErrUnavailable) && !errors.Is(err, ErrService) &&
 				!errors.Is(err, io.EOF) && !errors.Is(err, os.ErrDeadlineExceeded) {
 				log.Printf("kkdesk lock screen agent: %v", err)
 			}

@@ -126,8 +126,12 @@ func macComponent() (ComponentInfo, error) {
 	for i, name := range []string{macDaemonPlist, macAgentPlist} {
 		dir := []string{"LaunchDaemons", "LaunchAgents"}[i]
 		if _, err := os.Stat(filepath.Join(contents, "Library", dir, name)); err != nil {
-			info.State = ComponentUnsupported
-			return info, errors.New("当前 kkdesk 安装包没有锁屏远控组件")
+			if errors.Is(err, os.ErrNotExist) {
+				info.State = ComponentAbsent
+				info.InstalledPath = ""
+				return info, nil
+			}
+			return info, err
 		}
 	}
 	daemon, agent := macJobStatus(false), macJobStatus(true)
@@ -145,7 +149,7 @@ func ManageComponent(install bool) error {
 	if err != nil {
 		return err
 	}
-	if info.State == ComponentUnsupported {
+	if info.State == ComponentUnsupported || info.InstalledPath == "" {
 		return ErrUnavailable
 	}
 	return changeMacJobs(install, macJobStatus, func(agent, register bool) error {
