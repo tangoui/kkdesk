@@ -177,7 +177,7 @@ func TestHostDisconnectLockGrace(t *testing.T) {
 					return nil
 				})}, nil)
 				graceful := action == "bye" || action == "failure"
-				h.endDesktopPrivacy(p, graceful)
+				h.endDesktopPrivacy(p, graceful, nil)
 				if !graceful {
 					deadline := h.State().LockDeadline
 					if time.Until(deadline) != time.Minute || !p.state().on || locks.Load() != 0 {

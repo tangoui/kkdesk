@@ -23,6 +23,8 @@ type Options struct {
 	Local Clipboard
 	// Send delivers a local change to the other side.
 	Send func(string) error
+	// Done cancels this sync when its session ends. Nil disables this signal.
+	Done <-chan struct{}
 	// Allowed reports whether syncing is allowed now (the host's 剪贴板
 	// permission, a controller that is not view-only); nil means always.
 	Allowed func() bool
@@ -90,7 +92,7 @@ func (s *Sync) Stop() {
 // meta channel, which also carries the clock sync. A text not yet written
 // is replaced by a newer one.
 func (s *Sync) Receive(text string) {
-	if !s.allowed() {
+	if s.ended() || !s.allowed() {
 		return
 	}
 	for {
@@ -110,7 +112,7 @@ func (s *Sync) Receive(text string) {
 
 // apply writes received text to the local clipboard (loop goroutine).
 func (s *Sync) apply(text string) {
-	if !s.allowed() {
+	if s.ended() || !s.allowed() {
 		return
 	}
 	s.mu.Lock()
@@ -127,6 +129,17 @@ func (s *Sync) apply(text string) {
 
 func (s *Sync) allowed() bool { return s.o.Allowed == nil || s.o.Allowed() }
 
+func (s *Sync) ended() bool {
+	select {
+	case <-s.stop:
+		return true
+	case <-s.o.Done:
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Sync) loop() {
 	defer close(s.done)
 	t := time.NewTicker(s.o.Interval)
@@ -135,9 +148,14 @@ func (s *Sync) loop() {
 		select {
 		case <-s.stop:
 			return
+		case <-s.o.Done:
+			return
 		case text := <-s.recv:
 			s.apply(text)
 		case <-t.C:
+			if s.ended() {
+				return
+			}
 			if text, ok := s.poll(); ok {
 				s.send(text)
 			} else if text, ok := s.retry(); ok {
@@ -149,6 +167,9 @@ func (s *Sync) loop() {
 
 // send delivers a local change and keeps transient failures for retry.
 func (s *Sync) send(text string) {
+	if s.ended() {
+		return
+	}
 	err := s.o.Send(text)
 	s.mu.Lock()
 	defer s.mu.Unlock()

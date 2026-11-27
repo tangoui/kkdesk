@@ -92,6 +92,7 @@ type HostConfig struct {
 	startLockScreen         lockscreen.StartFunc
 	captureHelp             func() string
 	unlockTimeout           time.Duration
+	teardownTimeout         time.Duration
 	Remote                  rendezvous.Config
 	Pairing                 *pairing.Store
 	IdentityErr             error
@@ -233,6 +234,9 @@ func NewHost(cfg HostConfig, notify func()) *Host {
 	}
 	if cfg.unlockTimeout <= 0 {
 		cfg.unlockTimeout = 15 * time.Second
+	}
+	if cfg.teardownTimeout <= 0 {
+		cfg.teardownTimeout = 10 * time.Second
 	}
 	h := &Host{cfg: cfg, notify: notify, addrs: LocalIPv4()}
 	h.remote.code = h.deviceCode()
@@ -421,6 +425,7 @@ func (h *Host) syncClipboard(p *session.Peer) (stop func()) {
 	cs := clipsync.Start(clipsync.Options{
 		Local:   h.cfg.Clipboard,
 		Send:    p.SendClipboard,
+		Done:    p.Done(),
 		Allowed: h.clipAccess.Load,
 		MaxLen:  session.MaxClipboard,
 		Logf:    func(format string, args ...any) { log.Printf("kkdesk host: "+format, args...) },
@@ -560,10 +565,14 @@ func (h *Host) State() HostState {
 	return s
 }
 
-func (h *Host) ClearLockScreenFailure() { h.setLockScreenFailure(session.LockScreenUnknown) }
+func (h *Host) ClearLockScreenFailure() { h.setLockScreenFailure(nil, session.LockScreenUnknown) }
 
-func (h *Host) setLockScreenFailure(state session.LockScreenState) {
+func (h *Host) setLockScreenFailure(peer *session.Peer, state session.LockScreenState) {
 	h.mu.Lock()
+	if peer != nil && h.peer != peer {
+		h.mu.Unlock()
+		return
+	}
 	changed := h.lockScreenFailure != state
 	h.lockScreenFailure = state
 	h.mu.Unlock()
@@ -839,7 +848,7 @@ func (h *Host) Close() {
 		}
 		h.mu.Unlock()
 		h.Reject()
-		h.Disconnect()
+		go h.Disconnect() // the session supervisor bounds a stalled transport close
 		h.wg.Wait()
 		h.finishGrace(nil)
 	})
@@ -951,31 +960,76 @@ func (h *Host) handle(p *session.Peer, listenCtx context.Context, remote bool, p
 		h.phase = HostPending
 	}
 	h.mu.Unlock()
-	h.notify()
-
-	accepted := false // the session got past the confirmation
-	defer func() {
-		p.Close()
-		h.mu.Lock()
-		h.busy, h.peer, h.decide, h.fsrv = false, nil, nil, nil
-		h.request = 0
-		h.privacy = nil
-		h.remotePeer = false
-		h.mobile.peerKey = ""
-		h.mobile.biometricEnrollment = false
-		if accepted && h.cfg.Rotate == config.RotateAfterSession {
-			h.newPasswordLocked() // 每次连接后更换
-			log.Printf("kkdesk host: temporary password rotated after the session")
-		}
-		if h.ln != nil || h.remote.online {
-			h.phase = HostListening
-		} else {
-			h.phase = HostOff
-		}
-		h.mu.Unlock()
+	forceCtx, force := context.WithCancel(context.Background())
+	defer force()
+	var accepted atomic.Bool
+	finished := make(chan struct{})
+	// Only the supervisor owns admission state. The worker may outlive it
+	// when a native operation does not return.
+	go func() {
+		defer close(finished)
+		defer p.Close()
 		h.notify()
+		h.runSession(p, listenCtx, forceCtx, ch, phoneKey, biometricKey, enroll, &accepted)
 	}()
+	stalled := h.waitForSession(p, finished)
 
+	h.mu.Lock()
+	h.busy, h.peer, h.decide, h.fsrv = false, nil, nil, nil
+	h.request = 0
+	h.privacy = nil
+	h.remotePeer = false
+	h.mobile.peerKey = ""
+	h.mobile.biometricEnrollment = false
+	if accepted.Load() && h.cfg.Rotate == config.RotateAfterSession {
+		h.newPasswordLocked() // 每次连接后更换
+		log.Printf("kkdesk host: temporary password rotated after the session")
+	}
+	if h.ln != nil || h.remote.online {
+		h.phase = HostListening
+	} else {
+		h.phase = HostOff
+	}
+	h.mu.Unlock()
+	if stalled {
+		force() // request capture shutdown even if the session worker is stuck elsewhere
+	}
+	h.notify()
+}
+
+func (h *Host) waitForSession(p *session.Peer, finished <-chan struct{}) (stalled bool) {
+	select {
+	case <-finished:
+		return false
+	case <-p.Done():
+	}
+	timer := time.NewTimer(h.cfg.teardownTimeout)
+	defer timer.Stop()
+	select {
+	case <-finished:
+		return false
+	case <-timer.C:
+	}
+	select {
+	case <-finished:
+		return false
+	default:
+	}
+	// Grow until runtime.Stack fits, including all goroutines. Snapshot before
+	// releasing the session so the stack still shows the stalled operation.
+	stacks := make([]byte, 64<<10)
+	for {
+		n := runtime.Stack(stacks, true)
+		if n < len(stacks) {
+			log.Printf("kkdesk host: session %s teardown stalled for %s\n%s", p.RemoteAddr(), h.cfg.teardownTimeout, stacks[:n])
+			return true
+		}
+		stacks = make([]byte, 2*len(stacks))
+	}
+}
+
+func (h *Host) runSession(p *session.Peer, listenCtx, forceCtx context.Context, ch <-chan bool,
+	phoneKey, biometricKey string, enroll bool, accepted *atomic.Bool) {
 	if ch != nil {
 		t := time.NewTimer(ConfirmTimeout)
 		defer t.Stop()
@@ -988,7 +1042,7 @@ func (h *Host) handle(p *session.Peer, listenCtx context.Context, remote bool, p
 		case <-listenCtx.Done():
 		}
 		h.mu.Lock()
-		on := h.wantOn && !h.closed
+		on := h.peer == p && h.wantOn && !h.closed
 		h.mu.Unlock()
 		if !ok || listenCtx.Err() != nil || !on {
 			p.CloseWithReason("对方拒绝了连接请求")
@@ -997,6 +1051,10 @@ func (h *Host) handle(p *session.Peer, listenCtx context.Context, remote bool, p
 	}
 	if enroll {
 		h.mu.Lock()
+		if h.peer != p {
+			h.mu.Unlock()
+			return
+		}
 		// This key can only become trusted after an explicit confirmation.
 		err := h.cfg.Pairing.Update(phoneKey, func(phone *pairing.Phone) {
 			if phone.Bypass {
@@ -1010,7 +1068,7 @@ func (h *Host) handle(p *session.Peer, listenCtx context.Context, remote bool, p
 			return
 		}
 	}
-	accepted = true
+	accepted.Store(true)
 	select {
 	case <-p.Done():
 		return
@@ -1023,38 +1081,37 @@ func (h *Host) handle(p *session.Peer, listenCtx context.Context, remote bool, p
 		}
 	}
 	h.serveFiles(p)
-	if p.Mode() == session.ModeFiles {
-		p.OnPrivacy(func(session.PrivacyMessage) {})
-		h.mu.Lock()
-		h.phase, h.since = HostActive, time.Now()
-		h.mu.Unlock()
-		h.notify()
-		log.Printf("kkdesk host: %s connected to transfer files", p.RemoteAddr())
-		<-p.Done()
-		h.mu.Lock()
-		h.notice = "上次连接已结束：" + p.RemoteAddr()
+	h.mu.Lock()
+	if h.peer != p {
 		h.mu.Unlock()
 		return
 	}
-	h.mu.Lock()
 	h.phase, h.since = HostActive, time.Now()
 	h.mu.Unlock()
 	h.notify()
-	stopClip := h.syncClipboard(p)
-	err := h.stream(p)
-	stopClip()
-	if errors.Is(err, errCapturePermission) {
-		p.CloseWithReason(err.Error())
-		return
-	}
-	if err != nil {
-		h.setErr(err.Error())
-		log.Printf("kkdesk host: %v", err)
-		p.CloseWithReason("被控端出错：" + err.Error())
-		return
+	if p.Mode() == session.ModeFiles {
+		p.OnPrivacy(func(session.PrivacyMessage) {})
+		log.Printf("kkdesk host: %s connected to transfer files", p.RemoteAddr())
+		<-p.Done()
+	} else {
+		stopClip := h.syncClipboard(p)
+		err := h.stream(p, forceCtx)
+		stopClip()
+		if errors.Is(err, errCapturePermission) {
+			p.CloseWithReason(err.Error())
+			return
+		}
+		if err != nil {
+			h.setPeerErr(p, err.Error())
+			log.Printf("kkdesk host: %v", err)
+			p.CloseWithReason("被控端出错：" + err.Error())
+			return
+		}
 	}
 	h.mu.Lock()
-	h.notice = "上次连接已结束：" + p.RemoteAddr()
+	if h.peer == p {
+		h.notice = "上次连接已结束：" + p.RemoteAddr()
+	}
 	h.mu.Unlock()
 }
 
@@ -1070,7 +1127,9 @@ func (h *Host) serveFiles(p *session.Peer) {
 	srv := files.NewServer(ch, h.fileAccess.Load)
 	srv.SetLogf(func(format string, args ...any) { log.Printf("kkdesk host: "+format, args...) })
 	h.mu.Lock()
-	h.fsrv = srv
+	if h.peer == p {
+		h.fsrv = srv
+	}
 	h.mu.Unlock()
 }
 
@@ -1081,8 +1140,24 @@ func (h *Host) setErr(s string) {
 	h.notify()
 }
 
+func (h *Host) setPeerErr(peer *session.Peer, s string) {
+	h.mu.Lock()
+	if h.peer != peer {
+		h.mu.Unlock()
+		return
+	}
+	h.errMsg = s
+	h.mu.Unlock()
+	h.notify()
+}
+
 // stream runs capture → encode → peer until the peer is done.
-func (h *Host) stream(p *session.Peer) error {
+func (h *Host) stream(p *session.Peer, forceCtx context.Context) error {
+	select {
+	case <-p.Done():
+		return nil
+	default:
+	}
 	rec := stats.NewRecorder(h.cfg.Log, "host", hostCPU())
 	rec.Start()
 	defer rec.Close()
@@ -1111,6 +1186,8 @@ func (h *Host) stream(p *session.Peer) error {
 	desktop := &hostDesktop{h: h, video: vs, opts: opts}
 	refreshAccessibility, releaseInput, releaseKeys := h.wireInput(p, desktop.input)
 	desktop.releaseKeys = releaseKeys
+	stopForce := context.AfterFunc(forceCtx, desktop.close)
+	defer stopForce()
 	defer desktop.close()
 	defer releaseInput()
 	if err := desktop.refresh(ctx); err != nil {
@@ -1139,8 +1216,13 @@ func (h *Host) stream(p *session.Peer) error {
 
 	p.OnQuality(vs.setQuality)
 	requests := make(chan session.PrivacyMessage, 16)
+	screen := h.cfg.privacyScreen()
 	h.mu.Lock()
-	ps := newHostPrivacy(h.cfg.PrivacyPolicy, h.cfg.privacyScreen(), nil,
+	if h.peer != p {
+		h.mu.Unlock()
+		return nil
+	}
+	ps := newHostPrivacy(h.cfg.PrivacyPolicy, screen, nil,
 		func(status session.PrivacyStatus, detail string) {
 			_ = p.SendPrivacy(session.PrivacyMessage{Kind: session.PrivacyState, Status: status, Detail: detail})
 		}, h.notify)
@@ -1161,7 +1243,7 @@ func (h *Host) stream(p *session.Peer) error {
 	})
 	defer func() {
 		p.OnPrivacy(nil)
-		h.endDesktopPrivacy(ps, p.ReceivedBye())
+		h.endDesktopPrivacy(ps, p.ReceivedBye(), p)
 	}()
 	tk := time.NewTicker(StatsSummaryInterval)
 	defer tk.Stop()
@@ -1243,6 +1325,11 @@ func (h *Host) wireInput(p *session.Peer, lockInput func(input.Event) bool) (ref
 	p.OnInput(func(e input.Event) {
 		mu.Lock()
 		defer mu.Unlock()
+		select {
+		case <-p.Done():
+			return
+		default:
+		}
 		if stopped || lockInput(e) || inj == nil || !granted.Load() {
 			return
 		}
@@ -1307,6 +1394,11 @@ type videoSender struct {
 
 // frame runs on the capture queue.
 func (v *videoSender) frame(f capture.Frame) {
+	select {
+	case <-v.peer.Done():
+		return
+	default:
+	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.failed {
