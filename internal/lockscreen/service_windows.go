@@ -22,6 +22,14 @@ import (
 const serviceName = "KKDeskLockScreen"
 
 func Dispatch(args []string) (bool, error) {
+	if len(args) == 1 {
+		switch args[0] {
+		case "-install-service":
+			return true, manageWindows(true)
+		case "-uninstall-service":
+			return true, manageWindows(false)
+		}
+	}
 	helperMode := len(args) == 2 && args[0] == "-lockscreen-helper"
 	if !helperMode && (len(args) != 1 || args[0] != "-lockscreen-service") {
 		return false, nil
@@ -73,6 +81,9 @@ func checkSystemImage() (string, error) {
 	}
 	if !strings.EqualFold(actual, path) {
 		return "", errors.New("lock screen component requires its installed image")
+	}
+	if err := verifyInstallDirectory(filepath.Dir(path)); err != nil {
+		return "", err
 	}
 	return path, nil
 }
