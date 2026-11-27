@@ -3,14 +3,17 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
+import 'desktop_meta.dart';
+import 'desktop_status.dart';
 import 'files/file_transfer_service.dart';
 import 'lan_auth.dart';
 import 'lan_session.dart';
 import 'mobile_services.dart';
 import 'pairing/transport.dart';
+import 'remote_unlock.dart';
 import 'touch_controller.dart';
 
-class LanRemoteSession extends ChangeNotifier implements RemoteSession {
+class LanRemoteSession extends ChangeNotifier implements DesktopRemoteSession {
   LanRemoteSession(this.address, this._password) : _paired = null;
   LanRemoteSession.paired(this.address, this._paired) : _password = '';
 
@@ -27,6 +30,8 @@ class LanRemoteSession extends ChangeNotifier implements RemoteSession {
     onStream: _onStream,
     onEnded: _onEnded,
     onAccessibilityChanged: notifyListeners,
+    onDesktopChanged: _onDesktopChanged,
+    onUnlockResult: (result) => unawaited(unlock.receive(result)),
   );
   RemoteStatus _status = const RemoteStatus();
   Timer? _stats;
@@ -39,6 +44,30 @@ class LanRemoteSession extends ChangeNotifier implements RemoteSession {
   static const firstFrameTimeout = Duration(seconds: 45);
   Future<void>? _initializing;
   bool _closed = false;
+  bool _negotiated = false;
+
+  @override
+  late final unlock = RemoteUnlock(
+    hostKey: () => _session.hostKey,
+    canSend: () =>
+        desktopReady &&
+        status.phase != RemotePhase.ended &&
+        desktopStatus.lockScreen == LockScreenState.ready,
+    send: _session.sendUnlock,
+    changed: notifyListeners,
+  );
+
+  @override
+  DesktopStatus get desktopStatus => _session.desktopStatus;
+  @override
+  bool get desktopReady => !_closed && _session.desktopReady;
+  @override
+  Future<bool> setPrivacyScreen(bool on) => _session.setPrivacyScreen(on);
+  @override
+  Future<bool> setLockAfterDisconnect(bool on) =>
+      _session.setLockAfterDisconnect(on);
+  @override
+  Future<bool> lockAndDisconnect() => _session.lockAndDisconnect();
 
   @override
   RemoteStatus get status => RemoteStatus(
@@ -84,11 +113,8 @@ class LanRemoteSession extends ChangeNotifier implements RemoteSession {
         await _session.connect(address, _password);
         if (!_closed && firstHostCode != null) notifyListeners();
       }
-      if (_closed || status.phase != RemotePhase.connecting) return;
-      _frameTimeout = Timer(firstFrameTimeout, () {
-        _onEnded('等待远程画面超时');
-        unawaited(_session.close());
-      });
+      _negotiated = true;
+      _updateFrameTimeout();
     } catch (error) {
       _onEnded(
         error is LanAuthFailure
@@ -104,6 +130,27 @@ class LanRemoteSession extends ChangeNotifier implements RemoteSession {
             : '无法连接已配对的电脑，请检查电脑和跨网服务是否在线。',
         identityChanged: error is LanIdentityChanged ? error : null,
       );
+    }
+  }
+
+  void _onDesktopChanged() {
+    if (_closed) return;
+    _updateFrameTimeout();
+    notifyListeners();
+  }
+
+  void _updateFrameTimeout() {
+    if (_closed || !_negotiated || _status.phase != RemotePhase.connecting) {
+      return;
+    }
+    if (desktopStatus.lockReason != null) {
+      _frameTimeout?.cancel();
+      _frameTimeout = null;
+    } else {
+      _frameTimeout ??= Timer(firstFrameTimeout, () {
+        _onEnded('等待远程画面超时');
+        unawaited(_session.close());
+      });
     }
   }
 
@@ -140,6 +187,7 @@ class LanRemoteSession extends ChangeNotifier implements RemoteSession {
 
   void _onEnded(String reason, {LanIdentityChanged? identityChanged}) {
     if (_closed || status.phase == RemotePhase.ended) return;
+    unlock.close();
     _stats?.cancel();
     _frameTimeout?.cancel();
     _status = RemoteStatus(
@@ -203,12 +251,13 @@ class LanRemoteSession extends ChangeNotifier implements RemoteSession {
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
+    unlock.close();
     _stats?.cancel();
     _frameTimeout?.cancel();
     try {
       await _initializing;
       _renderer.srcObject = null;
-      await _session.close();
+      await _session.disconnect();
     } finally {
       try {
         await _renderer.dispose();

@@ -7,8 +7,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'activity_history.dart';
 import 'computer_os.dart';
+import 'desktop_status.dart';
 import 'lan_auth.dart';
 import 'lan_remote_session.dart';
+import 'remote_unlock.dart';
 import 'touch_controller.dart';
 
 export 'computer_os.dart';
@@ -163,6 +165,15 @@ abstract interface class RemoteSession implements Listenable {
   Future<String> readClipboard();
   Future<void> writeClipboard(String text);
   Future<void> close();
+}
+
+abstract interface class DesktopRemoteSession implements RemoteSession {
+  DesktopStatus get desktopStatus;
+  bool get desktopReady;
+  Future<bool> setPrivacyScreen(bool on);
+  Future<bool> setLockAfterDisconnect(bool on);
+  Future<bool> lockAndDisconnect();
+  RemoteUnlock get unlock;
 }
 
 abstract interface class RemoteSessions {

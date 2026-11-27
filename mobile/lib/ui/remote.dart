@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:math' show Point;
 import 'dart:ui';
@@ -9,7 +10,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../activity_history.dart';
+import '../desktop_meta.dart';
 import '../mobile_services.dart';
+import '../remote_unlock.dart';
 import '../touch_controller.dart';
 import 'common.dart';
 import 'files/file_browser.dart';
@@ -42,7 +45,7 @@ class RemotePage extends StatefulWidget {
 
 const _accessibilityWarning = '对方未允许键盘鼠标控制，当前只能查看';
 
-enum _Panel { menu, touch, screens, quality, more }
+enum _Panel { menu, touch, screens, quality, more, desktop }
 
 class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   late final _keys = RemoteKeys(widget.session);
@@ -67,6 +70,13 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   bool _right = true;
   double _ballY = .5;
   double? _ballX;
+  bool _hasSavedUnlock = false;
+  bool _unlockDialogOpen = false;
+
+  DesktopRemoteSession? get _desktopSession => switch (widget.session) {
+    final DesktopRemoteSession desktop => desktop,
+    _ => null,
+  };
 
   @override
   void initState() {
@@ -159,6 +169,11 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
       _touch.cancel();
       _closeKeyboard();
     }
+    if (status.phase == RemotePhase.ended ||
+        (status.phase == RemotePhase.connecting &&
+            _desktopSession?.desktopStatus.lockReason == null)) {
+      _panel = null;
+    }
     setState(() {});
   }
 
@@ -221,6 +236,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     _surface.dispose();
     _input.dispose();
     widget.session.removeListener(_sessionChanged);
+    _desktopSession?.unlock.close();
     _recordConnection();
     unawaited(_leave());
     super.dispose();
@@ -329,6 +345,11 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                 ? math.max(media.viewInsets.bottom, safe.bottom)
                 : 0.0;
             final displayBottom = _keyboard ? keyboardBottom + 47 : 0.0;
+            final phase = widget.session.status.phase;
+            final desktop = _desktopSession;
+            final lockReason = desktop?.desktopStatus.lockReason;
+            final canOpenDesktop =
+                desktop?.desktopReady == true && lockReason != null;
             return Stack(
               fit: StackFit.expand,
               children: [
@@ -336,6 +357,10 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                   bottom: displayBottom,
                   child: _desktop(size.height),
                 ),
+                if (phase != RemotePhase.connected)
+                  _connectionOverlay(
+                    phase == RemotePhase.ended ? null : lockReason,
+                  ),
                 if (_panel != null)
                   Positioned.fill(
                     child: GestureDetector(
@@ -343,7 +368,8 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                       onTap: () => setState(() => _panel = null),
                     ),
                   ),
-                if (widget.session.status.phase != RemotePhase.ended &&
+                if ((phase == RemotePhase.connected ||
+                        phase == RemotePhase.connecting && canOpenDesktop) &&
                     !_keyboard)
                   ..._floating(size, safe),
                 if (_caption case final caption?)
@@ -355,8 +381,14 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                       child: Center(child: _Caption(caption)),
                     ),
                   ),
-                if (widget.session.status.phase != RemotePhase.connected)
-                  _connectionOverlay(),
+                if (desktop != null &&
+                    phase != RemotePhase.ended &&
+                    _panel == null)
+                  _desktopNotices(
+                    desktop,
+                    safe,
+                    showLock: phase == RemotePhase.connected,
+                  ),
                 if (widget.session.status.accessibilityDenied &&
                     !_accessibilityNoticeDismissed &&
                     _panel == null &&
@@ -444,6 +476,8 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
             final origin = _touch.origin;
             final size = _touch.size;
             final cursor = _touch.screenCursor;
+            final shape =
+                _desktopSession?.desktopStatus.cursor ?? RemoteCursor.arrow;
             return ClipRect(
               child: Stack(
                 children: [
@@ -461,14 +495,9 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                       widget.session.status.phase == RemotePhase.connected)
                     Positioned(
                       key: const ValueKey('trackpad-cursor'),
-                      left: cursor.x,
-                      top: cursor.y,
-                      child: const IgnorePointer(
-                        child: CustomPaint(
-                          size: Size(17, 23),
-                          painter: _Cursor(),
-                        ),
-                      ),
+                      left: cursor.x - (shape == RemoteCursor.arrow ? 0 : 9),
+                      top: cursor.y - (shape == RemoteCursor.arrow ? 0 : 9),
+                      child: IgnorePointer(child: _remoteCursor(shape)),
                     ),
                 ],
               ),
@@ -479,13 +508,14 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     },
   );
 
-  Widget _connectionOverlay() {
+  Widget _connectionOverlay(String? lockReason) {
     final status = widget.session.status;
     final ended = status.phase == RemotePhase.ended;
     final waiting =
         widget.computer.os != ComputerOS.unknown &&
         widget.computer.confirmOnHost;
-    final title = ended ? '连接已断开' : (waiting ? '等待电脑确认' : '正在连接');
+    final title =
+        lockReason ?? (ended ? '连接已断开' : (waiting ? '等待电脑确认' : '正在连接'));
     final detail = ended
         ? (status.detail ?? '远程连接已结束')
         : (waiting ? '请在电脑上点「接受」' : '正在与电脑建立连接…');
@@ -532,7 +562,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                               color: Color(0xfff08c00),
                             ),
                           )
-                        else
+                        else if (lockReason == null)
                           const SizedBox(
                             height: 46,
                             child: Center(child: KLoader(radius: 13)),
@@ -547,16 +577,18 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                             fontWeight: FontWeight.w600,
                           ),
                         ),
-                        const SizedBox(height: 5),
-                        Text(
-                          ended ? '$detail\n${widget.computer.name}' : detail,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: context.muted,
-                            fontSize: 13,
-                            height: 1.45,
+                        if (lockReason == null) ...[
+                          const SizedBox(height: 5),
+                          Text(
+                            ended ? '$detail\n${widget.computer.name}' : detail,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: context.muted,
+                              fontSize: 13,
+                              height: 1.45,
+                            ),
                           ),
-                        ),
+                        ],
                         if (status.identityChanged case final identity?)
                           KButton(
                             label: '忘记这台电脑的身份',
@@ -629,9 +661,10 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
         math.max(125.0, size.width - safe.horizontal - 92),
       );
       final menuHeight = switch (_panel!) {
-        _Panel.menu => 288.0,
+        _Panel.menu => _desktopSession == null ? 288.0 : 327.0,
         _Panel.touch => 166.0,
-        _Panel.more => 257.0,
+        _Panel.more => 218.0,
+        _Panel.desktop => 285.0,
         _Panel.screens => 41.0 * (widget.session.screens.length + 1) + 12.0,
         _Panel.quality => 176.0,
       };
@@ -735,6 +768,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
 
   List<Widget> _menuRows() {
     final session = widget.session;
+    final desktop = _desktopSession;
     final connected = session.status.phase == RemotePhase.connected;
     final touchAllowed =
         connected && !widget.viewOnly && !session.status.accessibilityDenied;
@@ -783,6 +817,15 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                 ? () => setState(() => _panel = _Panel.more)
                 : null,
           ),
+          if (desktop != null)
+            _row(
+              '远控选项',
+              CupertinoIcons.lock_shield,
+              trailing: '›',
+              onTap: desktop.desktopReady
+                  ? () => _openDesktopPanel(desktop)
+                  : null,
+            ),
           _row(
             '断开',
             CupertinoIcons.power,
@@ -882,8 +925,158 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
             key: 'remote-files',
             onTap: widget.connectFiles == null ? null : _openFiles,
           ),
-          _row('隐私屏', CupertinoIcons.eye_slash),
         ];
+      case _Panel.desktop:
+        return desktop == null ? [] : _desktopRows(desktop, connected);
+    }
+  }
+
+  Widget _desktopNotices(
+    DesktopRemoteSession session,
+    EdgeInsets safe, {
+    required bool showLock,
+  }) {
+    final state = session.desktopStatus;
+    final notices = [
+      if (showLock) ?state.lockReason,
+      if (state.privacyPending) '等待对方同意…' else ?state.notice,
+      if (!widget.viewOnly) ?session.unlock.message,
+    ];
+    return Positioned(
+      top: safe.top + (widget.session.status.accessibilityDenied ? 61 : 37),
+      left: safe.left + 16,
+      right: safe.right + 16,
+      child: IgnorePointer(
+        child: Column(
+          children: [for (final notice in notices) _Caption(notice)],
+        ),
+      ),
+    );
+  }
+
+  void _openDesktopPanel(DesktopRemoteSession session) {
+    setState(() => _panel = _Panel.desktop);
+    if (!widget.viewOnly) unawaited(_refreshSavedUnlock(session));
+  }
+
+  Future<void> _refreshSavedUnlock(DesktopRemoteSession session) async {
+    final saved = await session.unlock.hasSaved();
+    if (mounted) setState(() => _hasSavedUnlock = saved);
+  }
+
+  List<Widget> _desktopRows(DesktopRemoteSession session, bool connected) {
+    final state = session.desktopStatus;
+    final unlock = session.unlock;
+    final enabled = connected && session.desktopReady;
+    final showUnlock = !widget.viewOnly && state.lockReason != null;
+    final canUnlock = _canUnlock(session);
+    return [
+      _backRow('远控选项'),
+      _row(
+        '隐私屏',
+        CupertinoIcons.eye_slash,
+        trailing: state.privacyPending
+            ? '等待对方同意…'
+            : (state.privacyOn ? '✓' : null),
+        onTap: enabled
+            ? () => _desktopRequest(
+                () => session.setPrivacyScreen(
+                  !state.privacyOn && !state.privacyPending,
+                ),
+              )
+            : null,
+      ),
+      _row(
+        '本次断开后锁屏',
+        CupertinoIcons.lock,
+        trailing: state.lockAfterDisconnect ? '✓' : null,
+        onTap: enabled
+            ? () => _desktopRequest(
+                () =>
+                    session.setLockAfterDisconnect(!state.lockAfterDisconnect),
+              )
+            : null,
+      ),
+      _row(
+        '锁屏并断开',
+        CupertinoIcons.power,
+        onTap: enabled
+            ? () => _desktopRequest(session.lockAndDisconnect)
+            : null,
+      ),
+      if (showUnlock) ...[
+        _row(
+          '解锁电脑…',
+          CupertinoIcons.lock_open,
+          onTap: canUnlock ? () => unawaited(_requestUnlock(session)) : null,
+        ),
+        if (unlock.savedFailed)
+          _row(
+            '重新输入',
+            CupertinoIcons.keyboard,
+            onTap: canUnlock ? () => unawaited(_manualUnlock(session)) : null,
+          ),
+        if (_hasSavedUnlock || unlock.savedFailed)
+          _row(
+            '忘记解锁密码',
+            CupertinoIcons.trash,
+            onTap: unlock.busy
+                ? null
+                : () async {
+                    await unlock.forget();
+                    await _refreshSavedUnlock(session);
+                  },
+          ),
+      ],
+    ];
+  }
+
+  Future<void> _desktopRequest(Future<bool> Function() request) async {
+    setState(() => _panel = null);
+    if (!await request() && mounted) _brief('请求发送失败');
+  }
+
+  bool _canUnlock(DesktopRemoteSession session) =>
+      !widget.viewOnly &&
+      session.desktopReady &&
+      !session.unlock.busy &&
+      session.status.phase != RemotePhase.ended &&
+      session.desktopStatus.lockScreen == LockScreenState.ready;
+
+  Future<void> _requestUnlock(DesktopRemoteSession session) async {
+    setState(() => _panel = null);
+    if (await session.unlock.requestSaved() == SavedUnlock.manual && mounted) {
+      await _manualUnlock(session);
+    }
+  }
+
+  Future<void> _manualUnlock(DesktopRemoteSession session) async {
+    if (_unlockDialogOpen || !_canUnlock(session)) return;
+    setState(() {
+      _panel = null;
+      _unlockDialogOpen = true;
+    });
+    try {
+      final remember = await session.unlock.canRemember();
+      if (!mounted || !_canUnlock(session)) return;
+      await kDialog<void>(
+        context,
+        builder: (_) => _UnlockDialog(
+          canRemember: remember,
+          session: session,
+          onSubmit: (secret, remember) async {
+            try {
+              if (mounted && _canUnlock(session)) {
+                await session.unlock.submit(secret, remember: remember);
+              }
+            } finally {
+              secret.fillRange(0, secret.length, 0);
+            }
+          },
+        ),
+      );
+    } finally {
+      _unlockDialogOpen = false;
     }
   }
 
@@ -1084,6 +1277,153 @@ class _Caption extends StatelessWidget {
       ),
     ),
   );
+}
+
+class _UnlockDialog extends StatefulWidget {
+  const _UnlockDialog({
+    required this.canRemember,
+    required this.session,
+    required this.onSubmit,
+  });
+
+  final bool canRemember;
+  final DesktopRemoteSession session;
+  final Future<void> Function(Uint8List secret, bool remember) onSubmit;
+
+  @override
+  State<_UnlockDialog> createState() => _UnlockDialogState();
+}
+
+class _UnlockDialogState extends State<_UnlockDialog> {
+  final _password = TextEditingController();
+  bool _remember = false;
+  bool _submitted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.session.addListener(_sessionChanged);
+  }
+
+  bool get _ready =>
+      widget.session.desktopReady &&
+      widget.session.desktopStatus.lockScreen == LockScreenState.ready;
+
+  void _sessionChanged() {
+    if (_ready || _submitted) return;
+    _password.clear();
+    if (ModalRoute.of(context)?.isCurrent == true) Navigator.pop(context);
+  }
+
+  void _submit() {
+    if (_submitted || !_ready || _password.text.isEmpty) return;
+    _submitted = true;
+    final secret = Uint8List.fromList(utf8.encode(_password.text));
+    _password.clear();
+    Navigator.pop(context);
+    unawaited(widget.onSubmit(secret, _remember));
+  }
+
+  @override
+  void dispose() {
+    widget.session.removeListener(_sessionChanged);
+    _password.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => KDialog(
+    title: '解锁电脑',
+    content: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        KInput(
+          controller: _password,
+          hint: '对方电脑的登录密码或 PIN',
+          obscureText: true,
+          autofocus: true,
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) => _submit(),
+        ),
+        if (widget.canRemember)
+          Material(
+            type: MaterialType.transparency,
+            child: CheckboxListTile(
+              title: const Text('记住密码'),
+              value: _remember,
+              onChanged: (value) => setState(() => _remember = value ?? false),
+              controlAffinity: ListTileControlAffinity.leading,
+            ),
+          ),
+      ],
+    ),
+    actions: [
+      KButton(
+        label: '取消',
+        variant: KButtonVariant.secondary,
+        onTap: () {
+          _password.clear();
+          Navigator.pop(context);
+        },
+      ),
+      KButton(label: '解锁', onTap: _submit),
+    ],
+  );
+}
+
+Widget _remoteCursor(RemoteCursor shape) {
+  switch (shape) {
+    case RemoteCursor.arrow:
+      return const CustomPaint(size: Size(17, 23), painter: _Cursor());
+    case RemoteCursor.text:
+      return const CustomPaint(size: Size.square(18), painter: _TextCursor());
+    default:
+      return Icon(
+        switch (shape) {
+          RemoteCursor.pointer => Icons.pan_tool_alt,
+          RemoteCursor.notAllowed => Icons.do_not_disturb_alt,
+          RemoteCursor.resizeEW => Icons.swap_horiz,
+          RemoteCursor.resizeNS => Icons.swap_vert,
+          RemoteCursor.move => Icons.open_with,
+          RemoteCursor.grab => Icons.pan_tool,
+          RemoteCursor.grabbing => Icons.sports_mma,
+          _ => null,
+        },
+        size: 18,
+        color: Colors.white,
+        shadows: const [Shadow(color: Colors.black, blurRadius: 3)],
+      );
+  }
+}
+
+class _TextCursor extends CustomPainter {
+  const _TextCursor();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final beam = Path()
+      ..moveTo(5, 3)
+      ..lineTo(13, 3)
+      ..moveTo(9, 3)
+      ..lineTo(9, 15)
+      ..moveTo(5, 15)
+      ..lineTo(13, 15);
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = 3
+      ..color = Colors.black;
+    canvas.drawPath(beam, paint);
+    canvas.drawPath(
+      beam,
+      paint
+        ..strokeWidth = 1.4
+        ..color = Colors.white,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_TextCursor oldDelegate) => false;
 }
 
 class _Cursor extends CustomPainter {
