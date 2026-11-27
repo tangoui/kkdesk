@@ -3,12 +3,14 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
+import 'desktop_meta.dart';
 import 'desktop_status.dart';
 import 'files/file_transfer_service.dart';
 import 'lan_auth.dart';
 import 'lan_session.dart';
 import 'mobile_services.dart';
 import 'pairing/transport.dart';
+import 'remote_unlock.dart';
 import 'touch_controller.dart';
 
 class LanRemoteSession extends ChangeNotifier implements DesktopRemoteSession {
@@ -29,6 +31,7 @@ class LanRemoteSession extends ChangeNotifier implements DesktopRemoteSession {
     onEnded: _onEnded,
     onAccessibilityChanged: notifyListeners,
     onDesktopChanged: notifyListeners,
+    onUnlockResult: (result) => unawaited(unlock.receive(result)),
   );
   RemoteStatus _status = const RemoteStatus();
   Timer? _stats;
@@ -41,6 +44,17 @@ class LanRemoteSession extends ChangeNotifier implements DesktopRemoteSession {
   static const firstFrameTimeout = Duration(seconds: 45);
   Future<void>? _initializing;
   bool _closed = false;
+
+  @override
+  late final unlock = RemoteUnlock(
+    hostKey: () => _session.hostKey,
+    canSend: () =>
+        desktopReady &&
+        status.phase != RemotePhase.ended &&
+        desktopStatus.lockScreen == LockScreenState.ready,
+    send: _session.sendUnlock,
+    changed: notifyListeners,
+  );
 
   @override
   DesktopStatus get desktopStatus => _session.desktopStatus;
@@ -154,6 +168,7 @@ class LanRemoteSession extends ChangeNotifier implements DesktopRemoteSession {
 
   void _onEnded(String reason, {LanIdentityChanged? identityChanged}) {
     if (_closed || status.phase == RemotePhase.ended) return;
+    unlock.close();
     _stats?.cancel();
     _frameTimeout?.cancel();
     _status = RemoteStatus(
@@ -217,6 +232,7 @@ class LanRemoteSession extends ChangeNotifier implements DesktopRemoteSession {
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
+    unlock.close();
     _stats?.cancel();
     _frameTimeout?.cancel();
     try {

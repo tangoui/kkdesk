@@ -10,6 +10,7 @@ import 'computer_os.dart';
 import 'desktop_status.dart';
 import 'lan_auth.dart';
 import 'lan_remote_session.dart';
+import 'remote_unlock.dart';
 import 'touch_controller.dart';
 
 export 'computer_os.dart';
@@ -172,6 +173,7 @@ abstract interface class DesktopRemoteSession implements RemoteSession {
   Future<bool> setPrivacyScreen(bool on);
   Future<bool> setLockAfterDisconnect(bool on);
   Future<bool> lockAndDisconnect();
+  RemoteUnlock get unlock;
 }
 
 abstract interface class RemoteSessions {
