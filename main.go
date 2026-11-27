@@ -88,6 +88,14 @@ func main() {
 		}
 		return
 	}
+	args, handedOff, err := waitForInstalledParent(os.Args[1:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "kkdesk:", err)
+		os.Exit(1)
+	}
+	if handedOff {
+		os.Args = append(os.Args[:1], args...)
+	}
 	app.Version = appVersion()
 	app.PrepareProcess() // Windows: per-monitor DPI awareness, before any window or display query
 	o, fs, err := parseFlags(os.Args[1:])
@@ -105,13 +113,39 @@ func main() {
 		}
 		return
 	}
-	if err := run(o); err != nil {
+	if err := run(o, handedOff); err != nil {
 		fmt.Fprintln(os.Stderr, "kkdesk:", err)
 		os.Exit(1)
 	}
 }
 
-func run(o options) error {
+func run(o options, handedOff bool) error {
+	keepLoop := false // Host.Close can dispatch native cleanup to the main thread.
+	a := tango.New(tango.Options{Name: "kkdesk", ID: "com.kkdesk.desktop", QuitOnLastClose: &keepLoop})
+	devRole := ""
+	if !releaseBuild {
+		devRole = os.Getenv("TANGO_DEV_ROLE")
+	}
+	dir, dirErr := config.Dir()
+	claimed := false
+	// Claim before reading settings, opening logs, or deciding to relaunch.
+	if wantsSingleInstance(o, devRole) {
+		keyDir := dir
+		if dirErr != nil {
+			keyDir = "." // where openStore falls back to
+		}
+		primary, err := single.Claim(a, single.Options{Key: singleInstanceKey(keyDir)})
+		if !primary {
+			log.Printf("kkdesk: already running; handed over to it (%v)", err)
+			return nil
+		}
+		if err != nil {
+			log.Printf("kkdesk: single instance: %v", err)
+		} else {
+			claimed = true
+		}
+	}
+
 	var appLog *app.AppLog
 	if o.appLog != "" {
 		if !o.set["applog"] {
@@ -127,6 +161,24 @@ func run(o options) error {
 			defer l.Close()
 			log.Printf("kkdesk: diagnostic log %s, args %q", l.Path, redactArgs(os.Args[1:]))
 			app.LogSystemInfo()
+		}
+	}
+
+	var relaunch *installedRelaunch
+	var restartErr error
+	_, configured := os.LookupEnv(config.EnvDir)
+	autoSwitch := claimed && wantsAutomaticInstalledRelaunch(os.Args[1:], configured, devRole, handedOff)
+	if platform := newInstalledAppPlatform(); platform != nil && dirErr == nil {
+		relaunch = &installedRelaunch{platform: platform, pending: filepath.Join(dir, "lockscreen-relaunch.pending")}
+		if autoSwitch {
+			var switched bool
+			switched, restartErr = relaunch.attempt(true)
+			if switched {
+				return nil
+			}
+			if restartErr != nil {
+				log.Printf("kkdesk: check installed lock screen app: %v", restartErr)
+			}
 		}
 	}
 
@@ -155,31 +207,6 @@ func run(o options) error {
 			m.Invalidate()
 		}
 	}
-	keepLoop := false // Host.Close can dispatch native cleanup to the main thread.
-	a := tango.New(tango.Options{Name: "kkdesk", ID: "com.kkdesk.desktop", QuitOnLastClose: &keepLoop})
-	// One app per configuration folder: a second launch shows the running
-	// window instead of opening the same settings and port again (both would
-	// listen, and each would save its own copy of the settings over the
-	// other's). Claimed before the settings are read.
-	devRole := ""
-	if !releaseBuild { // production builds ignore tan dev's variable
-		devRole = os.Getenv("TANGO_DEV_ROLE")
-	}
-	if wantsSingleInstance(o, devRole) {
-		dir, err := config.Dir()
-		if err != nil {
-			dir = "." // where openStore falls back to
-		}
-		primary, err := single.Claim(a, single.Options{Key: singleInstanceKey(dir)})
-		if !primary {
-			log.Printf("kkdesk: already running; handed over to it (%v)", err)
-			return nil
-		}
-		if err != nil {
-			log.Printf("kkdesk: single instance: %v", err)
-		}
-	}
-
 	store := openStore()
 	board := &appui.Clipboard{} // the app is set once it exists
 	hcfg := hostConfig(o, store, logw)
@@ -246,6 +273,23 @@ func run(o options) error {
 		requestQuit()
 		return false
 	})
+	var restartInstalled func() error
+	var restartAfterInstall func() error
+	if relaunch != nil {
+		restartInstalled = func() error {
+			switched, err := relaunch.attempt(false)
+			if switched {
+				a.Post(requestQuit)
+			}
+			if err != nil {
+				log.Printf("kkdesk: restart installed lock screen app: %v", err)
+			}
+			return err
+		}
+		if autoSwitch {
+			restartAfterInstall = restartInstalled
+		}
+	}
 
 	// Self-update: builds made by tan build, started normally (not the
 	// measurement modes -host and -connect).
@@ -267,11 +311,17 @@ func run(o options) error {
 		m, err := appui.OpenMain(appui.MainOptions{
 			App: a, Host: host, Store: store, Form: &st.Form, ViewerLog: logw, Clipboard: board, Updater: upd,
 			ViewOnly: o.viewOnly, Hidden: hidden, Error: errMsg,
+			RestartInstalled: restartInstalled, RestartAfterInstall: restartAfterInstall, RestartError: restartErr,
 		})
 		if err != nil {
 			log.Fatal(err)
 		}
 		mainWin.Store(m)
+		if relaunch != nil {
+			if err := relaunch.confirm(); err != nil {
+				log.Printf("kkdesk: confirm installed lock screen app: %v", err)
+			}
+		}
 	}
 	a.OnReady(func() {
 		if o.connect == "" {

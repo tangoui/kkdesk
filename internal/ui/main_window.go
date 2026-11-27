@@ -76,6 +76,10 @@ type MainOptions struct {
 	Error     string           // initial error shown on the form
 	Clipboard *Clipboard       // synced with the other side while controlling
 	Updater   *updater.Updater // self-update (设置 › 通用 › 检查更新); nil in development builds
+
+	RestartInstalled    func() error
+	RestartAfterInstall func() error
+	RestartError        error
 }
 
 // Main is the main window.
