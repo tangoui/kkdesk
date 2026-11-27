@@ -37,8 +37,17 @@ const (
 
 func windowsSessionLocked(session uint32) bool { return C.kklock_state(C.uint32_t(session)) == 0 }
 
-func runHelper(exe, sasName string, logger *log.Logger) error {
+func runHelper(exe string, servicePID uint32, sasName string, logger *log.Logger) error {
 	runtime.LockOSThread()
+	service, err := windows.OpenProcess(windows.SYNCHRONIZE, false, servicePID)
+	if err != nil {
+		return err
+	}
+	go func() {
+		defer windows.CloseHandle(service)
+		_, _ = windows.WaitForSingleObject(service, windows.INFINITE)
+		os.Exit(0)
+	}()
 	var session uint32
 	if err := windows.ProcessIdToSessionId(uint32(os.Getpid()), &session); err != nil {
 		return err

@@ -54,3 +54,21 @@ func TestIPCFrameBoundsAndSlots(t *testing.T) {
 		t.Fatal("reserved frame sequence was accepted")
 	}
 }
+
+func TestHelperLaunchRequiresServiceProcess(t *testing.T) {
+	nonce := "A1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4"
+	wantPID := uint32(321)
+	owner, gotNonce, ok := helperLaunchArgs([]string{"-lockscreen-helper", "321", nonce})
+	if !ok || owner != wantPID || gotNonce != nonce {
+		t.Fatal("valid service ownership was rejected")
+	}
+	for _, args := range [][]string{
+		{"-lockscreen-helper", nonce},
+		{"-lockscreen-helper", "0", nonce},
+		{"-lockscreen-helper", "321", "invalid-event"},
+	} {
+		if _, _, ok := helperLaunchArgs(args); ok {
+			t.Fatalf("accepted invalid launch args %v", args)
+		}
+	}
+}

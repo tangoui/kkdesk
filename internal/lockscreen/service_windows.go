@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 	"unsafe"
@@ -30,7 +31,7 @@ func Dispatch(args []string) (bool, error) {
 			return true, manageWindows(false)
 		}
 	}
-	helperMode := len(args) == 2 && args[0] == "-lockscreen-helper"
+	servicePID, nonce, helperMode := helperLaunchArgs(args)
 	if !helperMode && (len(args) != 1 || args[0] != "-lockscreen-service") {
 		return false, nil
 	}
@@ -45,7 +46,7 @@ func Dispatch(args []string) (bool, error) {
 	defer out.Close()
 	logger := log.New(out, "", log.LstdFlags|log.LUTC)
 	if helperMode {
-		err = runHelper(exe, args[1], logger)
+		err = runHelper(exe, servicePID, nonce, logger)
 	} else {
 		err = svc.Run(serviceName, lockService{exe: exe, logger: logger})
 	}
@@ -169,12 +170,14 @@ func (s lockService) watch(ctx context.Context) {
 type helperProcess struct {
 	session uint32
 	proc    windows.Handle
-	job     windows.Handle
 	sas     windows.Handle
 }
 
 func (h *helperProcess) close() {
-	_ = windows.CloseHandle(h.job)
+	if !h.exited() {
+		_ = windows.TerminateProcess(h.proc, 0)
+		_, _ = windows.WaitForSingleObject(h.proc, 2000)
+	}
 	_ = windows.CloseHandle(h.proc)
 	_ = windows.CloseHandle(h.sas)
 }
@@ -198,16 +201,7 @@ func startHelper(exe string, session uint32) (*helperProcess, error) {
 	if err := windows.SetTokenInformation(primary, windows.TokenSessionId, (*byte)(unsafe.Pointer(&session)), uint32(unsafe.Sizeof(session))); err != nil {
 		return nil, err
 	}
-	job, err := windows.CreateJobObject(nil, nil)
-	if err != nil {
-		return nil, err
-	}
 	ready := false
-	defer func() {
-		if !ready {
-			_ = windows.CloseHandle(job)
-		}
-	}()
 	var nonce [16]byte
 	rand.Read(nonce[:])
 	sasName := hex.EncodeToString(nonce[:])
@@ -220,35 +214,18 @@ func startHelper(exe string, session uint32) (*helperProcess, error) {
 			_ = windows.CloseHandle(sas)
 		}
 	}()
-	limits := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
-	limits.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-	if _, err := windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&limits)), uint32(unsafe.Sizeof(limits))); err != nil {
-		return nil, err
-	}
 	app, _ := windows.UTF16PtrFromString(exe)
-	args, _ := windows.UTF16PtrFromString(windows.ComposeCommandLine([]string{exe, "-lockscreen-helper", sasName}))
+	args, _ := windows.UTF16PtrFromString(windows.ComposeCommandLine([]string{exe, "-lockscreen-helper", strconv.Itoa(os.Getpid()), sasName}))
 	dir, _ := windows.UTF16PtrFromString(filepath.Dir(exe))
 	desktop, _ := windows.UTF16PtrFromString(`winsta0\winlogon`)
 	startup := windows.StartupInfo{Desktop: desktop}
 	startup.Cb = uint32(unsafe.Sizeof(startup))
 	var proc windows.ProcessInformation
 	if err := windows.CreateProcessAsUser(primary, app, args, nil, nil, false,
-		windows.CREATE_NO_WINDOW|windows.CREATE_SUSPENDED, nil, dir, &startup, &proc); err != nil {
+		windows.CREATE_NO_WINDOW, nil, dir, &startup, &proc); err != nil {
 		return nil, fmt.Errorf("start lock screen helper: %w", err)
 	}
 	defer windows.CloseHandle(proc.Thread)
-	defer func() {
-		if !ready {
-			_ = windows.TerminateProcess(proc.Process, 1)
-			_ = windows.CloseHandle(proc.Process)
-		}
-	}()
-	if err := windows.AssignProcessToJobObject(job, proc.Process); err != nil {
-		return nil, err
-	}
-	if _, err := windows.ResumeThread(proc.Thread); err != nil {
-		return nil, err
-	}
 	ready = true
-	return &helperProcess{session: session, proc: proc.Process, job: job, sas: sas}, nil
+	return &helperProcess{session: session, proc: proc.Process, sas: sas}, nil
 }

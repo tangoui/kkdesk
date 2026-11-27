@@ -1,6 +1,10 @@
 package lockscreen
 
-import "strings"
+import (
+	"encoding/hex"
+	"strconv"
+	"strings"
+)
 
 const (
 	ipcFrame byte = iota + 1
@@ -35,4 +39,19 @@ func frameBounds(width, height uint32, sequence uint64) (offset, size int, ok bo
 		return 0, 0, false
 	}
 	return int(sequence%2) * frameSlotBytes, int(width*height) * 4, true
+}
+
+func helperLaunchArgs(args []string) (uint32, string, bool) {
+	if len(args) != 3 || args[0] != "-lockscreen-helper" || len(args[2]) != 32 {
+		return 0, "", false
+	}
+	pid, err := strconv.ParseUint(args[1], 10, 32)
+	if err != nil || pid == 0 {
+		return 0, "", false
+	}
+	var nonce [16]byte
+	if _, err := hex.Decode(nonce[:], []byte(args[2])); err != nil {
+		return 0, "", false
+	}
+	return uint32(pid), args[2], true
 }
