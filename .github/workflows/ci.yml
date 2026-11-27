@@ -43,7 +43,10 @@ jobs:
           CGO_ENABLED: "1"
           CC: x86_64-w64-mingw32-gcc-posix
           CXX: x86_64-w64-mingw32-g++-posix
-        run: go vet ./...
+        run: |
+          go vet ./...
+          # vet compiles but does not link: link the app too.
+          go build -o "$RUNNER_TEMP/kkdesk.exe" .
 
   macos:
     runs-on: macos-15
