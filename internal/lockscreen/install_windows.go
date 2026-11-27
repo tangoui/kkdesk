@@ -109,6 +109,9 @@ func openQueryService() (*mgr.Service, error) {
 	return &mgr.Service{Name: serviceName, Handle: h}, nil
 }
 
+// OpenApprovalSettings is a macOS step; Windows needs no approval.
+func OpenApprovalSettings() error { return ErrUnavailable }
+
 func ManageComponent(install bool) error {
 	exe, err := os.Executable()
 	if err != nil {

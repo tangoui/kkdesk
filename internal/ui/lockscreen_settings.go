@@ -96,6 +96,11 @@ func (m *Main) lockScreenSettings(c *ui.Context, f *ui.FormW, lastFailure sessio
 				ui.Text(c, lockscreen.ErrNeedsSignature.Error())
 			case s.info.State == lockscreen.ComponentNeedsApproval:
 				ui.Text(c, "等待系统批准")
+				if ui.Button(c, "打开系统设置").Primary().Clicked() {
+					if err := lockscreen.OpenApprovalSettings(); err != nil {
+						s.actionErr = err
+					}
+				}
 				if ui.Button(c, "卸载").Clicked() {
 					m.manageLockScreen(false)
 				}
