@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -90,6 +91,9 @@ func OpenSession(a *tango.App, v *app.Viewer, onEnd func(msg string)) error {
 		MinHeight: 320,
 		Resizable: true,
 		Centered:  true,
+		// On macOS the tab strip is the title bar: the content runs under
+		// the title area and the traffic lights sit on the strip.
+		Appearance: sessionAppearance(),
 	}}, w.page, ui.RunnerOptions{Theme: theme.AntDesign(theme.Dark())})
 	if err != nil {
 		return err
@@ -185,35 +189,83 @@ func (w *sessionWin) page(c *ui.Context) {
 	}, layout.Grow(1)).Bg(theme.Hex("#000000"))
 }
 
+// sessionAppearance hides the system title bar on macOS, where the tab
+// strip takes its place (see strip); elsewhere the window keeps it.
+func sessionAppearance() tango.Appearance {
+	if runtime.GOOS == "darwin" {
+		return tango.Appearance{TitleBar: tango.TitleBarHidden}
+	}
+	return tango.Appearance{}
+}
+
 // strip is the tab bar (always dark, the window uses the dark theme): the
-// peer's tab on the left, stats and 控制中心 on the right.
+// peer's tab on the left, stats and 控制中心 on the right. On macOS it is
+// the window's title bar: room for the traffic lights at its start (none
+// in full screen, where they hide), and its empty parts move the window
+// and maximize it on a double click.
 func (w *sessionWin) strip(c *ui.Context, st app.ViewerState) {
+	if runtime.GOOS != "darwin" {
+		w.stripRow(c, st)
+		return
+	}
+	th := c.Theme
+	tk := th.Components.TitleBar
+	tk.Height, tk.Bg, tk.BorderColor = sessionStripHeight, th.BgElevated, theme.Transparent
+	tk.PaddingInline, tk.Gap = 8, 8
+	controls := ui.WindowControlsAuto
+	if w.fullscreen.Load() {
+		controls = ui.WindowControlsNone
+	}
+	ui.ConfigProvider(c).Components(theme.Components{TitleBar: tk}).Body(func() {
+		ui.TitleBar(c).Controls(controls).
+			Menu(func() {
+				ui.Row(c, func() { w.stripLead(c, st) }, layout.Gap(8), layout.H(sessionStripHeight),
+					layout.Padding(insets(6, 0, 0, 0)), layout.AlignItems(layout.AlignEnd))
+			}).
+			Tools(func() { w.stripTools(c, st) }).
+			Layout(layout.Shrink(0))
+	})
+}
+
+// stripRow is the strip under a system title bar (Windows, Linux).
+func (w *sessionWin) stripRow(c *ui.Context, st app.ViewerState) {
 	th := c.Theme
 	ui.Row(c, func() {
-		w.tab(c, st)
-		ui.Row(c, func() { w.phaseTags(c, st) }, layout.Gap(6), layout.Middle(), layout.Self(layout.AlignCenter), layout.Padding(insets(0, 0, 4, 0)))
+		w.stripLead(c, st)
 		ui.Spacer(c)
-		ui.Row(c, func() {
-			if st.Phase == app.ViewerStreaming {
-				s := st.Stats
-				ms := int(s.LatencyP50.Milliseconds())
-				dot(c, th.Success.Base, 6)
-				mono(c, fmt.Sprintf("%d ms", ms), 12, 500, latencyColor(th, ms))
-				path := "直连"
-				if st.Relayed {
-					path = "中继"
-				}
-				mono(c, fmt.Sprintf("%.0f fps · %.1f Mbps · %s", s.FPS, s.BitrateBps/1e6, path), 12, 400, th.TextTertiary)
-				c.WakeAt(time.Now().Add(500 * time.Millisecond))
-			}
-			b := ui.Button(c, "控制中心").Icon(icon.Sliders).Small().Disabled(st.Phase == app.ViewerClosed)
-			if b.Clicked() {
-				if r, ok := c.RectOf(b.ID()); ok {
-					w.popupMenu(int(r.X), int(r.Y+r.H+4), st)
-				}
-			}
-		}, layout.Gap(8), layout.Middle(), layout.Self(layout.AlignCenter), layout.Padding(insets(0, 0, 4, 0)))
+		w.stripTools(c, st)
 	}, layout.Gap(8), layout.Padding(insets(6, 8, 0, 8)), layout.H(sessionStripHeight), layout.Shrink(0), layout.AlignItems(layout.AlignEnd)).Bg(th.BgElevated)
+}
+
+// stripLead is the peer's tab and the session state next to it.
+func (w *sessionWin) stripLead(c *ui.Context, st app.ViewerState) {
+	w.tab(c, st)
+	ui.Row(c, func() { w.phaseTags(c, st) }, layout.Gap(6), layout.Middle(), layout.Self(layout.AlignCenter), layout.Padding(insets(0, 0, 4, 0)))
+}
+
+// stripTools is the latency and stream figures and 控制中心.
+func (w *sessionWin) stripTools(c *ui.Context, st app.ViewerState) {
+	th := c.Theme
+	ui.Row(c, func() {
+		if st.Phase == app.ViewerStreaming {
+			s := st.Stats
+			ms := int(s.LatencyP50.Milliseconds())
+			dot(c, th.Success.Base, 6)
+			mono(c, fmt.Sprintf("%d ms", ms), 12, 500, latencyColor(th, ms))
+			path := "直连"
+			if st.Relayed {
+				path = "中继"
+			}
+			mono(c, fmt.Sprintf("%.0f fps · %.1f Mbps · %s", s.FPS, s.BitrateBps/1e6, path), 12, 400, th.TextTertiary)
+			c.WakeAt(time.Now().Add(500 * time.Millisecond))
+		}
+		b := ui.Button(c, "控制中心").Icon(icon.Sliders).Small().Disabled(st.Phase == app.ViewerClosed)
+		if b.Clicked() {
+			if r, ok := c.RectOf(b.ID()); ok {
+				w.popupMenu(int(r.X), int(r.Y+r.H+4), st)
+			}
+		}
+	}, layout.Gap(8), layout.Middle(), layout.Self(layout.AlignCenter), layout.Padding(insets(0, 0, 4, 0)))
 }
 
 // phaseTags shows the session state next to the tab.
