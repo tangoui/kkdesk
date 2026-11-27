@@ -90,7 +90,7 @@ func (s spikeService) launch(ctx context.Context, session uint32) error {
 		return fmt.Errorf("OpenProcessToken: %w", err)
 	}
 	defer original.Close()
-	access := uint32(windows.TOKEN_ASSIGN_PRIMARY | windows.TOKEN_DUPLICATE | windows.TOKEN_QUERY | windows.TOKEN_ADJUST_SESSIONID)
+	access := uint32(windows.TOKEN_ASSIGN_PRIMARY | windows.TOKEN_DUPLICATE | windows.TOKEN_QUERY | windows.TOKEN_ADJUST_DEFAULT | windows.TOKEN_ADJUST_SESSIONID)
 	if err := windows.DuplicateTokenEx(original, access, nil, windows.SecurityImpersonation, windows.TokenPrimary, &primary); err != nil {
 		return fmt.Errorf("DuplicateTokenEx: %w", err)
 	}

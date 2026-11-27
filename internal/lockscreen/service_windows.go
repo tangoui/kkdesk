@@ -187,19 +187,24 @@ func (h *helperProcess) exited() bool {
 	return wait != uint32(windows.WAIT_TIMEOUT)
 }
 
+// helperTokenAccess is what the helper's copy of the service token needs:
+// setting TokenSessionId takes TOKEN_ADJUST_DEFAULT as well as
+// TOKEN_ADJUST_SESSIONID.
+const helperTokenAccess = windows.TOKEN_ASSIGN_PRIMARY | windows.TOKEN_DUPLICATE | windows.TOKEN_QUERY |
+	windows.TOKEN_ADJUST_DEFAULT | windows.TOKEN_ADJUST_SESSIONID
+
 func startHelper(exe string, session uint32) (*helperProcess, error) {
 	var original, primary windows.Token
 	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_DUPLICATE, &original); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open service token: %w", err)
 	}
 	defer original.Close()
-	access := uint32(windows.TOKEN_ASSIGN_PRIMARY | windows.TOKEN_DUPLICATE | windows.TOKEN_QUERY | windows.TOKEN_ADJUST_SESSIONID)
-	if err := windows.DuplicateTokenEx(original, access, nil, windows.SecurityImpersonation, windows.TokenPrimary, &primary); err != nil {
-		return nil, err
+	if err := windows.DuplicateTokenEx(original, helperTokenAccess, nil, windows.SecurityImpersonation, windows.TokenPrimary, &primary); err != nil {
+		return nil, fmt.Errorf("duplicate service token: %w", err)
 	}
 	defer primary.Close()
 	if err := windows.SetTokenInformation(primary, windows.TokenSessionId, (*byte)(unsafe.Pointer(&session)), uint32(unsafe.Sizeof(session))); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("move helper token to session %d: %w", session, err)
 	}
 	ready := false
 	var nonce [16]byte
@@ -207,7 +212,7 @@ func startHelper(exe string, session uint32) (*helperProcess, error) {
 	sasName := hex.EncodeToString(nonce[:])
 	sas, err := createSASEvent(sasName)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create SAS event: %w", err)
 	}
 	defer func() {
 		if !ready {
