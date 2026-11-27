@@ -4,6 +4,41 @@
 #define NOMINMAX
 #include <windows.h>
 #include <wtsapi32.h>
+
+// Older mingw-w64 headers (Ubuntu 24.04, used by CI and the release build)
+// lack the WTSSessionInfoEx query; declare it as the Windows SDK does.
+#ifndef WTS_SESSIONSTATE_LOCK
+#define WTS_SESSIONSTATE_UNKNOWN 0xFFFFFFFF
+#define WTS_SESSIONSTATE_LOCK 0x00000000
+#define WTS_SESSIONSTATE_UNLOCK 0x00000001
+#define WTSSessionInfoEx ((WTS_INFO_CLASS)25)
+typedef struct _WTSINFOEX_LEVEL1_W {
+    ULONG SessionId;
+    WTS_CONNECTSTATE_CLASS SessionState;
+    LONG SessionFlags;
+    WCHAR WinStationName[WINSTATIONNAME_LENGTH + 1];
+    WCHAR UserName[USERNAME_LENGTH + 1];
+    WCHAR DomainName[DOMAIN_LENGTH + 1];
+    LARGE_INTEGER LogonTime;
+    LARGE_INTEGER ConnectTime;
+    LARGE_INTEGER DisconnectTime;
+    LARGE_INTEGER LastInputTime;
+    LARGE_INTEGER CurrentTime;
+    DWORD IncomingBytes;
+    DWORD OutgoingBytes;
+    DWORD IncomingFrames;
+    DWORD OutgoingFrames;
+    DWORD IncomingCompressedBytes;
+    DWORD OutgoingCompressedBytes;
+} WTSINFOEX_LEVEL1_W;
+typedef union _WTSINFOEX_LEVEL_W {
+    WTSINFOEX_LEVEL1_W WTSInfoExLevel1;
+} WTSINFOEX_LEVEL_W;
+typedef struct _WTSINFOEXW {
+    DWORD Level;
+    WTSINFOEX_LEVEL_W Data;
+} WTSINFOEXW;
+#endif
 #include <d3d11.h>
 #include <dxgi1_2.h>
 #include <wrl/client.h>
