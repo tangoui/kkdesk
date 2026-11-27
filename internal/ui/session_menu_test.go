@@ -7,7 +7,32 @@ import (
 	"github.com/tangoui/tango/sys/menu"
 
 	"github.com/tangoui/kkdesk/internal/app"
+	"github.com/tangoui/kkdesk/internal/session"
 )
+
+func TestUnlockMenuVisibility(t *testing.T) {
+	for _, tc := range []struct {
+		lock     session.LockScreenState
+		viewOnly bool
+		want     int
+		disabled bool
+	}{
+		{session.LockScreenUnlocked, false, 0, false},
+		{session.LockScreenReady, true, 0, false},
+		{session.LockScreenReady, false, 1, false},
+		{session.LockScreenComponentUnavailable, false, 1, true},
+	} {
+		m := menu.New()
+		w := &sessionWin{v: app.NewViewer(app.ViewerConfig{}, nil)}
+		w.addUnlockMenu(m, app.ViewerState{LockScreen: tc.lock, ViewOnly: tc.viewOnly})
+		if len(m.Items) != tc.want {
+			t.Fatalf("state %v view-only %t: got %d items, want %d", tc.lock, tc.viewOnly, len(m.Items), tc.want)
+		}
+		if tc.want != 0 && (m.Items[0].Disabled != tc.disabled || m.Items[0].Label != "解锁电脑…") {
+			t.Fatalf("wrong unlock menu entry in state %v", tc.lock)
+		}
+	}
+}
 
 func TestQualityMenuLabelsAndSelection(t *testing.T) {
 	v := app.NewViewer(app.ViewerConfig{Addr: "localhost", FPS: 60}, nil)

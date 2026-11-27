@@ -23,6 +23,7 @@ import (
 	"github.com/tangoui/kkdesk/internal/rendezvous"
 	"github.com/tangoui/kkdesk/internal/session"
 	"github.com/tangoui/kkdesk/internal/stats"
+	"github.com/tangoui/kkdesk/internal/unlockcred"
 )
 
 // DialTimeout bounds connecting, authenticating and negotiating.
@@ -61,7 +62,8 @@ type ViewerConfig struct {
 	Remote     rendezvous.Config
 	// Clipboard is the local clipboard, synced with the host's while
 	// controlling (not view-only, not files-only); nil disables syncing.
-	Clipboard clipsync.Clipboard
+	Clipboard   clipsync.Clipboard
+	unlockStore unlockcred.Store
 }
 
 // ViewerPhase is the viewer's connection state.
@@ -90,6 +92,11 @@ type ViewerState struct {
 	PrivacyPending      bool
 	LockAfterDisconnect bool
 	PrivacyMessage      string
+	LockScreen          session.LockScreenState
+	UnlockPending       bool
+	UnlockMessage       string
+	UnlockSavedFailed   bool
+	CanRememberUnlock   bool
 }
 
 // Viewer connects to a host and shows its screen. Methods are safe for
@@ -112,6 +119,8 @@ type Viewer struct {
 	closing       bool
 	relayed       bool
 	privacy       viewerPrivacy
+	unlock        viewerUnlock
+	credentialsMu sync.Mutex
 	onEnd         []func()
 	files         *files.Client
 	since         time.Time // connected at
@@ -136,6 +145,9 @@ func NewViewer(cfg ViewerConfig, notify func()) *Viewer {
 	}
 	if cfg.Log == nil {
 		cfg.Log = io.Discard
+	}
+	if cfg.unlockStore == nil {
+		cfg.unlockStore = unlockcred.System()
 	}
 	v := &Viewer{cfg: cfg, viewOnly: cfg.ViewOnly || IsLoopback(cfg.Addr), fps: 60, bitrate: cfg.BitrateBps}
 	if cfg.FPS > 0 {
@@ -324,6 +336,8 @@ func (v *Viewer) Connect(ctx context.Context) error {
 	fps, bps := v.fps, v.bitrate
 	v.mu.Unlock()
 	p.OnPrivacy(v.handlePrivacy)
+	p.OnUnlockResult(func(result session.UnlockResult) { v.handleUnlockResult(p, result) })
+	p.OnLockScreenChange(v.notify)
 	p.OnAccessibilityChange(v.notify)
 	p.OnVideo(v.video)
 	go v.watch(p)
@@ -409,6 +423,7 @@ func (v *Viewer) end(msg string) {
 		return
 	}
 	v.phase, v.errMsg = ViewerClosed, msg
+	v.unlock.clearAttempt()
 	fns := v.onEnd
 	p := v.peer
 	v.mu.Unlock()
@@ -455,8 +470,11 @@ func (v *Viewer) State() ViewerState {
 	defer v.mu.Unlock()
 	s := ViewerState{Phase: v.phase, Addr: v.cfg.Addr, Err: v.errMsg, ViewOnly: v.viewOnly, FirstHostCode: v.firstHostCode, BitrateBps: v.bitrate, FPS: v.fps, Relayed: v.relayed}
 	s.PrivacyScreen, s.PrivacyPending, s.LockAfterDisconnect, s.PrivacyMessage = v.privacy.on, v.privacy.pending, v.privacy.lockAfter, v.privacy.message
+	s.UnlockPending, s.UnlockSavedFailed, s.UnlockMessage = v.unlock.attempt != nil, v.unlock.savedFailed, v.unlock.message
 	if v.peer != nil {
 		s.AccessibilityDenied = v.peer.AccessibilityDenied()
+		s.LockScreen = v.peer.LockScreen()
+		s.CanRememberUnlock = v.cfg.unlockStore != nil && unlockAccount(v.peer.HostKey()) != ""
 	}
 	if v.rec != nil {
 		s.Stats = v.rec.Last()
