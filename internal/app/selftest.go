@@ -59,7 +59,7 @@ func Selftest(cfg SelftestConfig) bool {
 	logPath := filepath.Join(cfg.Dir, SelftestLog)
 	if f, err := os.Create(logPath); err == nil {
 		defer f.Close()
-		w = io.MultiWriter(os.Stdout, f)
+		w = fileFirst{file: f, console: os.Stdout} // no usable stdout in a GUI build
 	} else {
 		fmt.Fprintf(os.Stderr, "kkdesk: cannot write %s: %v (output on screen only)\n", logPath, err)
 	}

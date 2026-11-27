@@ -64,8 +64,22 @@ func OpenAppLog(path string) (*AppLog, error) {
 	}
 	l := &AppLog{Path: path, f: f}
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
-	log.SetOutput(io.MultiWriter(os.Stderr, l))
+	log.SetOutput(fileFirst{file: l, console: os.Stderr})
 	return l, nil
+}
+
+// fileFirst writes each log line to the file, then to the console, whose
+// errors are ignored: a GUI-subsystem build has no usable stderr, and
+// io.MultiWriter would stop at it and leave the file empty.
+type fileFirst struct {
+	file    io.Writer
+	console io.Writer
+}
+
+func (w fileFirst) Write(p []byte) (int, error) {
+	n, err := w.file.Write(p)
+	_, _ = w.console.Write(p)
+	return n, err
 }
 
 // Write appends p to the file (package log calls it once per line).
