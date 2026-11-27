@@ -112,12 +112,16 @@ func NewLocker() Locker {
 			}
 			return nil
 		},
-		locked: func() (bool, error) {
-			var locked C.int
-			if code := C.mmprivacyw_locked(&locked); code != 0 {
-				return false, fmt.Errorf("无法读取 Windows 当前会话的锁屏状态：%w", syscall.Errno(code))
-			}
-			return locked != 0, nil
-		},
+		locked: SessionLocked,
 	}
+}
+
+// SessionLocked reports whether this Windows session shows the lock screen,
+// where a normal process can neither capture nor inject.
+func SessionLocked() (bool, error) {
+	var locked C.int
+	if code := C.mmprivacyw_locked(&locked); code != 0 {
+		return false, fmt.Errorf("无法读取 Windows 当前会话的锁屏状态：%w", syscall.Errno(code))
+	}
+	return locked != 0, nil
 }

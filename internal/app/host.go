@@ -86,6 +86,7 @@ type HostConfig struct {
 	LockAfterDisconnect     bool
 	privacyScreen           func() privacy.Screen
 	locker                  privacy.Locker
+	screenLocked            func() (bool, error)
 	Remote                  rendezvous.Config
 	Pairing                 *pairing.Store
 	IdentityErr             error
@@ -210,6 +211,9 @@ func NewHost(cfg HostConfig, notify func()) *Host {
 	}
 	if cfg.locker == nil {
 		cfg.locker = privacy.NewLocker()
+	}
+	if cfg.screenLocked == nil {
+		cfg.screenLocked = privacy.SessionLocked
 	}
 	h := &Host{cfg: cfg, notify: notify, addrs: LocalIPv4()}
 	h.remote.code = h.deviceCode()
@@ -1007,6 +1011,10 @@ func (h *Host) handle(p *session.Peer, listenCtx context.Context, remote bool, p
 		p.CloseWithReason("被控端没有屏幕录制权限")
 		return
 	}
+	if h.screenLocked() {
+		h.refuseLocked(p)
+		return
+	}
 	h.mu.Lock()
 	h.phase, h.since = HostActive, time.Now()
 	h.mu.Unlock()
@@ -1014,6 +1022,10 @@ func (h *Host) handle(p *session.Peer, listenCtx context.Context, remote bool, p
 	stopClip := h.syncClipboard(p)
 	err := h.stream(p)
 	stopClip()
+	if errors.Is(err, errScreenLocked) {
+		h.refuseLocked(p)
+		return
+	}
 	if err != nil {
 		h.setErr(err.Error())
 		log.Printf("kkdesk host: %v", err)
@@ -1023,6 +1035,33 @@ func (h *Host) handle(p *session.Peer, listenCtx context.Context, remote bool, p
 	h.mu.Lock()
 	h.notice = "上次连接已结束：" + p.RemoteAddr()
 	h.mu.Unlock()
+}
+
+// screenLockedReason is what a controller is told when the host shows the
+// lock screen: kkdesk runs as a normal process, which Windows keeps off the
+// lock screen (capture fails with DXGI_ERROR_NOT_FOUND).
+const screenLockedReason = "对方电脑已锁屏，需要有人在电脑前解锁后才能远程控制"
+
+var errScreenLocked = errors.New(screenLockedReason)
+
+// captureStart is capture.Start; tests replace it.
+var captureStart = capture.Start
+
+// screenLocked reports whether the host shows the lock screen; an unreadable
+// state counts as unlocked so capture reports its own error.
+func (h *Host) screenLocked() bool {
+	locked, err := h.cfg.screenLocked()
+	if err != nil {
+		log.Printf("kkdesk host: %v", err)
+		return false
+	}
+	return locked
+}
+
+func (h *Host) refuseLocked(p *session.Peer) {
+	h.setErr("本机已锁屏，远程控制端看不到画面；解锁后对方可以重新连接")
+	log.Printf("kkdesk host: %s refused: the screen is locked", p.RemoteAddr())
+	p.CloseWithReason(screenLockedReason)
 }
 
 // serveFiles starts the file server of an accepted session (both modes);
@@ -1074,8 +1113,11 @@ func (h *Host) stream(p *session.Peer) error {
 
 	opts := capture.Options{FPS: fps, MaxWidth: maxW, ExcludeApp: captureExcludeApp(p.RemoteAddr())}
 	log.Printf("kkdesk host: capture %d fps, max width %d, exclude %q", opts.FPS, opts.MaxWidth, opts.ExcludeApp)
-	capt, err := capture.Start(opts, vs.frame)
+	capt, err := captureStart(opts, vs.frame)
 	if err != nil {
+		if h.screenLocked() {
+			return errScreenLocked
+		}
 		return fmt.Errorf("启动屏幕采集失败：%w", err)
 	}
 	vs.mu.Lock()
