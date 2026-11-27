@@ -48,6 +48,21 @@ import (
 
 const installDACL = "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FRFX;;;BU)"
 
+// IsProtectedExecutable identifies the system copy used by the component.
+func IsProtectedExecutable(path string) bool {
+	protected, err := protectedExe()
+	return err == nil && strings.EqualFold(path, protected)
+}
+
+// MatchesProtectedExecutable reports whether path contains the system image.
+func MatchesProtectedExecutable(path string) (bool, error) {
+	protected, err := protectedExe()
+	if err != nil {
+		return false, err
+	}
+	return sameImage(path, protected)
+}
+
 func Component() (ComponentInfo, error) {
 	path, err := protectedExe()
 	if err != nil {

@@ -43,6 +43,28 @@ func New(version string, getenv func(string) string) *updater.Updater {
 	return &updater.Updater{ManifestURL: url, PublicKey: PublicKey, Version: version, AppID: AppID}
 }
 
+// ForDesktopInstall keeps self-update on user-owned files. Published Linux
+// updates are directory archives, so AppImage and deb have their own upgrade path.
+func ForDesktopInstall(u *updater.Updater, platform, exe, appImage string, protected bool, userExe string) *updater.Updater {
+	if u == nil {
+		return nil
+	}
+	switch platform {
+	case "windows":
+		if protected {
+			if userExe == "" {
+				return nil
+			}
+			u.Target = userExe
+		}
+	case "linux":
+		if appImage != "" || exe == "/usr/bin/kkdesk" || exe == "/bin/kkdesk" {
+			return nil
+		}
+	}
+	return u
+}
+
 // isRelease reports a release version number (1.2.3, 0.1.0-beta.1).
 func isRelease(v string) bool {
 	if v == "" || v[0] < '0' || v[0] > '9' {
