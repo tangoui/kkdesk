@@ -1,6 +1,8 @@
 package appui
 
 import (
+	"runtime"
+
 	"github.com/tangoui/tango/ui"
 	"github.com/tangoui/tango/ui/layout"
 
@@ -46,8 +48,12 @@ func (m *Main) lockScreenSettings(c *ui.Context, f *ui.FormW) {
 	item := f.Item("锁屏时允许远程操作")
 	if s.err != nil {
 		item.Error(s.err.Error())
+	} else if s.info.State == lockscreen.ComponentNeedsApproval {
+		item.Help("在 macOS「系统设置 › 通用 › 登录项与扩展」中批准 kkdesk。")
 	} else if s.info.State == lockscreen.ComponentRunning && !s.info.UsingInstall {
 		item.Help("退出当前 kkdesk 后，从安装位置打开：" + s.info.InstalledPath)
+	} else if runtime.GOOS == "darwin" {
+		item.Help("组件需要屏幕录制和辅助功能权限。")
 	} else {
 		item.Help("安装、更新和卸载需要管理员授权。")
 	}
@@ -58,6 +64,13 @@ func (m *Main) lockScreenSettings(c *ui.Context, f *ui.FormW) {
 				return
 			}
 			switch s.info.State {
+			case lockscreen.ComponentNeedsSignature:
+				ui.Text(c, lockscreen.ErrNeedsSignature.Error())
+			case lockscreen.ComponentNeedsApproval:
+				ui.Text(c, "等待系统批准")
+				if ui.Button(c, "卸载").Clicked() {
+					m.checkLockScreenSettings(true, false)
+				}
 			case lockscreen.ComponentAbsent:
 				ui.Text(c, "未安装")
 				if ui.Button(c, "安装").Clicked() {

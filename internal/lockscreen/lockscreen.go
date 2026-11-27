@@ -10,8 +10,9 @@ import (
 )
 
 var (
-	ErrUnavailable = errors.New("lock screen component unavailable")
-	ErrStillLocked = errors.New("desktop still locked")
+	ErrUnavailable    = errors.New("lock screen component unavailable")
+	ErrStillLocked    = errors.New("desktop still locked")
+	ErrNeedsSignature = errors.New("不可用（需要正式签名的 kkdesk）")
 )
 
 type Session interface {

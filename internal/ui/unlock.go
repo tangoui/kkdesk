@@ -17,6 +17,8 @@ func lockScreenReason(state session.LockScreenState) string {
 		return "对方电脑未安装锁屏远控组件"
 	case session.LockScreenPlatformUnsupported:
 		return "对方系统暂不支持锁屏远程操作"
+	case session.LockScreenSignatureRequired:
+		return "锁屏远控不可用（需要正式签名的 kkdesk）"
 	default:
 		return ""
 	}

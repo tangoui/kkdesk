@@ -10,6 +10,8 @@ const (
 	ComponentRunning
 	ComponentStopped
 	ComponentNeedsUpdate
+	ComponentNeedsApproval
+	ComponentNeedsSignature
 )
 
 type ComponentInfo struct {

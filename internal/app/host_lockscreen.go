@@ -22,12 +22,13 @@ type hostDesktop struct {
 	opts        capture.Options
 	releaseKeys func()
 
-	mu     sync.Mutex
-	locked bool
-	normal capture.Session
-	helper lockscreen.Session
-	held   input.Held
-	next   time.Time // earliest retry after a failed helper connection
+	mu          sync.Mutex
+	locked      bool
+	normal      capture.Session
+	helper      lockscreen.Session
+	held        input.Held
+	next        time.Time // earliest retry after a failed helper connection
+	unavailable session.LockScreenState
 }
 
 func (d *hostDesktop) refresh(ctx context.Context) error {
@@ -49,6 +50,7 @@ func (d *hostDesktop) refresh(ctx context.Context) error {
 	if locked != previous {
 		d.mu.Lock()
 		d.locked = locked
+		d.unavailable = session.LockScreenUnknown
 		d.mu.Unlock()
 		d.releaseKeys()
 		d.stopSource()
@@ -101,10 +103,18 @@ func (d *hostDesktop) startLocked(ctx context.Context) error {
 	d.next = time.Now().Add(time.Second)
 	helper, err := d.h.cfg.startLockScreen(ctx, d.options(), d.video.frame)
 	if err != nil {
+		d.mu.Lock()
+		if errors.Is(err, lockscreen.ErrNeedsSignature) {
+			d.unavailable = session.LockScreenSignatureRequired
+		} else {
+			d.unavailable = session.LockScreenComponentUnavailable
+		}
+		d.mu.Unlock()
 		return nil
 	}
 	d.mu.Lock()
 	d.helper = helper
+	d.unavailable = session.LockScreenUnknown
 	d.mu.Unlock()
 	d.attach(helper)
 	return nil
@@ -167,6 +177,8 @@ func (d *hostDesktop) state() session.LockScreenState {
 		return session.LockScreenUnlocked
 	case d.helper != nil:
 		return session.LockScreenReady
+	case d.unavailable != session.LockScreenUnknown:
+		return d.unavailable
 	case d.h.cfg.startLockScreen != nil || runtime.GOOS == "windows":
 		return session.LockScreenComponentUnavailable
 	default:

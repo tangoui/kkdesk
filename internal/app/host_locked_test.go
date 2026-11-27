@@ -1,12 +1,14 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/tangoui/kkdesk/internal/capture"
+	"github.com/tangoui/kkdesk/internal/lockscreen"
 	"github.com/tangoui/kkdesk/internal/session"
 )
 
@@ -21,12 +23,27 @@ func TestLockScreenReportsUnsupportedWithNoHelper(t *testing.T) {
 	_, p := startTestLockHost(t, HostConfig{
 		screenLocked: func() (bool, error) { return true, nil },
 		startDesktop: noCapture(t),
+		startLockScreen: func(context.Context, capture.Options, func(capture.Frame)) (lockscreen.Session, error) {
+			return nil, lockscreen.ErrUnavailable
+		},
 	})
 	waitFor(t, "unsupported lock screen", func() bool { return lockScreenUnavailable(p.LockScreen()) })
 }
 
+func TestLockScreenReportsSignatureRequirement(t *testing.T) {
+	_, p := startTestLockHost(t, HostConfig{
+		screenLocked: func() (bool, error) { return true, nil },
+		startDesktop: noCapture(t),
+		startLockScreen: func(context.Context, capture.Options, func(capture.Frame)) (lockscreen.Session, error) {
+			return nil, lockscreen.ErrNeedsSignature
+		},
+	})
+	waitFor(t, "signature required", func() bool { return p.LockScreen() == session.LockScreenSignatureRequired })
+}
+
 func lockScreenUnavailable(state session.LockScreenState) bool {
-	return state == session.LockScreenComponentUnavailable || state == session.LockScreenPlatformUnsupported
+	return state == session.LockScreenComponentUnavailable || state == session.LockScreenPlatformUnsupported ||
+		state == session.LockScreenSignatureRequired
 }
 
 func TestCaptureFailureOnALockedScreenGetsThePlainReason(t *testing.T) {

@@ -3,10 +3,8 @@
 package lockscreen
 
 import (
-	"encoding/binary"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"unsafe"
 
@@ -137,34 +135,4 @@ func openPipe(session uint32) (*os.File, error) {
 	}
 	_ = windows.CloseHandle(h)
 	return nil, ErrUnavailable
-}
-
-func receiveCommand(r io.Reader, data []byte) (byte, []byte, error) {
-	var header [3]byte
-	if _, err := io.ReadFull(r, header[:]); err != nil {
-		return 0, nil, err
-	}
-	n := int(binary.LittleEndian.Uint16(header[1:]))
-	if n > len(data) {
-		return 0, nil, errors.New("lock screen command exceeds message limit")
-	}
-	data = data[:n]
-	if _, err := io.ReadFull(r, data); err != nil {
-		clear(data)
-		return 0, nil, err
-	}
-	return header[0], data, nil
-}
-
-func sendCommand(w io.Writer, operation byte, data []byte) error {
-	if len(data) > maxSecretBytes {
-		return errors.New("lock screen command exceeds message limit")
-	}
-	var frame [3 + maxSecretBytes]byte
-	frame[0] = operation
-	binary.LittleEndian.PutUint16(frame[1:], uint16(len(data)))
-	n := copy(frame[3:], data)
-	defer clear(frame[3 : 3+n])
-	_, err := w.Write(frame[:3+n])
-	return err
 }

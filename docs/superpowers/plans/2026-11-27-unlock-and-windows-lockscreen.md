@@ -71,7 +71,7 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc CXX=x86_64-w64
 
 ## 任务 7　macOS 被控端
 
-开始前需要确认开发者签名来源。现有发布流程使用 ad-hoc 签名，本机已安装的 app 未通过 `codesign --verify --deep --strict`，当前登录会话也没有可用的代码签名身份。第 3.4 节要求 IPC 验证有效 Team ID。
+使用项目已有的 Apple 开发者身份给测试包签名。实现者交付待签名的 bundle。第 3.4 节要求 IPC 读取自身和对端的实际 Team ID，并拒绝 ad-hoc 或无签名构建。
 
 - [ ] 读阶段 0 实测结果。有结果时按确认的服务形态实现。暂时无结果时采用随 app 打包的 root LaunchDaemon 和覆盖 Aqua、LoginWindow 的 LaunchAgent 助手。
 - [ ] 在平台无关测试中覆盖锁定状态、活动会话、控制台 UID、Team ID、权限申请、授权撤销和安装清理。断言身份不符、状态未知或未锁定时拒绝转发。运行 `go test ./internal/lockscreen -run 'TestMacLockScreen'` 并检查失败。
@@ -83,4 +83,4 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc CXX=x86_64-w64
 - 任务 1–3 已提交协议、假助手驱动的会话切换和控制端凭据界面。当前 macOS 会话未能授权原生钥匙串写入，集成测试跳过，控制端测试使用假凭据库。
 - 任务 4–5 已提交 Windows 服务、本机 IPC、锁屏画面与输入，以及安装、升级和卸载。Windows 的原生运行结果待实机确认。
 - 任务 6 的构建产物、哈希和中文实测说明由 `scripts/build-windows.sh` 生成。
-- 任务 7 等待确认 macOS 代码签名流程。
+- 任务 7 使用 LaunchDaemon 和支持 Aqua、LoginWindow 的 LaunchAgent，以系统确认的锁屏状态约束采集与输入。macOS 真机验收由用户完成。

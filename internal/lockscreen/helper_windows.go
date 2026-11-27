@@ -29,12 +29,6 @@ import (
 	"github.com/tangoui/kkdesk/internal/winmedia"
 )
 
-const (
-	replyOK byte = iota + 1
-	replyIdle
-	replyUnavailable
-)
-
 func windowsSessionLocked(session uint32) bool { return C.kklock_state(C.uint32_t(session)) == 0 }
 
 func runHelper(exe string, servicePID uint32, sasName string, logger *log.Logger) error {

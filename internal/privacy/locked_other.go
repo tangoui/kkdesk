@@ -1,7 +1,6 @@
-//go:build !windows || !cgo
+//go:build (!windows && !darwin) || !cgo
 
 package privacy
 
-// SessionLocked reports false: only Windows keeps a normal process off the
-// lock screen.
+// SessionLocked reports false on unsupported systems.
 func SessionLocked() (bool, error) { return false, nil }

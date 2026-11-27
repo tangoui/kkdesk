@@ -122,16 +122,19 @@ func NewLocker() Locker {
 			}
 			return nil
 		},
-		locked: func() (bool, error) {
-			switch C.mmprivacy_locked() {
-			case 1:
-				return true, nil
-			case 0:
-				return false, nil
-			default:
-				return false, errors.New("无法读取 macOS 当前登录会话的锁屏状态")
-			}
-		},
+		locked: SessionLocked,
+	}
+}
+
+// SessionLocked reports the lock state of this process's login session.
+func SessionLocked() (bool, error) {
+	switch C.mmprivacy_locked() {
+	case 1:
+		return true, nil
+	case 0:
+		return false, nil
+	default:
+		return false, errors.New("无法读取 macOS 当前登录会话的锁屏状态")
 	}
 }
 
