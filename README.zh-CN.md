@@ -55,6 +55,10 @@
 - [docs/superpowers/plans/](docs/superpowers/plans/)
 - 界面原型：[docs/design/prototype.html](docs/design/prototype.html)
 
+## 开始使用
+
+按系统和架构下载安装包。macOS 打开 DMG 后，把 kkdesk 拖到「应用程序」。Windows x64 运行 `setup.exe`，安装到当前用户目录。Linux x64 或 ARM64 可直接使用 AppImage，也可在 Debian 或 Ubuntu 上安装 deb。 [GitHub Releases](https://github.com/tangoui/kkdesk/releases)
+
 ## 构建与运行
 
 需要 Go 1.27 和 [`tan`](https://github.com/tangoui/tango/tree/main/cmd/tan)。项目用到 cgo（`tan.json` 里 `"cgo": true`）。
