@@ -14,6 +14,7 @@ int kk_mac_console(uint32_t *uid);
 int kk_mac_console_locked(uint32_t uid);
 int kk_mac_job_status(int agent);
 int kk_mac_job_change(int agent, int install);
+int kk_mac_open_login_items(void);
 int kk_mac_shm(const char *name, size_t size, int *writer, int *reader);
 int kk_mac_inject_password(const uint16_t *password, size_t size);
 int kk_mac_read_nv12(uintptr_t pixel, uint8_t *dst, size_t size, uint32_t w, uint32_t h);

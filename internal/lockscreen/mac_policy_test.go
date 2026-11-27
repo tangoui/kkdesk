@@ -73,3 +73,28 @@ func TestMacLockScreenRegistrationRollbackAndApproval(t *testing.T) {
 		t.Fatalf("jobs were not removed: %v %v", err, states)
 	}
 }
+
+// Registering a daemon that needs the user's approval fails with EPERM but
+// leaves it waiting for approval: the agent must still be registered.
+func TestMacLockScreenRegistrationContinuesWhenApprovalNeeded(t *testing.T) {
+	states := map[bool]int{false: macNotRegistered, true: macNotRegistered}
+	needsApproval := errors.New("operation not permitted")
+	status := func(agent bool) int { return states[agent] }
+	change := func(agent, install bool) error {
+		if !install {
+			states[agent] = macNotRegistered
+			return nil
+		}
+		states[agent] = macNeedsApproval
+		if !agent {
+			return needsApproval // SMAppService reports EPERM for the daemon
+		}
+		return nil
+	}
+	if err := changeMacJobs(true, status, change); err != nil {
+		t.Fatalf("approval-pending registration reported as a failure: %v", err)
+	}
+	if status(false) != macNeedsApproval || status(true) != macNeedsApproval {
+		t.Fatalf("both jobs should wait for approval: %v", states)
+	}
+}

@@ -9,3 +9,6 @@ func Dispatch(_ []string) (bool, error) { return false, nil }
 func Component() (ComponentInfo, error) { return ComponentInfo{}, nil }
 
 func ManageComponent(bool) error { return ErrUnavailable }
+
+// OpenApprovalSettings opens where the user approves the component (macOS).
+func OpenApprovalSettings() error { return ErrUnavailable }

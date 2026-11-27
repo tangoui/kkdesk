@@ -134,6 +134,16 @@ int kk_mac_job_change(int agent, int install) {
     }
 }
 
+int kk_mac_open_login_items(void) {
+    @autoreleasepool {
+        if (@available(macOS 13.0, *)) {
+            [SMAppService openSystemSettingsLoginItems];
+            return 0;
+        }
+        return ENOTSUP;
+    }
+}
+
 int kk_mac_shm(const char *name, size_t size, int *writer, int *reader) {
     int w = shm_open(name, O_RDWR | O_CREAT | O_EXCL, 0600);
     if (w < 0) return errno;

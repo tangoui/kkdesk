@@ -139,6 +139,15 @@ func macComponent() (ComponentInfo, error) {
 	return info, nil
 }
 
+// OpenApprovalSettings opens System Settings › General › Login Items &
+// Extensions, where the user approves the component's background jobs.
+func OpenApprovalSettings() error {
+	if code := C.kk_mac_open_login_items(); code != 0 {
+		return fmt.Errorf("无法打开系统设置（%d）", int(code))
+	}
+	return nil
+}
+
 func ManageComponent(install bool) error {
 	if macOwnCode().team == "" {
 		return ErrNeedsSignature

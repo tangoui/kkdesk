@@ -66,14 +66,23 @@ func changeMacJobs(install bool, status func(agent bool) int, change func(agent,
 		}
 		return err
 	}
+	// SMAppService fails a registration that needs the user's approval
+	// (EPERM) yet leaves the job waiting for it: that is not a failure.
+	register := func(agent bool) error {
+		err := change(agent, true)
+		if err != nil && status(agent) == macNeedsApproval {
+			return nil
+		}
+		return err
+	}
 	newDaemon := !present(status(false))
 	if newDaemon {
-		if err := change(false, true); err != nil {
+		if err := register(false); err != nil {
 			return err
 		}
 	}
 	if !present(status(true)) {
-		if err := change(true, true); err != nil {
+		if err := register(true); err != nil {
 			if newDaemon {
 				err = errors.Join(err, change(false, false))
 			}
