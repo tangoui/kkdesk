@@ -45,7 +45,9 @@ func allowLockedDesktop(session, active uint32, locked bool, desktop string) boo
 }
 
 // lockedDesktopProblem says why the helper may not serve a session, or ""
-// when it is the active console, locked, on the Winlogon desktop.
+// when it is the active console and locked. The input desktop of a locked
+// console is Default while the lock screen curtain (LockApp) shows and
+// Winlogon on the sign-in page.
 func lockedDesktopProblem(session, active uint32, locked bool, desktop string) string {
 	switch {
 	case session == ^uint32(0):
@@ -54,8 +56,8 @@ func lockedDesktopProblem(session, active uint32, locked bool, desktop string) s
 		return fmt.Sprintf("session %d is not the active console (%d)", session, active)
 	case !locked:
 		return fmt.Sprintf("session %d is not locked", session)
-	case !strings.EqualFold(desktop, "Winlogon"):
-		return fmt.Sprintf("input desktop is %q, not Winlogon", desktop)
+	case !strings.EqualFold(desktop, "Winlogon") && !strings.EqualFold(desktop, "Default"):
+		return fmt.Sprintf("input desktop is %q, not Winlogon or Default", desktop)
 	}
 	return ""
 }

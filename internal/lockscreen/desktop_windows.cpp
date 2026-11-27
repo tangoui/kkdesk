@@ -54,12 +54,6 @@ int kklock_desktop_name(uintptr_t desktop, uint16_t *name, uint32_t count) {
         static_cast<DWORD>((count - 1) * sizeof(uint16_t)), nullptr);
 }
 
-int kklock_is_winlogon(uintptr_t desktop) {
-    wchar_t name[128]{};
-    return GetUserObjectInformationW(reinterpret_cast<HDESK>(desktop), UOI_NAME, name, sizeof(name), nullptr) &&
-        _wcsicmp(name, L"Winlogon") == 0;
-}
-
 static INPUT keyInput(WORD key, WORD scan, DWORD flags) {
     INPUT e{};
     e.type = INPUT_KEYBOARD;

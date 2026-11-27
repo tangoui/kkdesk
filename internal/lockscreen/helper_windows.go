@@ -93,17 +93,32 @@ func runHelper(exe string, servicePID uint32, sasName string, logger *log.Logger
 	if !valid() {
 		return ErrUnavailable
 	}
-	var code C.uint32_t
-	desk := C.kklock_open_desktop(&code)
-	if desk == 0 {
-		return fmt.Errorf("open input desktop: %w", syscall.Errno(code))
+	// enter moves the helper thread to the current input desktop, which
+	// switches between Default (curtain) and Winlogon (sign-in) while locked.
+	var desk C.uintptr_t
+	defer func() {
+		if desk != 0 {
+			C.kklock_close_desktop(desk)
+		}
+	}()
+	enter := func() error {
+		var code C.uint32_t
+		next := C.kklock_open_desktop(&code)
+		if next == 0 {
+			return fmt.Errorf("open input desktop: %w", syscall.Errno(code))
+		}
+		if C.kklock_enter_desktop(next, &code) == 0 {
+			C.kklock_close_desktop(next)
+			return fmt.Errorf("enter the input desktop: %w", syscall.Errno(code))
+		}
+		if desk != 0 {
+			C.kklock_close_desktop(desk)
+		}
+		desk = next
+		return nil
 	}
-	defer C.kklock_close_desktop(desk)
-	if C.kklock_is_winlogon(desk) == 0 {
-		return ErrUnavailable
-	}
-	if C.kklock_enter_desktop(desk, &code) == 0 {
-		return fmt.Errorf("enter the Winlogon desktop: %w", syscall.Errno(code))
+	if err := enter(); err != nil {
+		return err
 	}
 	sasEvent, err := windows.OpenEvent(windows.EVENT_MODIFY_STATE, false, sasEventName(sasName))
 	if err != nil {
@@ -118,14 +133,14 @@ func runHelper(exe string, servicePID uint32, sasName string, logger *log.Logger
 		return windows.SetEvent(sasEvent) == nil
 	}
 	for valid() {
-		if err := acceptClient(want, valid, sas, logger); err != nil {
+		if err := acceptClient(want, valid, enter, sas, logger); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func acceptClient(want localIdentity, valid, sas func() bool, logger *log.Logger) error {
+func acceptClient(want localIdentity, valid func() bool, enter func() error, sas func() bool, logger *log.Logger) error {
 	pipe, err := pipeListener(want.session, want.sid)
 	if err != nil {
 		return err
@@ -148,14 +163,14 @@ func acceptClient(want localIdentity, valid, sas func() bool, logger *log.Logger
 		return nil
 	}
 	active := func() bool { return valid() && pipeConnected(pipe) }
-	if err := serveClient(file, proc, active, sas); err != nil && active() &&
+	if err := serveClient(file, proc, active, enter, sas); err != nil && active() &&
 		!errors.Is(err, io.EOF) && !errors.Is(err, windows.ERROR_BROKEN_PIPE) {
 		logger.Printf("ipc pid=%d session ended: %v", client.pid, err)
 	}
 	return nil
 }
 
-func serveClient(file *os.File, proc windows.Handle, valid, sas func() bool) error {
+func serveClient(file *os.File, proc windows.Handle, valid func() bool, enter func() error, sas func() bool) error {
 	fileMap, err := windows.CreateFileMapping(windows.InvalidHandle, nil, windows.PAGE_READWRITE, 0, 2*frameSlotBytes, nil)
 	if err != nil {
 		return err
@@ -170,11 +185,32 @@ func serveClient(file *os.File, proc windows.Handle, valid, sas func() bool) err
 	if err != nil {
 		return err
 	}
+	// The duplication is lost when the input desktop switches; it is
+	// reopened on the new desktop at the next frame request.
 	var native *C.kklock_capture
-	if hr := int32(C.kklock_open_capture(&native)); hr < 0 {
-		return winmedia.Check("lock screen DuplicateOutput", hr)
+	defer func() {
+		if native != nil {
+			C.kklock_close_capture(native)
+		}
+	}()
+	reopen := func() error {
+		if err := enter(); err != nil {
+			return err
+		}
+		hr := int32(C.kklock_open_capture(&native))
+		switch {
+		case hr == winmedia.EAccessDenied || hr == winmedia.DXGIErrorAccessLost:
+			native = nil // still switching; try again on the next request
+			return nil
+		case hr < 0:
+			native = nil
+			return winmedia.Check("lock screen DuplicateOutput", hr)
+		}
+		return nil
 	}
-	defer C.kklock_close_capture(native)
+	if err := reopen(); err != nil {
+		return err
+	}
 	var clientMap windows.Handle
 	if err := windows.DuplicateHandle(windows.CurrentProcess(), fileMap, proc, &clientMap, windows.FILE_MAP_READ, false, 0); err != nil {
 		return err
@@ -214,12 +250,23 @@ func serveClient(file *os.File, proc windows.Handle, valid, sas func() bool) err
 			if len(data) != 0 {
 				return ErrUnavailable
 			}
+			frameReply[0] = replyIdle
+			if native == nil {
+				if err := reopen(); err != nil {
+					return err
+				}
+			}
 			var width, height, rotation C.uint32_t
-			hr := int32(C.kklock_grab(native, unsafe.Pointer(&frame[0]), frameSlotBytes, &width, &height, &rotation))
-			if hr < 0 {
+			hr := int32(1) // S_FALSE: no new frame
+			if native != nil {
+				hr = int32(C.kklock_grab(native, unsafe.Pointer(&frame[0]), frameSlotBytes, &width, &height, &rotation))
+			}
+			if hr == winmedia.DXGIErrorAccessLost {
+				C.kklock_close_capture(native)
+				native = nil
+			} else if hr < 0 {
 				return winmedia.Check("lock screen AcquireNextFrame", hr)
 			}
-			frameReply[0] = replyIdle
 			if hr == 0 && valid() {
 				sequence++
 				offset, size, ok := frameBounds(uint32(width), uint32(height), sequence)
