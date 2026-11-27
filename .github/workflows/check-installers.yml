@@ -1,0 +1,36 @@
+name: Check installers
+
+on:
+  push:
+    branches: [feat/installers]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    uses: ./.github/workflows/package-desktop.yml
+
+  update-assets:
+    needs: desktop
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          pattern: build-*
+          path: artifacts
+      - name: Generate and verify test update assets
+        run: |
+          go install github.com/tangoui/tango/cmd/tan@v0.4.0
+          for f in artifacts/build-*/*.tar.gz; do tar -xzf "$f"; done
+          bash scripts/check-update-assets.sh build "$RUNNER_TEMP"
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: test-update-assets
+          path: ${{ runner.temp }}/test-update-assets
+          if-no-files-found: error

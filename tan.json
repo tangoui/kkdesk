@@ -5,5 +5,18 @@
   "version": "0.1.0-beta.2",
   "icon": "icon.png",
   "cgo": true,
-  "permissions": []
+  "permissions": [],
+  "installer": {
+    "windows": {
+      "scope": "user",
+      "desktopShortcut": "always",
+      "runAfterInstall": true,
+      "include": "scripts/windows-installer.nsh"
+    }
+  },
+  "linux": {
+    "maintainer": "tango <903300326@qq.com>",
+    "homepage": "https://github.com/tangoui/kkdesk",
+    "license": "AGPL-3.0-only"
+  }
 }
