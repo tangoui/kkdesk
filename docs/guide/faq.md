@@ -35,6 +35,10 @@ netsh interface ipv4 show excludedportrange protocol=tcp
 - 连接的是本机自己：自连会强制仅查看。
 - 被控端是 Windows 且对方在操作管理员窗口或 UAC 弹窗：以普通权限运行的 kkdesk 操作不了它们。
 
+## Windows 锁屏后无法操作
+
+在 Windows「设置 › 安全 › 锁屏时允许远程操作」查看组件状态。安装或更新后，从设置页提示的安装位置启动 kkdesk。复连仍要满足现有的连接批准设置。锁屏界面要求 Ctrl+Alt+Del 时，检查 Windows 是否允许服务模拟该组合键。
+
 ## 用 tan dev 运行时，屏幕录制权限怎么给
 
 开发时权限记在启动 `tan dev` 的终端应用上，请在「系统设置 › 隐私与安全性 › 录屏与系统录音」和「辅助功能」里给这个终端应用开权限，然后重启终端。
