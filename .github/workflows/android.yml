@@ -24,6 +24,14 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+          # Caches ~/.gradle/caches and the wrapper (Gradle's build cache
+          # lives there too, turned on below).
+          cache: gradle
+          cache-dependency-path: |
+            mobile/android/*.gradle*
+            mobile/android/app/*.gradle*
+            mobile/android/gradle/wrapper/gradle-wrapper.properties
+            mobile/pubspec.lock
       # Fetch Flutter from Git. This version has engine artifacts but no Linux SDK archive.
       - uses: actions/checkout@v7.0.1
         with:
@@ -31,8 +39,18 @@ jobs:
           ref: refs/tags/3.47.7
           path: .flutter
           persist-credentials: false
+      # Flutter's downloaded engine artifacts and the pub packages.
+      - uses: actions/cache@v6.1.0
+        with:
+          path: |
+            .flutter/bin/cache
+            ~/.pub-cache
+          key: flutter-3.47.7-android-${{ hashFiles('mobile/pubspec.lock') }}
+          restore-keys: flutter-3.47.7-android-
       - name: Set up Flutter and the Android SDK
         run: |
+          # Reuse task outputs across releases (cached with ~/.gradle/caches).
+          mkdir -p ~/.gradle && echo "org.gradle.caching=true" >> ~/.gradle/gradle.properties
           echo "$GITHUB_WORKSPACE/.flutter/bin" >> "$GITHUB_PATH"
           .flutter/bin/flutter precache --android
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
