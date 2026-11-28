@@ -1,6 +1,14 @@
 name: Android APK
 
 on:
+  # Runs on main when the app changes: it tests the app, and its caches are
+  # the ones a release (a tag run) can restore; a tag run cannot reuse the
+  # caches of an earlier tag.
+  push:
+    branches: [main]
+    paths:
+      - "mobile/**"
+      - ".github/workflows/android.yml"
   workflow_dispatch:
   workflow_call:
     secrets:
